@@ -1,4 +1,5 @@
 """Inventory data model."""
+from __future__ import annotations
 import uuid
 from datetime import datetime, date
 from sqlalchemy import String, Integer, ForeignKey, DateTime, Date, UniqueConstraint

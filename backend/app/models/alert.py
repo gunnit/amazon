@@ -1,7 +1,9 @@
-"""Alert rules model."""
+"""Alert rules and alerts models."""
+from __future__ import annotations
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Boolean, ForeignKey, DateTime
+from typing import Optional
+from sqlalchemy import String, Boolean, ForeignKey, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 
@@ -39,6 +41,29 @@ class AlertRule(Base):
 
     # Relationships
     organization: Mapped["Organization"] = relationship("Organization", back_populates="alert_rules")
+    alerts: Mapped[list["Alert"]] = relationship("Alert", back_populates="rule", cascade="all, delete-orphan")
+
+
+class Alert(Base):
+    """Alert instance triggered by a rule."""
+    __tablename__ = "alerts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("alert_rules.id", ondelete="CASCADE"), index=True
+    )
+    account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("amazon_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    asin: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), default="warning")
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    rule: Mapped["AlertRule"] = relationship("AlertRule", back_populates="alerts")
 
 
 from app.models.user import Organization

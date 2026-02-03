@@ -1,4 +1,5 @@
 """Competitor tracking models."""
+from __future__ import annotations
 import uuid
 from datetime import datetime, date
 from decimal import Decimal

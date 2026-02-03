@@ -1,4 +1,5 @@
 """Amazon Account model."""
+from __future__ import annotations
 import uuid
 from datetime import datetime
 from sqlalchemy import String, Boolean, ForeignKey, DateTime, Text, Enum

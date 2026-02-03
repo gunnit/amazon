@@ -11,10 +11,13 @@ import {
   Menu,
   X,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/store/authStore'
 import { cn } from '@/lib/utils'
+import { ThemeToggle } from '@/components/ThemeToggle'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -27,6 +30,7 @@ const navigation = [
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
   const { user, organization, logout } = useAuthStore()
@@ -37,7 +41,7 @@ export default function Layout() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-background">
       {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
         <div
@@ -49,7 +53,7 @@ export default function Layout() {
       {/* Mobile sidebar */}
       <div
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-72 bg-white transform transition-transform duration-300 ease-in-out lg:hidden",
+          "fixed inset-y-0 left-0 z-50 w-72 bg-card transform transition-transform duration-300 ease-in-out lg:hidden",
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
@@ -71,7 +75,7 @@ export default function Layout() {
                   "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                   isActive
                     ? "bg-primary text-primary-foreground"
-                    : "text-gray-700 hover:bg-gray-100"
+                    : "text-muted-foreground hover:bg-muted"
                 )}
               >
                 <item.icon className="h-5 w-5" />
@@ -83,10 +87,35 @@ export default function Layout() {
       </div>
 
       {/* Desktop sidebar */}
-      <div className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-72 lg:flex-col">
-        <div className="flex flex-col flex-grow bg-white border-r">
-          <div className="flex items-center h-16 px-6 border-b">
-            <span className="text-xl font-bold text-primary">Inthezon</span>
+      <div
+        className={cn(
+          "hidden lg:fixed lg:inset-y-0 lg:flex lg:flex-col transition-[width] duration-300",
+          sidebarCollapsed ? "lg:w-20" : "lg:w-72"
+        )}
+      >
+        <div className="flex flex-col flex-grow bg-card border-r">
+          <div
+            className={cn(
+              "relative flex items-center h-16 border-b",
+              sidebarCollapsed ? "px-3 justify-center" : "px-6 justify-between"
+            )}
+          >
+            <span className="text-xl font-bold text-primary">
+              {sidebarCollapsed ? "I" : "Inthezon"}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(sidebarCollapsed && "absolute right-2")}
+              onClick={() => setSidebarCollapsed((prev) => !prev)}
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed ? (
+                <ChevronRight className="h-5 w-5" />
+              ) : (
+                <ChevronLeft className="h-5 w-5" />
+              )}
+            </Button>
           </div>
           <nav className="flex flex-col gap-1 p-4 flex-1">
             {navigation.map((item) => {
@@ -99,25 +128,37 @@ export default function Layout() {
                     "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                     isActive
                       ? "bg-primary text-primary-foreground"
-                      : "text-gray-700 hover:bg-gray-100"
+                      : "text-muted-foreground hover:bg-muted",
+                    sidebarCollapsed && "justify-center"
                   )}
                 >
                   <item.icon className="h-5 w-5" />
-                  {item.name}
+                  {sidebarCollapsed ? (
+                    <span className="sr-only">{item.name}</span>
+                  ) : (
+                    item.name
+                  )}
                 </Link>
               )
             })}
           </nav>
           <div className="p-4 border-t">
-            <div className="flex items-center gap-3 px-3 py-2">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">
-                  {user?.full_name || user?.email}
-                </p>
-                <p className="text-xs text-gray-500 truncate">
-                  {organization?.name}
-                </p>
-              </div>
+            <div
+              className={cn(
+                "flex items-center gap-3 px-3 py-2",
+                sidebarCollapsed && "justify-center"
+              )}
+            >
+              {!sidebarCollapsed && (
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">
+                    {user?.full_name || user?.email}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {organization?.name}
+                  </p>
+                </div>
+              )}
               <Button variant="ghost" size="icon" onClick={handleLogout}>
                 <LogOut className="h-5 w-5" />
               </Button>
@@ -127,9 +168,14 @@ export default function Layout() {
       </div>
 
       {/* Main content */}
-      <div className="lg:pl-72">
+      <div
+        className={cn(
+          "lg:pl-72 transition-[padding] duration-300",
+          sidebarCollapsed && "lg:pl-20"
+        )}
+      >
         {/* Top bar */}
-        <header className="sticky top-0 z-30 flex items-center h-16 px-4 bg-white border-b lg:px-8">
+        <header className="sticky top-0 z-30 flex items-center h-16 px-4 bg-card border-b lg:px-8">
           <Button
             variant="ghost"
             size="icon"
@@ -140,10 +186,11 @@ export default function Layout() {
           </Button>
           <div className="flex-1" />
           <div className="flex items-center gap-4">
+            <ThemeToggle />
             <div className="hidden sm:flex items-center gap-2 text-sm">
-              <span className="text-gray-500">Organization:</span>
+              <span className="text-muted-foreground">Organization:</span>
               <span className="font-medium">{organization?.name}</span>
-              <ChevronDown className="h-4 w-4 text-gray-400" />
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
             </div>
           </div>
         </header>

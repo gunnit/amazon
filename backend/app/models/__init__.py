@@ -8,7 +8,7 @@ from app.models.product import Product, BSRHistory
 from app.models.competitor import Competitor, CompetitorHistory
 from app.models.forecast import Forecast
 from app.models.sync_job import SyncJob
-from app.models.alert import AlertRule
+from app.models.alert import AlertRule, Alert
 
 __all__ = [
     "User",
@@ -26,4 +26,5 @@ __all__ = [
     "Forecast",
     "SyncJob",
     "AlertRule",
+    "Alert",
 ]
