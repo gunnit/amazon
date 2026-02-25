@@ -34,9 +34,15 @@ class Settings(BaseSettings):
     AMAZON_SP_API_APP_ID: Optional[str] = None
     AMAZON_SP_API_CLIENT_ID: Optional[str] = None
     AMAZON_SP_API_CLIENT_SECRET: Optional[str] = None
+    AMAZON_SP_API_REFRESH_TOKEN: Optional[str] = None
     AMAZON_SP_API_AWS_ACCESS_KEY: Optional[str] = None
     AMAZON_SP_API_AWS_SECRET_KEY: Optional[str] = None
     AMAZON_SP_API_ROLE_ARN: Optional[str] = None
+
+    # SP-API Settings
+    USE_MOCK_DATA: bool = True
+    SP_API_REPORT_POLL_INTERVAL_SECONDS: int = 15
+    SP_API_REPORT_POLL_MAX_ATTEMPTS: int = 40
 
     # Amazon Advertising API
     AMAZON_ADS_CLIENT_ID: Optional[str] = None

@@ -172,3 +172,20 @@ export interface AlertRule {
   webhook_url: string | null
   is_enabled: boolean
 }
+
+// Organization API Keys
+export interface ApiKeysUpdate {
+  sp_api_client_id?: string
+  sp_api_client_secret?: string
+  sp_api_aws_access_key?: string
+  sp_api_aws_secret_key?: string
+  sp_api_role_arn?: string
+}
+
+export interface ApiKeysResponse {
+  sp_api_client_id: string | null
+  sp_api_aws_access_key: string | null
+  sp_api_role_arn: string | null
+  has_client_secret: boolean
+  has_aws_secret_key: boolean
+}

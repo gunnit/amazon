@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import { TrendingUp, RefreshCw, Loader2, Calendar, Target } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -29,6 +30,7 @@ import type { Forecast, AmazonAccount } from '@/types'
 export default function Forecasts() {
   const [selectedAccount, setSelectedAccount] = useState<string>('')
   const [forecastHorizon, setForecastHorizon] = useState('30')
+  const [asin, setAsin] = useState('')
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -69,6 +71,7 @@ export default function Forecasts() {
     generateMutation.mutate({
       account_id: selectedAccount,
       horizon_days: parseInt(forecastHorizon),
+      ...(asin.trim() ? { asin: asin.trim() } : {}),
     })
   }
 
@@ -113,6 +116,15 @@ export default function Forecasts() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">ASIN (optional)</label>
+              <Input
+                value={asin}
+                onChange={(e) => setAsin(e.target.value)}
+                placeholder="e.g. B0B8R12XK1"
+                className="w-[200px]"
+              />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Forecast Horizon</label>

@@ -5,7 +5,6 @@ import {
   DollarSign,
   Package,
   ShoppingCart,
-  Target,
   Loader2,
 } from 'lucide-react'
 import {
@@ -22,7 +21,9 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { analyticsApi, accountsApi } from '@/services/api'
-import { formatCurrency, formatNumber, formatPercent, getDateRange } from '@/lib/utils'
+import { formatCurrency, formatNumber, formatPercent, cn } from '@/lib/utils'
+import { FilterBar, DateRangeFilter, AccountFilter } from '@/components/filters'
+import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import type { DashboardKPIs, TrendData, AccountSummary } from '@/types'
 
 function KPICard({
@@ -32,6 +33,8 @@ function KPICard({
   trend,
   icon: Icon,
   format = 'number',
+  emphasis = 'secondary',
+  className,
 }: {
   title: string
   value: number
@@ -39,6 +42,8 @@ function KPICard({
   trend?: 'up' | 'down' | 'stable'
   icon: React.ElementType
   format?: 'number' | 'currency' | 'percent'
+  emphasis?: 'primary' | 'secondary'
+  className?: string
 }) {
   const formattedValue =
     format === 'currency'
@@ -48,21 +53,41 @@ function KPICard({
       : formatNumber(value)
 
   return (
-    <Card>
+    <Card
+      className={cn(
+        emphasis === 'primary'
+          ? "border-border/70"
+          : "border-border/60",
+        className
+      )}
+    >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
+        <CardTitle
+          className={cn(
+            "uppercase tracking-wide",
+            emphasis === 'primary'
+              ? "text-xs font-semibold text-foreground"
+              : "text-[11px] font-medium text-muted-foreground"
+          )}
+        >
+          {title}
+        </CardTitle>
+        <Icon className="h-3.5 w-3.5 text-muted-foreground/70" />
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold">{formattedValue}</div>
+        <div className={cn(emphasis === 'primary' ? "text-3xl font-semibold" : "text-2xl font-semibold")}>
+          {formattedValue}
+        </div>
         {change !== null && change !== undefined && (
-          <div className="flex items-center text-xs text-muted-foreground mt-1">
+          <div className="flex items-center text-xs text-muted-foreground mt-2">
             {trend === 'up' ? (
-              <TrendingUp className="h-3 w-3 mr-1 text-green-500" />
+              <TrendingUp className="h-3 w-3 mr-1 text-emerald-500" />
             ) : trend === 'down' ? (
-              <TrendingDown className="h-3 w-3 mr-1 text-red-500" />
+              <TrendingDown className="h-3 w-3 mr-1 text-rose-500" />
             ) : null}
-            <span className={trend === 'up' ? 'text-green-500' : trend === 'down' ? 'text-red-500' : ''}>
+            <span
+              className={trend === 'up' ? 'text-emerald-500' : trend === 'down' ? 'text-rose-500' : ''}
+            >
               {formatPercent(change)}
             </span>
             <span className="ml-1">vs previous period</span>
@@ -73,23 +98,57 @@ function KPICard({
   )
 }
 
+function ChartEmptyState({
+  title,
+  description,
+}: {
+  title: string
+  description: string
+}) {
+  const bars = [5, 8, 3, 10, 6, 9, 4, 7, 5, 8]
+
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+      <div className="w-full max-w-sm rounded-md border border-dashed border-border/60 bg-muted/20 p-4">
+        <div className="grid grid-cols-10 items-end gap-2 h-16">
+          {bars.map((height, index) => (
+            <div
+              key={`${title}-bar-${index}`}
+              className="w-full rounded-sm bg-muted/40"
+              style={{ height: `${height * 6}%` }}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="space-y-1 text-sm text-muted-foreground">
+        <p className="text-foreground/90">{title}</p>
+        <p className="text-xs">{description}</p>
+      </div>
+    </div>
+  )
+}
+
 export default function Dashboard() {
-  const dateRange = getDateRange(30)
+  const filterState = useFilterStore()
+  const { datePreset, customStartDate, customEndDate, accountIds, resetDashboard } = filterState
+  const dateRange = getFilterDateRange({ datePreset, customStartDate, customEndDate })
 
   const { data: kpis, isLoading: kpisLoading } = useQuery<DashboardKPIs>({
-    queryKey: ['dashboard-kpis', dateRange],
+    queryKey: ['dashboard-kpis', dateRange, accountIds],
     queryFn: () => analyticsApi.getDashboard({
       start_date: dateRange.start,
       end_date: dateRange.end,
+      account_ids: accountIds.length > 0 ? accountIds : undefined,
     }),
   })
 
   const { data: trends, isLoading: trendsLoading } = useQuery<TrendData[]>({
-    queryKey: ['dashboard-trends', dateRange],
+    queryKey: ['dashboard-trends', dateRange, accountIds],
     queryFn: () => analyticsApi.getTrends({
       metrics: ['revenue', 'units'],
       start_date: dateRange.start,
       end_date: dateRange.end,
+      account_ids: accountIds.length > 0 ? accountIds : undefined,
     }),
   })
 
@@ -111,13 +170,21 @@ export default function Dashboard() {
   const revenueTrend = trends?.find((t) => t.metric_name === 'revenue')
   const unitsTrend = trends?.find((t) => t.metric_name === 'units')
 
+  const days = datePreset === 'custom' ? 'selected period' : `last ${datePreset} days`
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Overview of your Amazon accounts performance
-        </p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Track revenue and order volume across your connected Amazon accounts.
+          </p>
+        </div>
+        <FilterBar onReset={resetDashboard}>
+          <DateRangeFilter />
+          <AccountFilter />
+        </FilterBar>
       </div>
 
       {/* Account Status */}
@@ -146,13 +213,8 @@ export default function Dashboard() {
           trend={kpis?.total_revenue.trend}
           icon={DollarSign}
           format="currency"
-        />
-        <KPICard
-          title="Units Sold"
-          value={kpis?.total_units.value || 0}
-          change={kpis?.total_units.change_percent}
-          trend={kpis?.total_units.trend}
-          icon={Package}
+          emphasis="primary"
+          className="md:col-span-2"
         />
         <KPICard
           title="Total Orders"
@@ -162,27 +224,29 @@ export default function Dashboard() {
           icon={ShoppingCart}
         />
         <KPICard
-          title="ROAS"
-          value={kpis?.roas.value || 0}
-          change={null}
-          trend={kpis?.roas.trend}
-          icon={Target}
+          title="Units Sold"
+          value={kpis?.total_units.value || 0}
+          change={kpis?.total_units.change_percent}
+          trend={kpis?.total_units.trend}
+          icon={Package}
         />
       </div>
 
       {/* Charts */}
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
-          <CardHeader>
-            <CardTitle>Revenue Trend</CardTitle>
-            <CardDescription>Daily revenue over the last 30 days</CardDescription>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Revenue Trend</CardTitle>
+            <CardDescription className="text-xs">
+              Daily revenue over the {days}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-[300px]">
               {revenueTrend && revenueTrend.data_points.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={revenueTrend.data_points}>
-                    <CartesianGrid strokeDasharray="3 3" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis
                       dataKey="date"
                       tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -202,25 +266,28 @@ export default function Dashboard() {
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="flex items-center justify-center h-full text-muted-foreground">
-                  No data available
-                </div>
+                <ChartEmptyState
+                  title="We're still syncing revenue data."
+                  description="Once your account is connected, daily revenue will appear here within a few hours."
+                />
               )}
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Units Trend</CardTitle>
-            <CardDescription>Daily units sold over the last 30 days</CardDescription>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Units Trend</CardTitle>
+            <CardDescription className="text-xs">
+              Daily units sold over the {days}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-[300px]">
               {unitsTrend && unitsTrend.data_points.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={unitsTrend.data_points}>
-                    <CartesianGrid strokeDasharray="3 3" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis
                       dataKey="date"
                       tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -240,43 +307,14 @@ export default function Dashboard() {
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="flex items-center justify-center h-full text-muted-foreground">
-                  No data available
-                </div>
+                <ChartEmptyState
+                  title="Units will populate after the next sync."
+                  description="Connect an account or wait for the next data refresh to see unit volume."
+                />
               )}
             </div>
           </CardContent>
         </Card>
-      </div>
-
-      {/* Advertising KPIs */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <KPICard
-          title="ACoS"
-          value={kpis?.acos.value || 0}
-          change={null}
-          trend={kpis?.acos.trend}
-          icon={Target}
-          format="percent"
-        />
-        <KPICard
-          title="CTR"
-          value={kpis?.ctr.value || 0}
-          change={null}
-          trend={kpis?.ctr.trend}
-          icon={Target}
-          format="percent"
-        />
-        <KPICard
-          title="Active ASINs"
-          value={kpis?.active_asins || 0}
-          icon={Package}
-        />
-        <KPICard
-          title="Accounts Synced"
-          value={kpis?.accounts_synced || 0}
-          icon={ShoppingCart}
-        />
       </div>
     </div>
   )

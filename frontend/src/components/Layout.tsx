@@ -15,6 +15,7 @@ import {
   ChevronRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useAuthStore } from '@/store/authStore'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -187,11 +188,36 @@ export default function Layout() {
           <div className="flex-1" />
           <div className="flex items-center gap-4">
             <ThemeToggle />
-            <div className="hidden sm:flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Organization:</span>
-              <span className="font-medium">{organization?.name}</span>
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            </div>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="hidden sm:flex items-center gap-2 text-sm rounded-md px-3 py-1.5 hover:bg-muted transition-colors">
+                  <span className="text-muted-foreground">Organization:</span>
+                  <span className="font-medium">{organization?.name}</span>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56 p-2">
+                <div className="px-2 py-1.5 mb-1">
+                  <p className="text-sm font-medium">{organization?.name}</p>
+                  <p className="text-xs text-muted-foreground">{user?.email}</p>
+                </div>
+                <div className="h-px bg-border my-1" />
+                <Link
+                  to="/settings"
+                  className="flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm hover:bg-muted transition-colors w-full"
+                >
+                  <Settings className="h-4 w-4 text-muted-foreground" />
+                  Organization settings
+                </Link>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm hover:bg-muted transition-colors w-full text-left"
+                >
+                  <LogOut className="h-4 w-4 text-muted-foreground" />
+                  Log out
+                </button>
+              </PopoverContent>
+            </Popover>
           </div>
         </header>
 

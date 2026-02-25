@@ -66,6 +66,24 @@ class OrganizationMemberResponse(BaseModel):
         from_attributes = True
 
 
+class OrganizationApiKeysUpdate(BaseModel):
+    """Schema for updating organization SP-API credentials."""
+    sp_api_client_id: Optional[str] = None
+    sp_api_client_secret: Optional[str] = None
+    sp_api_aws_access_key: Optional[str] = None
+    sp_api_aws_secret_key: Optional[str] = None
+    sp_api_role_arn: Optional[str] = None
+
+
+class OrganizationApiKeysResponse(BaseModel):
+    """Schema for organization SP-API credentials (masked)."""
+    sp_api_client_id: Optional[str] = None
+    sp_api_aws_access_key: Optional[str] = None
+    sp_api_role_arn: Optional[str] = None
+    has_client_secret: bool = False
+    has_aws_secret_key: bool = False
+
+
 class Token(BaseModel):
     """Schema for JWT token response."""
     access_token: str

@@ -10,7 +10,9 @@ from app.schemas.account import (
     AmazonAccountCreate, AmazonAccountUpdate, AmazonAccountResponse,
     AccountStatusResponse, AccountSummary
 )
+from app.config import settings
 from app.core.security import encrypt_value, decrypt_value
+from app.core.exceptions import AmazonAPIError
 from app.services.data_extraction import DataExtractionService
 
 router = APIRouter()
@@ -192,6 +194,57 @@ async def delete_account(
     await db.delete(account)
 
 
+@router.post("/{account_id}/test-connection")
+async def test_connection(
+    account_id: UUID,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """Test SP-API connection for an account."""
+    result = await db.execute(
+        select(AmazonAccount)
+        .where(
+            AmazonAccount.id == account_id,
+            AmazonAccount.organization_id == organization.id
+        )
+    )
+    account = result.scalar_one_or_none()
+
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Account not found"
+        )
+
+    if settings.USE_MOCK_DATA:
+        return {
+            "status": "ok",
+            "mode": "mock",
+            "marketplace": account.marketplace_country,
+            "message": "Mock mode enabled - connection test skipped",
+        }
+
+    try:
+        from app.core.amazon.credentials import resolve_credentials
+        from app.core.amazon.sp_api_client import SPAPIClient, resolve_marketplace
+
+        credentials = resolve_credentials(account, organization)
+        marketplace = resolve_marketplace(account.marketplace_country)
+        client = SPAPIClient(credentials, marketplace)
+        smoke_result = client.smoke_test()
+        return {
+            "status": "ok",
+            "mode": "live",
+            **smoke_result,
+        }
+    except AmazonAPIError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Connection test failed: {e.message}",
+        )
+
+
 @router.post("/{account_id}/sync", response_model=AccountStatusResponse)
 async def trigger_sync(
     account_id: UUID,
@@ -221,8 +274,9 @@ async def trigger_sync(
     account.sync_error_message = None
     await db.flush()
 
-    # Queue background sync task
-    # background_tasks.add_task(DataExtractionService.sync_account, str(account_id))
+    # Queue background sync task via Celery
+    from workers.tasks.extraction import sync_account as sync_account_task
+    sync_account_task.delay(str(account_id))
 
     return AccountStatusResponse(
         id=account.id,
