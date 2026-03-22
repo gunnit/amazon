@@ -155,7 +155,7 @@ databases:
   # PostgreSQL Database
   - name: inthezon-db
     region: frankfurt
-    plan: basic
+    plan: basic-256mb
     databaseName: inthezon
     user: inthezon
     ipAllowList: []
