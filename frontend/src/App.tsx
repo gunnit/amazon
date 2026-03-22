@@ -9,6 +9,7 @@ import Accounts from '@/pages/Accounts'
 import Reports from '@/pages/Reports'
 import Analytics from '@/pages/Analytics'
 import Forecasts from '@/pages/Forecasts'
+import MarketResearch from '@/pages/MarketResearch'
 import Settings from '@/pages/Settings'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -44,6 +45,7 @@ function App() {
           <Route path="reports" element={<Reports />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="forecasts" element={<Forecasts />} />
+          <Route path="market-research" element={<MarketResearch />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

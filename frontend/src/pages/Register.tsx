@@ -10,24 +10,26 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/store/authStore'
-
-const registerSchema = z.object({
-  fullName: z.string().min(2, 'Name must be at least 2 characters'),
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
-  confirmPassword: z.string(),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "Passwords don't match",
-  path: ['confirmPassword'],
-})
-
-type RegisterForm = z.infer<typeof registerSchema>
+import { useTranslation } from '@/i18n'
 
 export default function Register() {
   const [isLoading, setIsLoading] = useState(false)
   const navigate = useNavigate()
   const { toast } = useToast()
   const { register: registerUser } = useAuthStore()
+  const { t } = useTranslation()
+
+  const registerSchema = z.object({
+    fullName: z.string().min(2, t('register.nameMin')),
+    email: z.string().email(t('register.invalidEmail')),
+    password: z.string().min(8, t('register.passwordMin')),
+    confirmPassword: z.string(),
+  }).refine((data) => data.password === data.confirmPassword, {
+    message: t('register.passwordsMismatch'),
+    path: ['confirmPassword'],
+  })
+
+  type RegisterForm = z.infer<typeof registerSchema>
 
   const {
     register,
@@ -42,15 +44,15 @@ export default function Register() {
     try {
       await registerUser(data.email, data.password, data.fullName)
       toast({
-        title: 'Account created!',
-        description: 'Welcome to Inthezon.',
+        title: t('register.successTitle'),
+        description: t('register.successDesc'),
       })
       navigate('/')
     } catch (error: unknown) {
       toast({
         variant: 'destructive',
-        title: 'Registration failed',
-        description: 'An error occurred. Please try again.',
+        title: t('register.failedTitle'),
+        description: t('register.failedDesc'),
       })
     } finally {
       setIsLoading(false)
@@ -64,19 +66,19 @@ export default function Register() {
           <div className="flex justify-center mb-4">
             <span className="text-3xl font-bold text-primary">Inthezon</span>
           </div>
-          <CardTitle className="text-2xl text-center">Create an account</CardTitle>
+          <CardTitle className="text-2xl text-center">{t('register.title')}</CardTitle>
           <CardDescription className="text-center">
-            Start managing your Amazon accounts today
+            {t('register.subtitle')}
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit(onSubmit)}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="fullName">Full Name</Label>
+              <Label htmlFor="fullName">{t('register.fullName')}</Label>
               <Input
                 id="fullName"
                 type="text"
-                placeholder="John Doe"
+                placeholder={t('register.fullNamePlaceholder')}
                 {...register('fullName')}
               />
               {errors.fullName && (
@@ -84,11 +86,11 @@ export default function Register() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t('common.email')}</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder={t('register.emailPlaceholder')}
                 {...register('email')}
               />
               {errors.email && (
@@ -96,11 +98,11 @@ export default function Register() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">{t('common.password')}</Label>
               <Input
                 id="password"
                 type="password"
-                placeholder="At least 8 characters"
+                placeholder={t('register.passwordPlaceholder')}
                 {...register('password')}
               />
               {errors.password && (
@@ -108,11 +110,11 @@ export default function Register() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
+              <Label htmlFor="confirmPassword">{t('register.confirmPassword')}</Label>
               <Input
                 id="confirmPassword"
                 type="password"
-                placeholder="Confirm your password"
+                placeholder={t('register.confirmPlaceholder')}
                 {...register('confirmPassword')}
               />
               {errors.confirmPassword && (
@@ -123,12 +125,12 @@ export default function Register() {
           <CardFooter className="flex flex-col gap-4">
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create Account
+              {t('register.createAccount')}
             </Button>
             <p className="text-sm text-center text-muted-foreground">
-              Already have an account?{' '}
+              {t('register.hasAccount')}{' '}
               <Link to="/login" className="text-primary hover:underline">
-                Sign in
+                {t('register.signIn')}
               </Link>
             </p>
           </CardFooter>

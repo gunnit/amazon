@@ -40,7 +40,6 @@ class Settings(BaseSettings):
     AMAZON_SP_API_ROLE_ARN: Optional[str] = None
 
     # SP-API Settings
-    USE_MOCK_DATA: bool = True
     SP_API_REPORT_POLL_INTERVAL_SECONDS: int = 15
     SP_API_REPORT_POLL_MAX_ATTEMPTS: int = 40
 
@@ -61,6 +60,10 @@ class Settings(BaseSettings):
 
     # Encryption
     ENCRYPTION_KEY: Optional[str] = None
+
+    # Anthropic (AI Analysis)
+    ANTHROPIC_API_KEY: Optional[str] = None
+    MARKET_RESEARCH_MAX_COMPETITORS: int = 5
 
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60

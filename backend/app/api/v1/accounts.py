@@ -10,12 +10,30 @@ from app.schemas.account import (
     AmazonAccountCreate, AmazonAccountUpdate, AmazonAccountResponse,
     AccountStatusResponse, AccountSummary
 )
-from app.config import settings
 from app.core.security import encrypt_value, decrypt_value
 from app.core.exceptions import AmazonAPIError
 from app.services.data_extraction import DataExtractionService
 
 router = APIRouter()
+
+
+def _account_to_response(account: AmazonAccount) -> AmazonAccountResponse:
+    """Convert ORM account to response with computed fields."""
+    return AmazonAccountResponse(
+        id=account.id,
+        organization_id=account.organization_id,
+        account_name=account.account_name,
+        account_type=account.account_type,
+        marketplace_id=account.marketplace_id,
+        marketplace_country=account.marketplace_country,
+        is_active=account.is_active,
+        last_sync_at=account.last_sync_at,
+        sync_status=account.sync_status,
+        sync_error_message=account.sync_error_message,
+        has_refresh_token=bool(account.sp_api_refresh_token_encrypted),
+        created_at=account.created_at,
+        updated_at=account.updated_at,
+    )
 
 
 @router.get("", response_model=List[AmazonAccountResponse])
@@ -30,7 +48,7 @@ async def list_accounts(
         .where(AmazonAccount.organization_id == organization.id)
         .order_by(AmazonAccount.created_at.desc())
     )
-    return result.scalars().all()
+    return [_account_to_response(a) for a in result.scalars().all()]
 
 
 @router.post("", response_model=AmazonAccountResponse, status_code=status.HTTP_201_CREATED)
@@ -61,7 +79,7 @@ async def create_account(
     await db.flush()
     await db.refresh(account)
 
-    return account
+    return _account_to_response(account)
 
 
 @router.get("/summary", response_model=AccountSummary)
@@ -123,7 +141,7 @@ async def get_account(
             detail="Account not found"
         )
 
-    return account
+    return _account_to_response(account)
 
 
 @router.put("/{account_id}", response_model=AmazonAccountResponse)
@@ -165,7 +183,7 @@ async def update_account(
     await db.flush()
     await db.refresh(account)
 
-    return account
+    return _account_to_response(account)
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -217,21 +235,13 @@ async def test_connection(
             detail="Account not found"
         )
 
-    if settings.USE_MOCK_DATA:
-        return {
-            "status": "ok",
-            "mode": "mock",
-            "marketplace": account.marketplace_country,
-            "message": "Mock mode enabled - connection test skipped",
-        }
-
     try:
         from app.core.amazon.credentials import resolve_credentials
         from app.core.amazon.sp_api_client import SPAPIClient, resolve_marketplace
 
         credentials = resolve_credentials(account, organization)
         marketplace = resolve_marketplace(account.marketplace_country)
-        client = SPAPIClient(credentials, marketplace)
+        client = SPAPIClient(credentials, marketplace, account_type=account.account_type.value)
         smoke_result = client.smoke_test()
         return {
             "status": "ok",

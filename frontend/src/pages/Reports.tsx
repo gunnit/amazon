@@ -1,16 +1,14 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  FileSpreadsheet,
-  Presentation,
+  Download,
   Loader2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useToast } from '@/components/ui/use-toast'
-import { reportsApi, exportsApi } from '@/services/api'
-import { formatCurrency, formatNumber, formatDate } from '@/lib/utils'
+import { reportsApi } from '@/services/api'
+import { formatCurrency, formatDate, formatNumber } from '@/lib/utils'
 import {
   FilterBar,
   DateRangeFilter,
@@ -19,12 +17,16 @@ import {
   ToggleFilter,
 } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
-import type { SalesAggregated } from '@/types'
+import { useTranslation } from '@/i18n'
+import { ExportModal } from '@/components/ExportModal'
+import type { AdvertisingMetricsItem, InventoryReportItem, SalesAggregated } from '@/types'
+
+type ReportTab = 'sales' | 'inventory' | 'advertising'
 
 export default function Reports() {
-  const [activeTab, setActiveTab] = useState('sales')
-  const [isExporting, setIsExporting] = useState(false)
-  const { toast } = useToast()
+  const [activeTab, setActiveTab] = useState<ReportTab>('sales')
+  const [exportModalOpen, setExportModalOpen] = useState(false)
+  const { t } = useTranslation()
 
   const filterState = useFilterStore()
   const {
@@ -57,7 +59,7 @@ export default function Reports() {
     }),
   })
 
-  const { data: inventoryData, isLoading: inventoryLoading } = useQuery({
+  const { data: inventoryData = [], isLoading: inventoryLoading } = useQuery<InventoryReportItem[]>({
     queryKey: ['inventory', accountIds, reportsLowStockOnly],
     queryFn: () => reportsApi.getInventory({
       account_ids: accountIds.length > 0 ? accountIds : undefined,
@@ -66,7 +68,7 @@ export default function Reports() {
     enabled: activeTab === 'inventory',
   })
 
-  const { data: advertisingData, isLoading: advertisingLoading } = useQuery({
+  const { data: advertisingData = [], isLoading: advertisingLoading } = useQuery<AdvertisingMetricsItem[]>({
     queryKey: ['advertising', dateRange, accountIds],
     queryFn: () => reportsApi.getAdvertising({
       start_date: dateRange.start,
@@ -76,86 +78,31 @@ export default function Reports() {
     enabled: activeTab === 'advertising',
   })
 
-  const handleExportExcel = async () => {
-    setIsExporting(true)
-    try {
-      const blob = await exportsApi.exportExcel({
-        start_date: dateRange.start,
-        end_date: dateRange.end,
-        include_sales: true,
-        include_advertising: true,
-      })
-
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `inthezon_report_${dateRange.start}_${dateRange.end}.xlsx`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
-
-      toast({ title: 'Excel report downloaded' })
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: 'Export failed',
-        description: 'Please try again.',
-      })
-    } finally {
-      setIsExporting(false)
-    }
-  }
-
-  const handleExportPowerPoint = async () => {
-    setIsExporting(true)
-    try {
-      const blob = await exportsApi.exportPowerPoint({
-        start_date: dateRange.start,
-        end_date: dateRange.end,
-      })
-
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `inthezon_presentation_${dateRange.start}_${dateRange.end}.pptx`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
-
-      toast({ title: 'PowerPoint presentation downloaded' })
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: 'Export failed',
-        description: 'Please try again.',
-      })
-    } finally {
-      setIsExporting(false)
-    }
-  }
-
-  // Calculate totals
   const totals = salesData?.reduce(
-    (acc, day) => ({
-      totalUnits: acc.totalUnits + day.total_units,
-      totalSales: acc.totalSales + day.total_sales,
-      totalOrders: acc.totalOrders + day.total_orders,
+    (acc, row) => ({
+      totalUnits: acc.totalUnits + Number(row.total_units),
+      totalSales: acc.totalSales + Number(row.total_sales),
+      totalOrders: acc.totalOrders + Number(row.total_orders),
     }),
     { totalUnits: 0, totalSales: 0, totalOrders: 0 }
   ) || { totalUnits: 0, totalSales: 0, totalOrders: 0 }
 
   const groupByLabel =
-    reportsGroupBy === 'week' ? 'Weekly' : reportsGroupBy === 'month' ? 'Monthly' : 'Daily'
+    reportsGroupBy === 'week'
+      ? t('reports.weeklySales')
+      : reportsGroupBy === 'month'
+      ? t('reports.monthlySales')
+      : t('reports.dailySales')
+
+  const salesCurrency = salesData?.[0]?.currency || 'EUR'
 
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Reports</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t('reports.title')}</h1>
           <p className="text-muted-foreground">
-            View and export your Amazon performance data
+            {t('reports.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -167,58 +114,52 @@ export default function Reports() {
             )}
             {activeTab === 'inventory' && (
               <ToggleFilter
-                label="Low stock only"
+                label={t('filter.lowStockOnly')}
                 checked={reportsLowStockOnly}
                 onChange={setReportsLowStockOnly}
                 id="low-stock-toggle"
               />
             )}
           </FilterBar>
-          <Button variant="outline" size="sm" onClick={handleExportExcel} disabled={isExporting} className="h-9">
-            <FileSpreadsheet className="mr-2 h-4 w-4" />
-            Excel
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleExportPowerPoint} disabled={isExporting} className="h-9">
-            <Presentation className="mr-2 h-4 w-4" />
-            PowerPoint
+          <Button variant="outline" size="sm" onClick={() => setExportModalOpen(true)} className="h-9">
+            <Download className="mr-2 h-4 w-4" />
+            {t('export.button')}
           </Button>
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ReportTab)} className="space-y-4">
         <TabsList>
-          <TabsTrigger value="sales">Sales</TabsTrigger>
-          <TabsTrigger value="inventory">Inventory</TabsTrigger>
-          <TabsTrigger value="advertising">Advertising</TabsTrigger>
+          <TabsTrigger value="sales">{t('reports.sales')}</TabsTrigger>
+          <TabsTrigger value="inventory">{t('reports.inventory')}</TabsTrigger>
+          <TabsTrigger value="advertising">{t('reports.advertising')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sales" className="space-y-4">
-          {/* Summary Cards */}
           <div className="grid gap-4 md:grid-cols-3">
             <Card>
               <CardContent className="pt-6">
-                <div className="text-2xl font-bold">{formatCurrency(totals.totalSales)}</div>
-                <p className="text-sm text-muted-foreground">Total Revenue</p>
+                <div className="text-2xl font-bold">{formatCurrency(totals.totalSales, salesCurrency)}</div>
+                <p className="text-sm text-muted-foreground">{t('reports.totalRevenue')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="pt-6">
                 <div className="text-2xl font-bold">{formatNumber(totals.totalUnits)}</div>
-                <p className="text-sm text-muted-foreground">Units Sold</p>
+                <p className="text-sm text-muted-foreground">{t('reports.unitsSold')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="pt-6">
                 <div className="text-2xl font-bold">{formatNumber(totals.totalOrders)}</div>
-                <p className="text-sm text-muted-foreground">Total Orders</p>
+                <p className="text-sm text-muted-foreground">{t('reports.totalOrders')}</p>
               </CardContent>
             </Card>
           </div>
 
-          {/* Data Table */}
           <Card>
             <CardHeader>
-              <CardTitle>{groupByLabel} Sales</CardTitle>
+              <CardTitle>{groupByLabel}</CardTitle>
               <CardDescription>
                 {dateRange.start} to {dateRange.end}
               </CardDescription>
@@ -233,19 +174,19 @@ export default function Reports() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b">
-                        <th className="text-left py-3 px-4 font-medium">Date</th>
-                        <th className="text-right py-3 px-4 font-medium">Units</th>
-                        <th className="text-right py-3 px-4 font-medium">Revenue</th>
-                        <th className="text-right py-3 px-4 font-medium">Orders</th>
+                        <th className="text-left py-3 px-4 font-medium">{t('reports.date')}</th>
+                        <th className="text-right py-3 px-4 font-medium">{t('common.units')}</th>
+                        <th className="text-right py-3 px-4 font-medium">{t('common.revenue')}</th>
+                        <th className="text-right py-3 px-4 font-medium">{t('common.orders')}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {salesData.map((day, index) => (
-                        <tr key={index} className="border-b last:border-0">
-                          <td className="py-3 px-4">{formatDate(day.date)}</td>
-                          <td className="py-3 px-4 text-right">{formatNumber(day.total_units)}</td>
-                          <td className="py-3 px-4 text-right">{formatCurrency(day.total_sales)}</td>
-                          <td className="py-3 px-4 text-right">{formatNumber(day.total_orders)}</td>
+                      {salesData.map((row) => (
+                        <tr key={row.date} className="border-b last:border-0">
+                          <td className="py-3 px-4">{formatDate(row.date)}</td>
+                          <td className="py-3 px-4 text-right">{formatNumber(Number(row.total_units))}</td>
+                          <td className="py-3 px-4 text-right">{formatCurrency(Number(row.total_sales), row.currency || 'EUR')}</td>
+                          <td className="py-3 px-4 text-right">{formatNumber(Number(row.total_orders))}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -253,7 +194,7 @@ export default function Reports() {
                 </div>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
-                  No sales data available for this period
+                  {t('reports.noSalesData')}
                 </div>
               )}
             </CardContent>
@@ -263,44 +204,46 @@ export default function Reports() {
         <TabsContent value="inventory">
           <Card>
             <CardHeader>
-              <CardTitle>Inventory Status</CardTitle>
-              <CardDescription>Current stock levels across all accounts</CardDescription>
+              <CardTitle>{t('reports.inventoryStatus')}</CardTitle>
+              <CardDescription>{t('reports.inventoryDesc')}</CardDescription>
             </CardHeader>
             <CardContent>
               {inventoryLoading ? (
                 <div className="flex items-center justify-center h-32">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 </div>
-              ) : inventoryData && (inventoryData as unknown[]).length > 0 ? (
+              ) : inventoryData.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
                       <tr className="border-b">
-                        <th className="text-left py-3 px-4 font-medium">ASIN</th>
-                        <th className="text-left py-3 px-4 font-medium">SKU</th>
-                        <th className="text-right py-3 px-4 font-medium">On Hand</th>
-                        <th className="text-right py-3 px-4 font-medium">Inbound</th>
+                        <th className="text-left py-3 px-4 font-medium">{t('reports.asin')}</th>
+                        <th className="text-left py-3 px-4 font-medium">{t('reports.sku')}</th>
+                        <th className="text-right py-3 px-4 font-medium">{t('reports.onHand')}</th>
+                        <th className="text-right py-3 px-4 font-medium">{t('reports.inbound')}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {(inventoryData as Array<{ asin: string; sku: string; on_hand: number; inbound: number }>).map(
-                        (item, index) => (
-                          <tr key={index} className="border-b last:border-0">
-                            <td className="py-3 px-4 font-mono text-sm">{item.asin}</td>
-                            <td className="py-3 px-4">{item.sku}</td>
-                            <td className="py-3 px-4 text-right">{formatNumber(item.on_hand)}</td>
-                            <td className="py-3 px-4 text-right">{formatNumber(item.inbound)}</td>
-                          </tr>
-                        )
-                      )}
+                      {inventoryData.map((item) => (
+                        <tr key={`${item.snapshot_date}-${item.asin}`} className="border-b last:border-0">
+                          <td className="py-3 px-4 font-mono text-sm">{item.asin}</td>
+                          <td className="py-3 px-4">{item.sku || '-'}</td>
+                          <td className="py-3 px-4 text-right">
+                            {formatNumber(item.afn_fulfillable_quantity + item.mfn_fulfillable_quantity)}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            {formatNumber(item.afn_inbound_working_quantity + item.afn_inbound_shipped_quantity)}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
                   {reportsLowStockOnly
-                    ? 'No low-stock items found'
-                    : 'Connect an account and sync to view inventory data'}
+                    ? t('reports.noLowStock')
+                    : t('reports.noInventory')}
                 </div>
               )}
             </CardContent>
@@ -310,48 +253,48 @@ export default function Reports() {
         <TabsContent value="advertising">
           <Card>
             <CardHeader>
-              <CardTitle>Advertising Performance</CardTitle>
-              <CardDescription>PPC campaign metrics</CardDescription>
+              <CardTitle>{t('reports.advertisingPerformance')}</CardTitle>
+              <CardDescription>{t('reports.ppcMetrics')}</CardDescription>
             </CardHeader>
             <CardContent>
               {advertisingLoading ? (
                 <div className="flex items-center justify-center h-32">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 </div>
-              ) : advertisingData && (advertisingData as unknown[]).length > 0 ? (
+              ) : advertisingData.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
                       <tr className="border-b">
-                        <th className="text-left py-3 px-4 font-medium">Campaign</th>
-                        <th className="text-right py-3 px-4 font-medium">Spend</th>
-                        <th className="text-right py-3 px-4 font-medium">Clicks</th>
-                        <th className="text-right py-3 px-4 font-medium">ACoS</th>
+                        <th className="text-left py-3 px-4 font-medium">{t('reports.campaign')}</th>
+                        <th className="text-right py-3 px-4 font-medium">{t('reports.spend')}</th>
+                        <th className="text-right py-3 px-4 font-medium">{t('reports.clicks')}</th>
+                        <th className="text-right py-3 px-4 font-medium">{t('reports.acos')}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {(advertisingData as Array<{ campaign: string; spend: number; clicks: number; acos: number }>).map(
-                        (item, index) => (
-                          <tr key={index} className="border-b last:border-0">
-                            <td className="py-3 px-4">{item.campaign}</td>
-                            <td className="py-3 px-4 text-right">{formatCurrency(item.spend)}</td>
-                            <td className="py-3 px-4 text-right">{formatNumber(item.clicks)}</td>
-                            <td className="py-3 px-4 text-right">{(item.acos * 100).toFixed(1)}%</td>
-                          </tr>
-                        )
-                      )}
+                      {advertisingData.map((item) => (
+                        <tr key={`${item.campaign_id}-${item.date}`} className="border-b last:border-0">
+                          <td className="py-3 px-4">{item.campaign_name || '-'}</td>
+                          <td className="py-3 px-4 text-right">{formatCurrency(Number(item.cost), salesCurrency)}</td>
+                          <td className="py-3 px-4 text-right">{formatNumber(Number(item.clicks))}</td>
+                          <td className="py-3 px-4 text-right">{(Number(item.acos || 0) * 100).toFixed(1)}%</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
               ) : (
                 <div className="text-center py-8 text-muted-foreground">
-                  Connect an account and sync to view advertising data
+                  {t('reports.noAdvertising')}
                 </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      <ExportModal open={exportModalOpen} onOpenChange={setExportModalOpen} />
     </div>
   )
 }

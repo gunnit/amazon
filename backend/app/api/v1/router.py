@@ -1,7 +1,7 @@
 """Main API router."""
 from fastapi import APIRouter
 
-from app.api.v1 import auth, accounts, reports, analytics, catalog, forecasts, exports, alerts
+from app.api.v1 import auth, accounts, reports, analytics, catalog, forecasts, exports, alerts, market_research
 
 api_router = APIRouter()
 
@@ -13,3 +13,4 @@ api_router.include_router(catalog.router, prefix="/catalog", tags=["Catalog Mana
 api_router.include_router(forecasts.router, prefix="/forecasts", tags=["Forecasting"])
 api_router.include_router(exports.router, prefix="/exports", tags=["Exports"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["Alerts"])
+api_router.include_router(market_research.router, prefix="/market-research", tags=["Market Research"])

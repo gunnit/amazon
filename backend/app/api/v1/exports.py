@@ -1,18 +1,143 @@
-"""Export endpoints for Excel, PowerPoint, etc."""
+"""Export endpoints for Excel, PowerPoint, and CSV packages."""
 from typing import List, Optional
 from datetime import date, timedelta
 from uuid import UUID
 import io
-from fastapi import APIRouter, HTTPException, status, Response
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 from app.models.amazon_account import AmazonAccount
 from app.models.sales_data import SalesData
+from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.export_service import ExportService
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
 
 router = APIRouter()
+
+
+@router.post("/csv")
+async def export_to_csv_package(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    report_type: str = Query(..., regex="^(sales|inventory|advertising)$"),
+    start_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
+    end_date: date = Query(default_factory=lambda: date.today()),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    group_by: str = Query(default="day", regex="^(day|week|month)$"),
+    low_stock_only: bool = Query(default=False),
+    language: str = Query(default="en", regex="^(en|it)$"),
+    include_comparison: bool = Query(default=True),
+):
+    """Generate a professional CSV ZIP package for the selected report."""
+    export_service = ExportService(db)
+    package_bytes, filename = await export_service.generate_csv_package(
+        organization_id=organization.id,
+        report_type=report_type,
+        start_date=start_date,
+        end_date=end_date,
+        account_ids=account_ids,
+        group_by=group_by,
+        low_stock_only=low_stock_only,
+        language=language,
+        include_comparison=include_comparison,
+    )
+
+    return StreamingResponse(
+        io.BytesIO(package_bytes),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.post("/bundle")
+async def export_bundle(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    report_types: List[str] = Query(...),
+    start_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
+    end_date: date = Query(default_factory=lambda: date.today()),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    group_by: str = Query(default="day", regex="^(day|week|month)$"),
+    low_stock_only: bool = Query(default=False),
+    language: str = Query(default="en", regex="^(en|it)$"),
+    include_comparison: bool = Query(default=True),
+):
+    """Generate a bundled CSV ZIP package with multiple report types."""
+    valid_types = {"sales", "inventory", "advertising"}
+    for rt in report_types:
+        if rt not in valid_types:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid report_type: {rt}. Must be one of {valid_types}",
+            )
+
+    export_service = ExportService(db)
+    package_bytes, filename = await export_service.generate_bundle_package(
+        organization_id=organization.id,
+        report_types=report_types,
+        start_date=start_date,
+        end_date=end_date,
+        account_ids=account_ids,
+        group_by=group_by,
+        low_stock_only=low_stock_only,
+        language=language,
+        include_comparison=include_comparison,
+    )
+
+    return StreamingResponse(
+        io.BytesIO(package_bytes),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.post("/excel-bundle")
+async def export_excel_bundle(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    report_types: List[str] = Query(...),
+    start_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
+    end_date: date = Query(default_factory=lambda: date.today()),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    group_by: str = Query(default="day", regex="^(day|week|month)$"),
+    low_stock_only: bool = Query(default=False),
+    language: str = Query(default="en", regex="^(en|it)$"),
+    include_comparison: bool = Query(default=True),
+    template: str = Query(default="corporate", regex="^(clean|corporate|executive)$"),
+):
+    """Generate a styled Excel workbook with multiple report types."""
+    valid_types = {"sales", "inventory", "advertising"}
+    for rt in report_types:
+        if rt not in valid_types:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid report_type: {rt}. Must be one of {valid_types}",
+            )
+
+    export_service = ExportService(db)
+    package_bytes, filename = await export_service.generate_excel_bundle(
+        organization_id=organization.id,
+        report_types=report_types,
+        start_date=start_date,
+        end_date=end_date,
+        template=template,
+        account_ids=account_ids,
+        group_by=group_by,
+        low_stock_only=low_stock_only,
+        language=language,
+        include_comparison=include_comparison,
+    )
+
+    return StreamingResponse(
+        io.BytesIO(package_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.post("/excel")
@@ -20,11 +145,11 @@ async def export_to_excel(
     current_user: CurrentUser,
     organization: CurrentOrganization,
     db: DbSession,
-    start_date: date = date.today() - timedelta(days=30),
-    end_date: date = date.today(),
-    account_ids: Optional[List[UUID]] = None,
-    include_sales: bool = True,
-    include_advertising: bool = True,
+    start_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
+    end_date: date = Query(default_factory=lambda: date.today()),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    include_sales: bool = Query(default=True),
+    include_advertising: bool = Query(default=True),
 ):
     """Generate Excel export of data."""
     import pandas as pd
@@ -61,6 +186,7 @@ async def export_to_excel(
             select(SalesData)
             .where(
                 SalesData.account_id.in_(accounts_query),
+                SalesData.asin != DAILY_TOTAL_ASIN,
                 SalesData.date >= start_date,
                 SalesData.date <= end_date,
             )
@@ -144,10 +270,10 @@ async def export_to_powerpoint(
     current_user: CurrentUser,
     organization: CurrentOrganization,
     db: DbSession,
-    start_date: date = date.today() - timedelta(days=30),
-    end_date: date = date.today(),
-    account_ids: Optional[List[UUID]] = None,
-    template: str = "default",
+    start_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
+    end_date: date = Query(default_factory=lambda: date.today()),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    template: str = Query(default="default"),
 ):
     """Generate PowerPoint presentation."""
     from pptx import Presentation

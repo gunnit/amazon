@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models.user import User, Organization, OrganizationMember, UserRole
 from app.schemas.user import (
     UserCreate, UserUpdate, UserResponse, UserLogin, Token,
+    PasswordChange, NotificationPreferences,
     OrganizationCreate, OrganizationResponse,
     OrganizationApiKeysUpdate, OrganizationApiKeysResponse,
 )
@@ -163,6 +164,60 @@ async def update_current_user(
     return current_user
 
 
+@router.put("/me/password")
+async def change_password(
+    password_in: PasswordChange,
+    current_user: CurrentUser,
+    db: DbSession,
+):
+    """Change the current user's password."""
+    if not verify_password(password_in.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+
+    current_user.hashed_password = get_password_hash(password_in.new_password)
+    await db.flush()
+    return {"message": "Password changed successfully"}
+
+
+@router.get("/me/notifications", response_model=NotificationPreferences)
+async def get_notification_preferences(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+):
+    """Get notification preferences for the current user."""
+    prefs = (organization.settings or {}).get(f"notification_prefs_{current_user.id}")
+    if prefs:
+        return NotificationPreferences(**prefs)
+    return NotificationPreferences()
+
+
+@router.put("/me/notifications", response_model=NotificationPreferences)
+async def update_notification_preferences(
+    prefs_in: NotificationPreferences,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """Update notification preferences for the current user."""
+    current_settings = dict(organization.settings or {})
+    current_settings[f"notification_prefs_{current_user.id}"] = prefs_in.model_dump()
+    organization.settings = current_settings
+    await db.flush()
+    return prefs_in
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_current_user(
+    current_user: CurrentUser,
+    db: DbSession,
+):
+    """Permanently delete the current user's account."""
+    await db.delete(current_user)
+
+
 @router.post("/organization", response_model=OrganizationResponse, status_code=status.HTTP_201_CREATED)
 async def create_organization(org_in: OrganizationCreate, current_user: CurrentUser, db: DbSession):
     """Create a new organization."""
@@ -290,3 +345,19 @@ async def update_organization_api_keys(
     await db.refresh(organization)
 
     return _build_api_keys_response(sp_api)
+
+
+@router.delete("/organization/api-keys", response_model=OrganizationApiKeysResponse)
+async def delete_organization_api_keys(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """Remove all saved SP-API credentials for the organization."""
+    current_settings = dict(organization.settings or {})
+    current_settings.pop("sp_api", None)
+    organization.settings = current_settings
+    await db.flush()
+    await db.refresh(organization)
+
+    return _build_api_keys_response(None)

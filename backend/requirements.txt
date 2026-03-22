@@ -36,6 +36,9 @@ aiohttp==3.9.1
 python-dateutil==2.8.2
 cryptography==41.0.7
 
+# AI Analysis
+anthropic>=0.39.0
+
 # Email
 sendgrid==6.11.0
 

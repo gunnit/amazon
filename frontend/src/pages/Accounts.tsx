@@ -8,6 +8,9 @@ import {
   Clock,
   Loader2,
   Trash2,
+  CheckCircle2,
+  AlertTriangle,
+  KeyRound,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,42 +25,45 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
-import { accountsApi } from '@/services/api'
+import { accountsApi, authApi } from '@/services/api'
 import { formatDate } from '@/lib/utils'
-import type { AmazonAccount, AccountSummary, SyncStatus } from '@/types'
+import { useTranslation } from '@/i18n'
+import { Link } from 'react-router-dom'
+import type { AmazonAccount, AccountSummary, SyncStatus, ApiKeysResponse } from '@/types'
 
 const marketplaces = [
-  { id: 'A1PA6795UKMFR9', country: 'DE', name: 'Germany' },
-  { id: 'APJ6JRA9NG5V4', country: 'IT', name: 'Italy' },
-  { id: 'A1F83G8C2ARO7P', country: 'UK', name: 'United Kingdom' },
-  { id: 'A13V1IB3VIYZZH', country: 'FR', name: 'France' },
-  { id: 'A1RKKUPIHCS9HS', country: 'ES', name: 'Spain' },
+  { id: 'A1PA6795UKMFR9', country: 'DE', nameKey: 'marketplace.DE' },
+  { id: 'APJ6JRA9NG5V4', country: 'IT', nameKey: 'marketplace.IT' },
+  { id: 'A1F83G8C2ARO7P', country: 'UK', nameKey: 'marketplace.UK' },
+  { id: 'A13V1IB3VIYZZH', country: 'FR', nameKey: 'marketplace.FR' },
+  { id: 'A1RKKUPIHCS9HS', country: 'ES', nameKey: 'marketplace.ES' },
 ]
 
 function StatusBadge({ status }: { status: SyncStatus }) {
+  const { t } = useTranslation()
   switch (status) {
     case 'success':
       return (
         <Badge variant="success" className="gap-1">
-          <Check className="h-3 w-3" /> Synced
+          <Check className="h-3 w-3" /> {t('accounts.status.synced')}
         </Badge>
       )
     case 'syncing':
       return (
         <Badge variant="secondary" className="gap-1">
-          <Loader2 className="h-3 w-3 animate-spin" /> Syncing
+          <Loader2 className="h-3 w-3 animate-spin" /> {t('accounts.status.syncing')}
         </Badge>
       )
     case 'error':
       return (
         <Badge variant="destructive" className="gap-1">
-          <AlertCircle className="h-3 w-3" /> Error
+          <AlertCircle className="h-3 w-3" /> {t('accounts.status.error')}
         </Badge>
       )
     default:
       return (
         <Badge variant="outline" className="gap-1">
-          <Clock className="h-3 w-3" /> Pending
+          <Clock className="h-3 w-3" /> {t('accounts.status.pending')}
         </Badge>
       )
   }
@@ -70,29 +76,36 @@ function AddAccountDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  const { t } = useTranslation()
   const [accountName, setAccountName] = useState('')
   const [accountType, setAccountType] = useState<'seller' | 'vendor'>('seller')
   const [marketplace, setMarketplace] = useState('')
-  const [loginEmail, setLoginEmail] = useState('')
-  const [loginPassword, setLoginPassword] = useState('')
+  const [refreshToken, setRefreshToken] = useState('')
 
   const queryClient = useQueryClient()
   const { toast } = useToast()
+
+  const { data: savedApiKeys } = useQuery<ApiKeysResponse>({
+    queryKey: ['api-keys'],
+    queryFn: () => authApi.getApiKeys(),
+  })
+
+  const hasOrgApiKeys = !!(savedApiKeys?.sp_api_client_id || savedApiKeys?.has_client_secret)
 
   const createMutation = useMutation({
     mutationFn: (data: Partial<AmazonAccount>) => accountsApi.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] })
       queryClient.invalidateQueries({ queryKey: ['accounts-summary'] })
-      toast({ title: 'Account added successfully' })
+      toast({ title: t('accounts.addedSuccess') })
       onOpenChange(false)
       resetForm()
     },
     onError: () => {
       toast({
         variant: 'destructive',
-        title: 'Failed to add account',
-        description: 'Please check your credentials and try again.',
+        title: t('accounts.addedFailed'),
+        description: t('accounts.addedFailedDesc'),
       })
     },
   })
@@ -101,8 +114,7 @@ function AddAccountDialog({
     setAccountName('')
     setAccountType('seller')
     setMarketplace('')
-    setLoginEmail('')
-    setLoginPassword('')
+    setRefreshToken('')
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -115,8 +127,7 @@ function AddAccountDialog({
       account_type: accountType,
       marketplace_id: marketplace,
       marketplace_country: selectedMarketplace.country,
-      login_email: loginEmail,
-      login_password: loginPassword,
+      refresh_token: refreshToken || undefined,
     } as Partial<AmazonAccount>)
   }
 
@@ -126,78 +137,90 @@ function AddAccountDialog({
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>Add Amazon Account</CardTitle>
+          <CardTitle>{t('accounts.dialog.title')}</CardTitle>
           <CardDescription>
-            Connect a new Amazon Seller or Vendor account
+            {t('accounts.dialog.subtitle')}
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
+            {/* API key status banner */}
+            {hasOrgApiKeys ? (
+              <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                {t('accounts.dialog.apiKeysConfigured')}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span>
+                  {t('accounts.dialog.apiKeysMissing')}{' '}
+                  <Link to="/settings" className="underline font-medium" onClick={() => onOpenChange(false)}>
+                    {t('nav.settings')}
+                  </Link>
+                </span>
+              </div>
+            )}
+
             <div className="space-y-2">
-              <Label htmlFor="accountName">Account Name</Label>
+              <Label htmlFor="accountName">{t('accounts.dialog.accountName')}</Label>
               <Input
                 id="accountName"
-                placeholder="My Store"
+                placeholder={t('accounts.dialog.accountNamePlaceholder')}
                 value={accountName}
                 onChange={(e) => setAccountName(e.target.value)}
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="accountType">Account Type</Label>
+              <Label htmlFor="accountType">{t('accounts.dialog.accountType')}</Label>
               <Select value={accountType} onValueChange={(v: 'seller' | 'vendor') => setAccountType(v)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="seller">Seller Central</SelectItem>
-                  <SelectItem value="vendor">Vendor Central</SelectItem>
+                  <SelectItem value="seller">{t('accounts.dialog.seller')}</SelectItem>
+                  <SelectItem value="vendor">{t('accounts.dialog.vendor')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="marketplace">Marketplace</Label>
+              <Label htmlFor="marketplace">{t('accounts.dialog.marketplace')}</Label>
               <Select value={marketplace} onValueChange={setMarketplace}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select marketplace" />
+                  <SelectValue placeholder={t('accounts.dialog.selectMarketplace')} />
                 </SelectTrigger>
                 <SelectContent>
                   {marketplaces.map((m) => (
                     <SelectItem key={m.id} value={m.id}>
-                      {m.name} ({m.country})
+                      {t(m.nameKey)} ({m.country})
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="loginEmail">Login Email</Label>
+              <Label htmlFor="refreshToken">{t('accounts.dialog.refreshToken')}</Label>
               <Input
-                id="loginEmail"
-                type="email"
-                placeholder="email@example.com"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="loginPassword">Login Password</Label>
-              <Input
-                id="loginPassword"
+                id="refreshToken"
                 type="password"
-                placeholder="Account password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder={t('accounts.dialog.refreshTokenPlaceholder')}
+                value={refreshToken}
+                onChange={(e) => setRefreshToken(e.target.value)}
+                required
               />
+              <p className="text-xs text-muted-foreground">
+                {t('accounts.dialog.refreshTokenHelp')}
+              </p>
             </div>
           </CardContent>
           <div className="flex justify-end gap-2 p-6 pt-0">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={createMutation.isPending}>
               {createMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Add Account
+              {t('accounts.addAccount')}
             </Button>
           </div>
         </form>
@@ -210,6 +233,7 @@ export default function Accounts() {
   const [showAddDialog, setShowAddDialog] = useState(false)
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { t } = useTranslation()
 
   const { data: accounts, isLoading } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -225,12 +249,12 @@ export default function Accounts() {
     mutationFn: (id: string) => accountsApi.triggerSync(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] })
-      toast({ title: 'Sync started' })
+      toast({ title: t('accounts.syncStarted') })
     },
     onError: () => {
       toast({
         variant: 'destructive',
-        title: 'Failed to start sync',
+        title: t('accounts.syncFailed'),
       })
     },
   })
@@ -240,12 +264,12 @@ export default function Accounts() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] })
       queryClient.invalidateQueries({ queryKey: ['accounts-summary'] })
-      toast({ title: 'Account deleted' })
+      toast({ title: t('accounts.deleted') })
     },
     onError: () => {
       toast({
         variant: 'destructive',
-        title: 'Failed to delete account',
+        title: t('accounts.deleteFailed'),
       })
     },
   })
@@ -262,14 +286,14 @@ export default function Accounts() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Amazon Accounts</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t('accounts.title')}</h1>
           <p className="text-muted-foreground">
-            Manage your connected Amazon Seller and Vendor accounts
+            {t('accounts.subtitle')}
           </p>
         </div>
         <Button onClick={() => setShowAddDialog(true)}>
           <Plus className="mr-2 h-4 w-4" />
-          Add Account
+          {t('accounts.addAccount')}
         </Button>
       </div>
 
@@ -278,25 +302,25 @@ export default function Accounts() {
         <Card>
           <CardContent className="pt-6">
             <div className="text-2xl font-bold">{summary?.total_accounts || 0}</div>
-            <p className="text-sm text-muted-foreground">Total Accounts</p>
+            <p className="text-sm text-muted-foreground">{t('accounts.totalAccounts')}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
             <div className="text-2xl font-bold text-green-600">{summary?.active_accounts || 0}</div>
-            <p className="text-sm text-muted-foreground">Active</p>
+            <p className="text-sm text-muted-foreground">{t('accounts.active')}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
             <div className="text-2xl font-bold text-blue-600">{summary?.syncing_accounts || 0}</div>
-            <p className="text-sm text-muted-foreground">Syncing</p>
+            <p className="text-sm text-muted-foreground">{t('accounts.syncing')}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
             <div className="text-2xl font-bold text-red-600">{summary?.error_accounts || 0}</div>
-            <p className="text-sm text-muted-foreground">Errors</p>
+            <p className="text-sm text-muted-foreground">{t('accounts.errors')}</p>
           </CardContent>
         </Card>
       </div>
@@ -306,10 +330,10 @@ export default function Accounts() {
         {accounts?.length === 0 ? (
           <Card>
             <CardContent className="py-10 text-center">
-              <p className="text-muted-foreground">No accounts connected yet.</p>
+              <p className="text-muted-foreground">{t('accounts.noAccounts')}</p>
               <Button className="mt-4" onClick={() => setShowAddDialog(true)}>
                 <Plus className="mr-2 h-4 w-4" />
-                Add Your First Account
+                {t('accounts.addFirstAccount')}
               </Button>
             </CardContent>
           </Card>
@@ -319,14 +343,23 @@ export default function Accounts() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div className="space-y-1">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap">
                       <h3 className="font-semibold text-lg">{account.account_name}</h3>
                       <StatusBadge status={account.sync_status} />
                       <Badge variant="outline">{account.account_type}</Badge>
                       <Badge variant="secondary">{account.marketplace_country}</Badge>
+                      {account.has_refresh_token ? (
+                        <Badge variant="outline" className="gap-1 border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-400">
+                          <KeyRound className="h-3 w-3" /> {t('accounts.credentialsOk')}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="gap-1 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400">
+                          <AlertTriangle className="h-3 w-3" /> {t('accounts.missingRefreshToken')}
+                        </Badge>
+                      )}
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      Last synced: {account.last_sync_at ? formatDate(account.last_sync_at) : 'Never'}
+                      {t('accounts.lastSynced')} {account.last_sync_at ? formatDate(account.last_sync_at) : t('common.never')}
                     </p>
                     {account.sync_error_message && (
                       <p className="text-sm text-destructive">{account.sync_error_message}</p>
@@ -340,13 +373,13 @@ export default function Accounts() {
                       disabled={syncMutation.isPending || account.sync_status === 'syncing'}
                     >
                       <RefreshCw className="mr-2 h-4 w-4" />
-                      Sync
+                      {t('accounts.sync')}
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={() => {
-                        if (confirm('Are you sure you want to delete this account?')) {
+                        if (confirm(t('accounts.deleteConfirm'))) {
                           deleteMutation.mutate(account.id)
                         }
                       }}

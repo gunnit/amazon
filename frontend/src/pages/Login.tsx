@@ -10,19 +10,21 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/store/authStore'
-
-const loginSchema = z.object({
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(1, 'Password is required'),
-})
-
-type LoginForm = z.infer<typeof loginSchema>
+import { useTranslation } from '@/i18n'
 
 export default function Login() {
   const [isLoading, setIsLoading] = useState(false)
   const navigate = useNavigate()
   const { toast } = useToast()
   const { login } = useAuthStore()
+  const { t } = useTranslation()
+
+  const loginSchema = z.object({
+    email: z.string().email(t('login.invalidEmail')),
+    password: z.string().min(1, t('login.passwordRequired')),
+  })
+
+  type LoginForm = z.infer<typeof loginSchema>
 
   const {
     register,
@@ -37,15 +39,15 @@ export default function Login() {
     try {
       await login(data.email, data.password)
       toast({
-        title: 'Welcome back!',
-        description: 'You have successfully logged in.',
+        title: t('login.successTitle'),
+        description: t('login.successDesc'),
       })
       navigate('/')
     } catch (error: unknown) {
       toast({
         variant: 'destructive',
-        title: 'Login failed',
-        description: 'Invalid email or password. Please try again.',
+        title: t('login.failedTitle'),
+        description: t('login.failedDesc'),
       })
     } finally {
       setIsLoading(false)
@@ -59,19 +61,19 @@ export default function Login() {
           <div className="flex justify-center mb-4">
             <span className="text-3xl font-bold text-primary">Inthezon</span>
           </div>
-          <CardTitle className="text-2xl text-center">Welcome back</CardTitle>
+          <CardTitle className="text-2xl text-center">{t('login.welcomeBack')}</CardTitle>
           <CardDescription className="text-center">
-            Enter your credentials to access your account
+            {t('login.subtitle')}
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit(onSubmit)}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t('common.email')}</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder={t('login.emailPlaceholder')}
                 {...register('email')}
               />
               {errors.email && (
@@ -79,11 +81,11 @@ export default function Login() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">{t('common.password')}</Label>
               <Input
                 id="password"
                 type="password"
-                placeholder="Enter your password"
+                placeholder={t('login.passwordPlaceholder')}
                 {...register('password')}
               />
               {errors.password && (
@@ -94,12 +96,12 @@ export default function Login() {
           <CardFooter className="flex flex-col gap-4">
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Sign In
+              {t('login.signIn')}
             </Button>
             <p className="text-sm text-center text-muted-foreground">
-              Don't have an account?{' '}
+              {t('login.noAccount')}{' '}
               <Link to="/register" className="text-primary hover:underline">
-                Sign up
+                {t('login.signUp')}
               </Link>
             </p>
           </CardFooter>

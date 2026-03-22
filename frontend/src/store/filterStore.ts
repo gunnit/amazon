@@ -115,8 +115,11 @@ export function getFilterDateRange(state: Pick<FilterState, 'datePreset' | 'cust
   const start = new Date()
   start.setDate(start.getDate() - days)
 
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
   return {
-    start: start.toISOString().split('T')[0],
-    end: end.toISOString().split('T')[0],
+    start: fmt(start),
+    end: fmt(end),
   }
 }

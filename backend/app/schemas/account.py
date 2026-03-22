@@ -58,6 +58,7 @@ class AmazonAccountResponse(BaseModel):
     last_sync_at: Optional[datetime]
     sync_status: SyncStatus
     sync_error_message: Optional[str]
+    has_refresh_token: bool = False
     created_at: datetime
     updated_at: datetime
 

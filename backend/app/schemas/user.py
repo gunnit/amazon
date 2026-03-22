@@ -84,6 +84,19 @@ class OrganizationApiKeysResponse(BaseModel):
     has_aws_secret_key: bool = False
 
 
+class PasswordChange(BaseModel):
+    """Schema for changing password."""
+    current_password: str
+    new_password: str = Field(..., min_length=8)
+
+
+class NotificationPreferences(BaseModel):
+    """Schema for notification preferences."""
+    daily_digest: bool = True
+    alert_emails: bool = True
+    sync_notifications: bool = False
+
+
 class Token(BaseModel):
     """Schema for JWT token response."""
     access_token: str

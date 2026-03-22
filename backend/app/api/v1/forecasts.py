@@ -1,14 +1,18 @@
 """Forecasting endpoints."""
+import logging
 from typing import List, Optional
 from datetime import date, timedelta
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 from app.models.amazon_account import AmazonAccount
 from app.models.forecast import Forecast
 from app.schemas.analytics import ForecastResponse, ForecastPrediction
+from app.services.forecast_service import ForecastService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -71,7 +75,6 @@ async def list_forecasts(
 @router.post("/generate", response_model=dict)
 async def generate_forecast(
     account_id: UUID,
-    background_tasks: BackgroundTasks,
     current_user: CurrentUser = None,
     organization: CurrentOrganization = None,
     db: DbSession = None,
@@ -96,42 +99,25 @@ async def generate_forecast(
             detail="Account not found"
         )
 
-    # Queue forecast generation (would use Celery in production)
-    # For now, create a placeholder forecast
-    from datetime import datetime
-    import random
-
-    predictions = []
-    base_value = random.uniform(1000, 5000)
-    for i in range(horizon_days):
-        pred_date = date.today() + timedelta(days=i + 1)
-        value = base_value * (1 + random.uniform(-0.1, 0.1))
-        predictions.append({
-            "date": pred_date.isoformat(),
-            "value": round(value, 2),
-            "lower": round(value * 0.85, 2),
-            "upper": round(value * 1.15, 2),
-        })
-
-    forecast = Forecast(
-        account_id=account_id,
-        asin=asin,
-        forecast_type=forecast_type,
-        forecast_horizon_days=horizon_days,
-        model_used="prophet",
-        confidence_interval=0.95,
-        predictions=predictions,
-        mape=random.uniform(5, 15),
-        rmse=random.uniform(100, 500),
-    )
-    db.add(forecast)
-    await db.flush()
-    await db.refresh(forecast)
+    service = ForecastService(db)
+    try:
+        forecast = await service.generate_forecast(
+            account_id=account_id,
+            asin=asin or None,
+            horizon_days=horizon_days,
+            model="prophet",
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        )
 
     return {
         "id": str(forecast.id),
         "status": "completed",
         "message": f"Forecast generated for {horizon_days} days",
+        "model_used": forecast.model_used,
     }
 
 

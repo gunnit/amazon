@@ -36,6 +36,7 @@ export interface AmazonAccount {
   last_sync_at: string | null
   sync_status: SyncStatus
   sync_error_message: string | null
+  has_refresh_token: boolean
   created_at: string
   updated_at: string
 }
@@ -97,6 +98,18 @@ export interface TrendData {
   max_value: number
 }
 
+export interface CategorySalesData {
+  category: string
+  total_revenue: number
+  total_units: number
+  total_orders: number
+}
+
+export interface HourlyOrdersData {
+  hour: number
+  orders: number
+}
+
 // Sales data types
 export interface SalesData {
   id: number
@@ -118,6 +131,38 @@ export interface SalesAggregated {
   total_sales: number
   total_orders: number
   currency: string
+}
+
+export interface InventoryReportItem {
+  id: number
+  account_id: string
+  snapshot_date: string
+  asin: string
+  sku: string | null
+  fnsku: string | null
+  afn_fulfillable_quantity: number
+  afn_inbound_working_quantity: number
+  afn_inbound_shipped_quantity: number
+  afn_reserved_quantity: number
+  afn_total_quantity: number
+  mfn_fulfillable_quantity: number
+}
+
+export interface AdvertisingMetricsItem {
+  id: number
+  campaign_id: string
+  campaign_name: string
+  campaign_type: string
+  date: string
+  impressions: number
+  clicks: number
+  cost: number | string
+  attributed_sales_7d: number | string
+  attributed_units_ordered_7d: number
+  ctr: number | string | null
+  cpc: number | string | null
+  acos: number | string | null
+  roas: number | string | null
 }
 
 // Product types
@@ -156,6 +201,73 @@ export interface Forecast {
   predictions: ForecastPrediction[]
   mape: number | null
   rmse: number | null
+}
+
+// Market Research types
+export interface ProductSnapshot {
+  asin: string
+  title: string | null
+  brand: string | null
+  category: string | null
+  price: number | null
+  bsr: number | null
+  review_count: number | null
+  rating: number | null
+}
+
+export interface CompetitorSnapshot extends ProductSnapshot {}
+
+export interface AIRecommendation {
+  area: string
+  priority: 'high' | 'medium' | 'low'
+  action: string
+  expected_impact: string
+}
+
+export interface AIAnalysis {
+  strengths: string[]
+  weaknesses: string[]
+  recommendations: AIRecommendation[]
+  overall_score: number
+  summary: string
+}
+
+export interface MarketResearchReport {
+  id: string
+  organization_id: string
+  account_id: string
+  source_asin: string
+  marketplace: string | null
+  language: 'en' | 'it'
+  title: string | null
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  error_message: string | null
+  product_snapshot: ProductSnapshot | null
+  competitor_data: CompetitorSnapshot[] | null
+  ai_analysis: AIAnalysis | null
+  created_at: string
+  completed_at: string | null
+}
+
+export interface MarketResearchListItem {
+  id: string
+  title: string | null
+  source_asin: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  language: 'en' | 'it'
+  created_at: string
+  competitor_count: number
+}
+
+export interface CompetitorSuggestion {
+  asin: string
+  title: string | null
+  brand: string | null
+  marketplace: string
+  current_price: number | null
+  current_bsr: number | null
+  review_count: number | null
+  rating: number | null
 }
 
 // Alert types

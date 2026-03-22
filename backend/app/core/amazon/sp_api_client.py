@@ -13,6 +13,8 @@ from sp_api.api import (
     Inventories,
     CatalogItems,
     Products,
+    Orders,
+    VendorOrders,
 )
 
 from app.config import settings
@@ -98,9 +100,10 @@ def with_throttle_retry(max_retries: int = 3, base_delay: float = 2.0):
 class SPAPIClient:
     """Synchronous SP-API client for use in Celery workers."""
 
-    def __init__(self, credentials: dict, marketplace: Marketplaces):
+    def __init__(self, credentials: dict, marketplace: Marketplaces, account_type: str = "seller"):
         self.marketplace = marketplace
         self.credentials = credentials
+        self.account_type = account_type  # "seller" or "vendor"
 
         # Build kwargs for SP-API constructors
         self._api_kwargs: Dict[str, Any] = {
@@ -121,6 +124,10 @@ class SPAPIClient:
             self._api_kwargs["credentials"]["aws_secret_key"] = aws_secret
             self._api_kwargs["credentials"]["role_arn"] = role_arn
 
+    @property
+    def is_vendor(self) -> bool:
+        return self.account_type == "vendor"
+
     def _reports_api(self) -> Reports:
         return Reports(**self._api_kwargs)
 
@@ -133,19 +140,30 @@ class SPAPIClient:
     def _products_api(self) -> Products:
         return Products(**self._api_kwargs)
 
+    def _orders_api(self) -> Orders:
+        return Orders(**self._api_kwargs)
+
+    def _vendor_orders_api(self) -> VendorOrders:
+        return VendorOrders(**self._api_kwargs)
+
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def smoke_test(self) -> dict:
         """Validate SP-API authentication with a lightweight call."""
         try:
-            api = self._inventories_api()
-            api.get_inventory_summary_marketplace(
-                details=False,
-                granularityType="Marketplace",
-                granularityId=self.marketplace.marketplace_id,
-            )
+            if self.is_vendor:
+                api = self._vendor_orders_api()
+                api.get_purchase_orders(
+                    createdAfter=(datetime.utcnow()).isoformat(),
+                )
+            else:
+                api = self._orders_api()
+                api.get_orders(
+                    CreatedAfter=(datetime.utcnow()).isoformat(),
+                )
             return {
                 "status": "ok",
                 "marketplace": self.marketplace.name,
+                "account_type": self.account_type,
                 "timestamp": datetime.utcnow().isoformat(),
             }
         except SellingApiRequestThrottledException:
@@ -218,8 +236,8 @@ class SPAPIClient:
         )
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
-    def get_sales_report(self, start_date: date, end_date: date) -> List[Dict]:
-        """Get sales and traffic report data (by ASIN, daily granularity)."""
+    def get_sales_report(self, start_date: date, end_date: date) -> Dict[str, List[Dict]]:
+        """Get sales and traffic report data (by date and by ASIN)."""
         report_data = self.request_and_download_report(
             report_type="GET_SALES_AND_TRAFFIC_REPORT",
             start_date=start_date,
@@ -230,18 +248,27 @@ class SPAPIClient:
             },
         )
 
-        # The downloaded report is a JSON document
+        # The downloaded report may be:
+        # 1) raw JSON string
+        # 2) metadata dict with JSON payload inside "document"
         if isinstance(report_data, str):
             report_data = json.loads(report_data)
+        elif isinstance(report_data, dict) and "document" in report_data:
+            document = report_data.get("document")
+            if isinstance(document, (bytes, bytearray)):
+                document = document.decode("utf-8")
+            if isinstance(document, str):
+                report_data = json.loads(document)
+            elif isinstance(document, dict):
+                report_data = document
 
-        # Extract the sales and traffic rows
-        rows = []
-        sales_traffic = report_data.get("salesAndTrafficByAsin", [])
-        for entry in sales_traffic:
-            rows.append(entry)
+        by_date = report_data.get("salesAndTrafficByDate", [])
+        by_asin = report_data.get("salesAndTrafficByAsin", [])
 
-        logger.info(f"Sales report returned {len(rows)} ASIN-day rows")
-        return rows
+        logger.info(
+            f"Sales report returned {len(by_date)} daily rows and {len(by_asin)} ASIN rows"
+        )
+        return {"by_date": by_date, "by_asin": by_asin}
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_inventory_summaries(self) -> List[Dict]:
@@ -280,7 +307,7 @@ class SPAPIClient:
             response = api.get_catalog_item(
                 asin=asin,
                 marketplaceIds=[self.marketplace.marketplace_id],
-                includedData=["summaries", "salesRanks"],
+                includedData=["summaries", "salesRanks", "classifications"],
             )
             return response.payload
         except Exception as e:
@@ -307,3 +334,121 @@ class SPAPIClient:
         except Exception as e:
             logger.warning(f"Failed to get competitive pricing for {asin}: {e}")
             return None
+
+    @with_throttle_retry(max_retries=3, base_delay=3.0)
+    def search_competitor_asins(
+        self,
+        keywords: str,
+        source_asin: str,
+        source_brand: Optional[str] = None,
+        max_results: int = 10,
+    ) -> List[Dict]:
+        """Search catalog for competitor products, excluding the source ASIN.
+
+        Returns list of dicts with: asin, title, brand, classifications.
+        """
+        try:
+            api = self._catalog_api()
+            response = api.search_catalog_items(
+                keywords=keywords,
+                marketplaceIds=[self.marketplace.marketplace_id],
+                includedData=["summaries", "salesRanks", "classifications"],
+                pageSize=min(max_results + 5, 20),  # fetch extra to filter
+            )
+            items = response.payload.get("items", [])
+            results = []
+            for item in items:
+                asin = item.get("asin", "")
+                if asin == source_asin:
+                    continue  # skip the source product
+
+                summaries = item.get("summaries", [])
+                summary = summaries[0] if summaries else {}
+                brand = summary.get("brand", "")
+
+                # Optionally skip same-brand products
+                if source_brand and brand and brand.lower() == source_brand.lower():
+                    continue
+
+                result = {
+                    "asin": asin,
+                    "title": summary.get("itemName"),
+                    "brand": brand or None,
+                    "classifications": item.get("classifications", []),
+                    "salesRanks": item.get("salesRanks", []),
+                }
+                results.append(result)
+
+                if len(results) >= max_results:
+                    break
+
+            logger.info(
+                f"Competitor search for '{keywords[:50]}' returned "
+                f"{len(results)} results (source={source_asin})"
+            )
+            return results
+        except Exception as e:
+            logger.warning(f"Catalog search failed for '{keywords[:50]}': {e}")
+            return []
+
+    # ---- Vendor-specific methods ----
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_vendor_purchase_orders(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> List[Dict]:
+        """Get vendor purchase orders for the given date range."""
+        api = self._vendor_orders_api()
+        all_orders = []
+        next_token = None
+
+        while True:
+            kwargs = {
+                "createdAfter": datetime.combine(start_date, datetime.min.time()).isoformat(),
+                "createdBefore": datetime.combine(end_date, datetime.max.time()).isoformat(),
+            }
+            if next_token:
+                kwargs["nextToken"] = next_token
+
+            response = api.get_purchase_orders(**kwargs)
+            payload = response.payload or {}
+
+            orders = payload.get("orders", [])
+            all_orders.extend(orders)
+
+            pagination = payload.get("pagination", {})
+            next_token = pagination.get("nextToken")
+            if not next_token:
+                break
+
+        logger.info(f"Vendor purchase orders returned {len(all_orders)} orders")
+        return all_orders
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_vendor_sales_report(self, start_date: date, end_date: date) -> Dict[str, Any]:
+        """Get vendor sales data via Reports API with vendor-specific report type."""
+        report_data = self.request_and_download_report(
+            report_type="GET_VENDOR_SALES_DIAGNOSTIC_REPORT",
+            start_date=start_date,
+            end_date=end_date,
+            report_options={
+                "reportPeriod": "DAY",
+                "sellingProgram": "RETAIL",
+            },
+        )
+
+        if isinstance(report_data, str):
+            report_data = json.loads(report_data)
+        elif isinstance(report_data, dict) and "document" in report_data:
+            document = report_data.get("document")
+            if isinstance(document, (bytes, bytearray)):
+                document = document.decode("utf-8")
+            if isinstance(document, str):
+                report_data = json.loads(document)
+            elif isinstance(document, dict):
+                report_data = document
+
+        logger.info(f"Vendor sales report returned data keys: {list(report_data.keys()) if isinstance(report_data, dict) else 'non-dict'}")
+        return report_data if isinstance(report_data, dict) else {}

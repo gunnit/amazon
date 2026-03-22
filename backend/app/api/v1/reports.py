@@ -2,12 +2,13 @@
 from typing import List, Optional
 from datetime import date, timedelta
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select, func, and_
+from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import select, func, Date, cast
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 from app.models.amazon_account import AmazonAccount
 from app.models.sales_data import SalesData
+from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.models.inventory import InventoryData
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
 from app.schemas.report import (
@@ -43,6 +44,7 @@ async def get_sales_data(
         select(SalesData)
         .where(
             SalesData.account_id.in_(accounts_query),
+            SalesData.asin != DAILY_TOTAL_ASIN,
             SalesData.date >= start_date,
             SalesData.date <= end_date,
         )
@@ -75,9 +77,16 @@ async def get_sales_aggregated(
     if account_ids:
         accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
 
+    if group_by == "week":
+        period_expr = cast(func.date_trunc("week", SalesData.date), Date)
+    elif group_by == "month":
+        period_expr = cast(func.date_trunc("month", SalesData.date), Date)
+    else:
+        period_expr = SalesData.date
+
     query = (
         select(
-            SalesData.date,
+            period_expr.label("period_date"),
             func.sum(SalesData.units_ordered).label("total_units"),
             func.sum(SalesData.ordered_product_sales).label("total_sales"),
             func.sum(SalesData.total_order_items).label("total_orders"),
@@ -85,11 +94,12 @@ async def get_sales_aggregated(
         )
         .where(
             SalesData.account_id.in_(accounts_query),
+            SalesData.asin == DAILY_TOTAL_ASIN,
             SalesData.date >= start_date,
             SalesData.date <= end_date,
         )
-        .group_by(SalesData.date, SalesData.currency)
-        .order_by(SalesData.date)
+        .group_by(period_expr, SalesData.currency)
+        .order_by(period_expr)
     )
 
     result = await db.execute(query)
@@ -97,7 +107,7 @@ async def get_sales_aggregated(
 
     return [
         SalesDataAggregated(
-            date=row.date,
+            date=row.period_date,
             total_units=row.total_units or 0,
             total_sales=row.total_sales or 0,
             total_orders=row.total_orders or 0,

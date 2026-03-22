@@ -24,6 +24,7 @@ import { analyticsApi, accountsApi } from '@/services/api'
 import { formatCurrency, formatNumber, formatPercent, cn } from '@/lib/utils'
 import { FilterBar, DateRangeFilter, AccountFilter } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
+import { useTranslation } from '@/i18n'
 import type { DashboardKPIs, TrendData, AccountSummary } from '@/types'
 
 function KPICard({
@@ -45,6 +46,7 @@ function KPICard({
   emphasis?: 'primary' | 'secondary'
   className?: string
 }) {
+  const { t } = useTranslation()
   const formattedValue =
     format === 'currency'
       ? formatCurrency(value)
@@ -90,7 +92,7 @@ function KPICard({
             >
               {formatPercent(change)}
             </span>
-            <span className="ml-1">vs previous period</span>
+            <span className="ml-1">{t('common.vsPreviousPeriod')}</span>
           </div>
         )}
       </CardContent>
@@ -129,6 +131,7 @@ function ChartEmptyState({
 }
 
 export default function Dashboard() {
+  const { t } = useTranslation()
   const filterState = useFilterStore()
   const { datePreset, customStartDate, customEndDate, accountIds, resetDashboard } = filterState
   const dateRange = getFilterDateRange({ datePreset, customStartDate, customEndDate })
@@ -170,15 +173,15 @@ export default function Dashboard() {
   const revenueTrend = trends?.find((t) => t.metric_name === 'revenue')
   const unitsTrend = trends?.find((t) => t.metric_name === 'units')
 
-  const days = datePreset === 'custom' ? 'selected period' : `last ${datePreset} days`
+  const days = datePreset === 'custom' ? t('common.selectedPeriod') : t('common.lastNDays', { n: datePreset })
 
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{t('dashboard.title')}</h1>
           <p className="text-muted-foreground">
-            Track revenue and order volume across your connected Amazon accounts.
+            {t('dashboard.subtitle')}
           </p>
         </div>
         <FilterBar onReset={resetDashboard}>
@@ -190,16 +193,16 @@ export default function Dashboard() {
       {/* Account Status */}
       <div className="flex gap-4 flex-wrap">
         <Badge variant="success" className="text-sm py-1 px-3">
-          {accountSummary?.active_accounts || 0} Active Accounts
+          {accountSummary?.active_accounts || 0} {t('dashboard.activeAccounts')}
         </Badge>
         {accountSummary?.syncing_accounts ? (
           <Badge variant="secondary" className="text-sm py-1 px-3">
-            {accountSummary.syncing_accounts} Syncing
+            {accountSummary.syncing_accounts} {t('dashboard.syncing')}
           </Badge>
         ) : null}
         {accountSummary?.error_accounts ? (
           <Badge variant="destructive" className="text-sm py-1 px-3">
-            {accountSummary.error_accounts} Errors
+            {accountSummary.error_accounts} {t('dashboard.errors')}
           </Badge>
         ) : null}
       </div>
@@ -207,7 +210,7 @@ export default function Dashboard() {
       {/* KPI Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <KPICard
-          title="Total Revenue"
+          title={t('dashboard.totalRevenue')}
           value={kpis?.total_revenue.value || 0}
           change={kpis?.total_revenue.change_percent}
           trend={kpis?.total_revenue.trend}
@@ -217,14 +220,14 @@ export default function Dashboard() {
           className="md:col-span-2"
         />
         <KPICard
-          title="Total Orders"
+          title={t('dashboard.totalOrders')}
           value={kpis?.total_orders.value || 0}
           change={kpis?.total_orders.change_percent}
           trend={kpis?.total_orders.trend}
           icon={ShoppingCart}
         />
         <KPICard
-          title="Units Sold"
+          title={t('dashboard.unitsSold')}
           value={kpis?.total_units.value || 0}
           change={kpis?.total_units.change_percent}
           trend={kpis?.total_units.trend}
@@ -236,9 +239,9 @@ export default function Dashboard() {
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Revenue Trend</CardTitle>
+            <CardTitle className="text-base">{t('dashboard.revenueTrend')}</CardTitle>
             <CardDescription className="text-xs">
-              Daily revenue over the {days}
+              {t('dashboard.revenueTrendDesc', { days })}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -249,12 +252,12 @@ export default function Dashboard() {
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis
                       dataKey="date"
-                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      tickFormatter={(value) => new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     />
                     <YAxis tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`} />
                     <Tooltip
-                      formatter={(value: number) => [formatCurrency(value), 'Revenue']}
-                      labelFormatter={(label) => new Date(label).toLocaleDateString()}
+                      formatter={(value: number) => [formatCurrency(value), t('common.revenue')]}
+                      labelFormatter={(label) => new Date(label + 'T00:00:00').toLocaleDateString()}
                     />
                     <Area
                       type="monotone"
@@ -267,8 +270,8 @@ export default function Dashboard() {
                 </ResponsiveContainer>
               ) : (
                 <ChartEmptyState
-                  title="We're still syncing revenue data."
-                  description="Once your account is connected, daily revenue will appear here within a few hours."
+                  title={t('dashboard.revenueEmptyTitle')}
+                  description={t('dashboard.revenueEmptyDesc')}
                 />
               )}
             </div>
@@ -277,9 +280,9 @@ export default function Dashboard() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Units Trend</CardTitle>
+            <CardTitle className="text-base">{t('dashboard.unitsTrend')}</CardTitle>
             <CardDescription className="text-xs">
-              Daily units sold over the {days}
+              {t('dashboard.unitsTrendDesc', { days })}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -290,12 +293,12 @@ export default function Dashboard() {
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis
                       dataKey="date"
-                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      tickFormatter={(value) => new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     />
                     <YAxis />
                     <Tooltip
-                      formatter={(value: number) => [formatNumber(value), 'Units']}
-                      labelFormatter={(label) => new Date(label).toLocaleDateString()}
+                      formatter={(value: number) => [formatNumber(value), t('common.units')]}
+                      labelFormatter={(label) => new Date(label + 'T00:00:00').toLocaleDateString()}
                     />
                     <Line
                       type="monotone"
@@ -308,8 +311,8 @@ export default function Dashboard() {
                 </ResponsiveContainer>
               ) : (
                 <ChartEmptyState
-                  title="Units will populate after the next sync."
-                  description="Connect an account or wait for the next data refresh to see unit volume."
+                  title={t('dashboard.unitsEmptyTitle')}
+                  description={t('dashboard.unitsEmptyDesc')}
                 />
               )}
             </div>

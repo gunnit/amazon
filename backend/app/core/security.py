@@ -63,8 +63,11 @@ def get_fernet() -> Fernet:
     """Get Fernet instance for encryption/decryption."""
     key = settings.ENCRYPTION_KEY
     if not key:
-        # Generate a default key for development
-        key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+        raise RuntimeError(
+            "ENCRYPTION_KEY is not set. Generate one with: "
+            "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" "
+            "and add it to your .env file."
+        )
     return Fernet(key.encode() if isinstance(key, str) else key)
 
 

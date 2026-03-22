@@ -8,8 +8,8 @@ import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.config import settings
 from app.models.amazon_account import AmazonAccount, SyncStatus
 from app.models.sales_data import SalesData
 from app.models.inventory import InventoryData
@@ -18,6 +18,11 @@ from app.core.security import decrypt_value
 from app.core.exceptions import AmazonAPIError
 
 logger = logging.getLogger(__name__)
+
+# Sentinel ASIN used for daily aggregate records (from salesAndTrafficByDate).
+# These rows carry accurate per-day totals and are used for dashboard KPIs,
+# trends, and comparison queries.  Real per-ASIN rows use actual ASINs.
+DAILY_TOTAL_ASIN = "__DAILY_TOTAL__"
 
 
 class DataExtractionService:
@@ -41,7 +46,7 @@ class DataExtractionService:
 
         credentials = resolve_credentials(account, organization)
         marketplace = resolve_marketplace(account.marketplace_country)
-        return SPAPIClient(credentials, marketplace)
+        return SPAPIClient(credentials, marketplace, account_type=account.account_type.value)
 
     async def sync_account(self, account_id: UUID) -> Dict[str, Any]:
         """Sync all data for an account."""
@@ -60,16 +65,21 @@ class DataExtractionService:
             # Load org for credential resolution
             organization = await self._load_organization(account)
 
-            # Validate SP-API auth before real sync
-            if not settings.USE_MOCK_DATA:
-                client = self._create_sp_api_client(account, organization)
-                client.smoke_test()
-                logger.info(f"SP-API auth validated for {account.account_name}")
+            # Validate SP-API auth before sync
+            client = self._create_sp_api_client(account, organization)
+            client.smoke_test()
+            logger.info(f"SP-API auth validated for {account.account_name}")
 
-            # Sync different data types
-            sales_count = await self.sync_sales_data(account, organization)
-            inventory_count = await self.sync_inventory_data(account, organization)
-            products_count = await self.sync_products(account, organization)
+            # Sync different data types based on account type
+            from app.models.amazon_account import AccountType
+            if account.account_type == AccountType.VENDOR:
+                sales_count = await self.sync_vendor_sales_data(account, organization)
+                inventory_count = 0  # Vendors don't use FBA inventory
+                products_count = await self.sync_products(account, organization)
+            else:
+                sales_count = await self.sync_sales_data(account, organization)
+                inventory_count = await self.sync_inventory_data(account, organization)
+                products_count = await self.sync_products(account, organization)
 
             account.sync_status = SyncStatus.SUCCESS
             account.last_sync_at = datetime.utcnow()
@@ -92,19 +102,24 @@ class DataExtractionService:
 
     # ---- Sales Data ----
 
-    async def sync_sales_data(
-        self,
-        account: AmazonAccount,
-        organization=None,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-    ) -> int:
-        """Sync sales data for an account."""
-        if settings.USE_MOCK_DATA:
-            return await self._mock_sync_sales_data(account, start_date, end_date)
-        return await self._real_sync_sales_data(account, organization, start_date, end_date)
+    async def _upsert_sales_record(self, values: dict) -> None:
+        """Insert or update a sales record using ON CONFLICT DO UPDATE."""
+        stmt = pg_insert(SalesData).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_sales_data_account_date_asin",
+            set_={
+                "sku": stmt.excluded.sku,
+                "units_ordered": stmt.excluded.units_ordered,
+                "units_ordered_b2b": stmt.excluded.units_ordered_b2b,
+                "ordered_product_sales": stmt.excluded.ordered_product_sales,
+                "ordered_product_sales_b2b": stmt.excluded.ordered_product_sales_b2b,
+                "total_order_items": stmt.excluded.total_order_items,
+                "currency": stmt.excluded.currency,
+            },
+        )
+        await self.db.execute(stmt)
 
-    async def _real_sync_sales_data(
+    async def sync_sales_data(
         self,
         account: AmazonAccount,
         organization=None,
@@ -118,10 +133,37 @@ class DataExtractionService:
             end_date = date.today()
 
         client = self._create_sp_api_client(account, organization)
-        rows = client.get_sales_report(start_date, end_date)
+        report = client.get_sales_report(start_date, end_date)
 
         count = 0
-        for entry in rows:
+
+        # --- Daily aggregate rows (salesAndTrafficByDate) ---
+        for entry in report.get("by_date", []):
+            entry_date_str = entry.get("date")
+            if not entry_date_str:
+                continue
+            entry_date = date.fromisoformat(entry_date_str)
+
+            sales_by_date = entry.get("salesByDate", {})
+            ordered_sales = sales_by_date.get("orderedProductSales", {})
+            ordered_sales_b2b = sales_by_date.get("orderedProductSalesB2B", {})
+
+            await self._upsert_sales_record({
+                "account_id": account.id,
+                "date": entry_date,
+                "asin": DAILY_TOTAL_ASIN,
+                "sku": None,
+                "units_ordered": sales_by_date.get("unitsOrdered", 0),
+                "units_ordered_b2b": sales_by_date.get("unitsOrderedB2B", 0),
+                "ordered_product_sales": Decimal(str(ordered_sales.get("amount", 0))),
+                "ordered_product_sales_b2b": Decimal(str(ordered_sales_b2b.get("amount", 0))),
+                "total_order_items": sales_by_date.get("totalOrderItems", 0),
+                "currency": ordered_sales.get("currencyCode", "EUR"),
+            })
+            count += 1
+
+        # --- Per-ASIN aggregate rows (salesAndTrafficByAsin) ---
+        for entry in report.get("by_asin", []):
             asin = entry.get("childAsin") or entry.get("parentAsin")
             if not asin:
                 continue
@@ -130,31 +172,18 @@ class DataExtractionService:
             ordered_sales = sales_by_asin.get("orderedProductSales", {})
             ordered_sales_b2b = sales_by_asin.get("orderedProductSalesB2B", {})
 
-            # Parse date from the entry
-            entry_date_str = entry.get("date")
-            if entry_date_str:
-                entry_date = date.fromisoformat(entry_date_str)
-            else:
-                entry_date = date.today()
-
-            sales_record = SalesData(
-                account_id=account.id,
-                date=entry_date,
-                asin=asin,
-                sku=entry.get("sku"),
-                units_ordered=sales_by_asin.get("unitsOrdered", 0),
-                units_ordered_b2b=sales_by_asin.get("unitsOrderedB2B", 0),
-                ordered_product_sales=Decimal(
-                    str(ordered_sales.get("amount", 0))
-                ),
-                ordered_product_sales_b2b=Decimal(
-                    str(ordered_sales_b2b.get("amount", 0))
-                ),
-                total_order_items=sales_by_asin.get("totalOrderItems", 0),
-                currency=ordered_sales.get("currencyCode", "EUR"),
-            )
-
-            await self.db.merge(sales_record)
+            await self._upsert_sales_record({
+                "account_id": account.id,
+                "date": end_date,
+                "asin": asin,
+                "sku": entry.get("sku"),
+                "units_ordered": sales_by_asin.get("unitsOrdered", 0),
+                "units_ordered_b2b": sales_by_asin.get("unitsOrderedB2B", 0),
+                "ordered_product_sales": Decimal(str(ordered_sales.get("amount", 0))),
+                "ordered_product_sales_b2b": Decimal(str(ordered_sales_b2b.get("amount", 0))),
+                "total_order_items": sales_by_asin.get("totalOrderItems", 0),
+                "currency": ordered_sales.get("currencyCode", "EUR"),
+            })
             count += 1
 
         await self.db.flush()
@@ -164,66 +193,164 @@ class DataExtractionService:
         )
         return count
 
-    async def _mock_sync_sales_data(
+    # ---- Vendor Sales Data ----
+
+    async def sync_vendor_sales_data(
         self,
         account: AmazonAccount,
+        organization=None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
     ) -> int:
-        """Generate mock sales data for demonstration."""
-        import random
-
+        """Sync sales data from vendor purchase orders."""
         if not start_date:
             start_date = date.today() - timedelta(days=30)
         if not end_date:
             end_date = date.today()
 
-        sample_asins = [
-            "B08N5WRWNW",
-            "B08N5M7S6K",
-            "B08MQZYSVC",
-            "B09KMQV3QJ",
-            "B09B8YWXWB",
-        ]
+        client = self._create_sp_api_client(account, organization)
 
+        # Accumulate daily totals for DAILY_TOTAL_ASIN sentinel records.
+        # Keys are dates; values are dicts with running totals.
+        daily_totals: Dict[date, dict] = {}
+
+        def _accumulate_daily(entry_date: date, units: int, sales: Decimal, order_items: int, currency: str):
+            if entry_date in daily_totals:
+                dt = daily_totals[entry_date]
+                dt["units_ordered"] += units
+                dt["ordered_product_sales"] += sales
+                dt["total_order_items"] += order_items
+            else:
+                daily_totals[entry_date] = {
+                    "units_ordered": units,
+                    "ordered_product_sales": sales,
+                    "total_order_items": order_items,
+                    "currency": currency,
+                }
+
+        # Try vendor sales diagnostic report first; fall back to purchase orders
         count = 0
-        current_date = start_date
-        while current_date <= end_date:
-            for asin in sample_asins:
-                units = random.randint(1, 50)
-                price = Decimal(str(random.uniform(10, 100))).quantize(Decimal("0.01"))
-                sales = price * units
+        try:
+            report = client.get_vendor_sales_report(start_date, end_date)
+            sales_data_rows = report.get("salesDiagnosticData", report.get("salesByAsin", []))
+            for entry in sales_data_rows:
+                asin = entry.get("asin")
+                entry_date_str = entry.get("date") or entry.get("startDate")
+                if not asin or not entry_date_str:
+                    continue
+                try:
+                    entry_date = date.fromisoformat(entry_date_str[:10])
+                except ValueError:
+                    continue
 
-                sales_record = SalesData(
-                    account_id=account.id,
-                    date=current_date,
-                    asin=asin,
-                    sku=f"SKU-{asin[-4:]}",
-                    units_ordered=units,
-                    units_ordered_b2b=random.randint(0, 5),
-                    ordered_product_sales=sales,
-                    ordered_product_sales_b2b=Decimal("0"),
-                    total_order_items=units,
-                    currency="EUR",
+                ordered_revenue = entry.get("orderedRevenue", {})
+                amount = Decimal(str(ordered_revenue.get("amount", 0))) if isinstance(ordered_revenue, dict) else Decimal("0")
+                currency = ordered_revenue.get("currencyCode", "EUR") if isinstance(ordered_revenue, dict) else "EUR"
+                units = entry.get("orderedUnits", 0)
+
+                await self._upsert_sales_record({
+                    "account_id": account.id,
+                    "date": entry_date,
+                    "asin": asin,
+                    "sku": None,
+                    "units_ordered": units,
+                    "units_ordered_b2b": 0,
+                    "ordered_product_sales": amount,
+                    "ordered_product_sales_b2b": Decimal("0"),
+                    "total_order_items": units,
+                    "currency": currency,
+                })
+                count += 1
+                _accumulate_daily(entry_date, units, amount, units, currency)
+
+        except AmazonAPIError:
+            logger.info(
+                f"Vendor sales report not available for {account.account_name}, "
+                "falling back to purchase orders"
+            )
+            # Fall back to purchase orders — aggregate by (date, asin) since
+            # multiple POs can contain the same ASIN on the same day
+            orders = client.get_vendor_purchase_orders(start_date, end_date)
+            aggregated: Dict[tuple, dict] = {}
+
+            for order in orders:
+                po_date_str = order.get("orderDetails", {}).get("purchaseOrderDate")
+                if not po_date_str:
+                    continue
+                try:
+                    po_date = date.fromisoformat(po_date_str[:10])
+                except ValueError:
+                    continue
+
+                items = order.get("orderDetails", {}).get("items", [])
+                for item in items:
+                    asin = item.get("amazonProductIdentifier")
+                    if not asin:
+                        continue
+
+                    cost = item.get("netCost", {})
+                    amount = Decimal(str(cost.get("amount", 0))) if isinstance(cost, dict) else Decimal("0")
+                    currency = cost.get("currencyCode", "EUR") if isinstance(cost, dict) else "EUR"
+                    qty = item.get("orderedQuantity", {}).get("amount", 0) if isinstance(item.get("orderedQuantity"), dict) else 0
+
+                    key = (po_date, asin)
+                    if key in aggregated:
+                        agg = aggregated[key]
+                        agg["units_ordered"] += qty
+                        agg["ordered_product_sales"] += amount * qty if qty else amount
+                        agg["total_order_items"] += qty
+                    else:
+                        aggregated[key] = {
+                            "account_id": account.id,
+                            "date": po_date,
+                            "asin": asin,
+                            "sku": item.get("vendorProductIdentifier"),
+                            "units_ordered": qty,
+                            "units_ordered_b2b": 0,
+                            "ordered_product_sales": amount * qty if qty else amount,
+                            "ordered_product_sales_b2b": Decimal("0"),
+                            "total_order_items": qty,
+                            "currency": currency,
+                        }
+
+            for values in aggregated.values():
+                await self._upsert_sales_record(values)
+                count += 1
+                _accumulate_daily(
+                    values["date"],
+                    values["units_ordered"],
+                    values["ordered_product_sales"],
+                    values["total_order_items"],
+                    values["currency"],
                 )
 
-                await self.db.merge(sales_record)
-                count += 1
-
-            current_date += timedelta(days=1)
+        # --- Write DAILY_TOTAL_ASIN sentinel records for vendor data ---
+        # These are required for dashboard KPIs, trends, and comparisons.
+        for dt_date, totals in daily_totals.items():
+            await self._upsert_sales_record({
+                "account_id": account.id,
+                "date": dt_date,
+                "asin": DAILY_TOTAL_ASIN,
+                "sku": None,
+                "units_ordered": totals["units_ordered"],
+                "units_ordered_b2b": 0,
+                "ordered_product_sales": totals["ordered_product_sales"],
+                "ordered_product_sales_b2b": Decimal("0"),
+                "total_order_items": totals["total_order_items"],
+                "currency": totals["currency"],
+            })
+            count += 1
 
         await self.db.flush()
+        logger.info(
+            f"Synced {count} vendor sales records for {account.account_name} "
+            f"({start_date} to {end_date})"
+        )
         return count
 
     # ---- Inventory Data ----
 
     async def sync_inventory_data(self, account: AmazonAccount, organization=None) -> int:
-        """Sync inventory data for an account."""
-        if settings.USE_MOCK_DATA:
-            return await self._mock_sync_inventory_data(account)
-        return await self._real_sync_inventory_data(account, organization)
-
-    async def _real_sync_inventory_data(self, account: AmazonAccount, organization=None) -> int:
         """Sync inventory data from SP-API Inventories API."""
         client = self._create_sp_api_client(account, organization)
         items = client.get_inventory_summaries()
@@ -239,71 +366,41 @@ class DataExtractionService:
             details = item.get("inventoryDetails", {})
             reserved = details.get("reservedQuantity", {})
 
-            inventory_record = InventoryData(
-                account_id=account.id,
-                snapshot_date=snapshot_date,
-                asin=asin,
-                sku=item.get("sellerSku"),
-                fnsku=item.get("fnSku"),
-                afn_fulfillable_quantity=details.get("fulfillableQuantity", 0),
-                afn_inbound_working_quantity=details.get("inboundWorkingQuantity", 0),
-                afn_inbound_shipped_quantity=details.get("inboundShippedQuantity", 0),
-                afn_reserved_quantity=reserved.get("totalReservedQuantity", 0),
-                afn_total_quantity=item.get("totalQuantity", 0),
+            values = {
+                "account_id": account.id,
+                "snapshot_date": snapshot_date,
+                "asin": asin,
+                "sku": item.get("sellerSku"),
+                "fnsku": item.get("fnSku"),
+                "afn_fulfillable_quantity": details.get("fulfillableQuantity", 0),
+                "afn_inbound_working_quantity": details.get("inboundWorkingQuantity", 0),
+                "afn_inbound_shipped_quantity": details.get("inboundShippedQuantity", 0),
+                "afn_reserved_quantity": reserved.get("totalReservedQuantity", 0),
+                "afn_total_quantity": item.get("totalQuantity", 0),
+            }
+            stmt = pg_insert(InventoryData).values(**values)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_inventory_account_date_asin",
+                set_={
+                    "sku": stmt.excluded.sku,
+                    "fnsku": stmt.excluded.fnsku,
+                    "afn_fulfillable_quantity": stmt.excluded.afn_fulfillable_quantity,
+                    "afn_inbound_working_quantity": stmt.excluded.afn_inbound_working_quantity,
+                    "afn_inbound_shipped_quantity": stmt.excluded.afn_inbound_shipped_quantity,
+                    "afn_reserved_quantity": stmt.excluded.afn_reserved_quantity,
+                    "afn_total_quantity": stmt.excluded.afn_total_quantity,
+                },
             )
-
-            await self.db.merge(inventory_record)
+            await self.db.execute(stmt)
             count += 1
 
         await self.db.flush()
         logger.info(f"Synced {count} inventory records for {account.account_name}")
         return count
 
-    async def _mock_sync_inventory_data(self, account: AmazonAccount) -> int:
-        """Generate mock inventory data for demonstration."""
-        import random
-
-        sample_asins = [
-            "B08N5WRWNW",
-            "B08N5M7S6K",
-            "B08MQZYSVC",
-            "B09KMQV3QJ",
-            "B09B8YWXWB",
-        ]
-
-        count = 0
-        snapshot_date = date.today()
-
-        for asin in sample_asins:
-            inventory_record = InventoryData(
-                account_id=account.id,
-                snapshot_date=snapshot_date,
-                asin=asin,
-                sku=f"SKU-{asin[-4:]}",
-                fnsku=f"X00{asin[-5:]}",
-                afn_fulfillable_quantity=random.randint(10, 500),
-                afn_inbound_working_quantity=random.randint(0, 50),
-                afn_inbound_shipped_quantity=random.randint(0, 100),
-                afn_reserved_quantity=random.randint(0, 20),
-                afn_total_quantity=random.randint(100, 600),
-                mfn_fulfillable_quantity=random.randint(0, 50),
-            )
-
-            await self.db.merge(inventory_record)
-            count += 1
-
-        await self.db.flush()
-        return count
-
     # ---- Products ----
 
     async def sync_products(self, account: AmazonAccount, organization=None) -> int:
-        """Sync product catalog for an account."""
-        if settings.USE_MOCK_DATA:
-            return await self._mock_sync_products(account)
-        return await self._real_sync_products(account, organization)
-
-    async def _real_sync_products(self, account: AmazonAccount, organization=None) -> int:
         """Sync product catalog from SP-API CatalogItems + Products API."""
         # Gather distinct ASINs from sales and inventory data
         sales_asins = await self.db.execute(
@@ -319,7 +416,8 @@ class DataExtractionService:
 
         all_asins = set()
         for row in sales_asins:
-            all_asins.add(row[0])
+            if row[0] != DAILY_TOTAL_ASIN:
+                all_asins.add(row[0])
         for row in inv_asins:
             all_asins.add(row[0])
 
@@ -343,7 +441,8 @@ class DataExtractionService:
 
             for asin in batch:
                 catalog_data = client.get_catalog_item_details(asin)
-                competitive_price = client.get_competitive_pricing(asin)
+                # Competitive pricing API is seller-only; skip for vendor accounts
+                competitive_price = None if client.is_vendor else client.get_competitive_pricing(asin)
 
                 # Parse catalog data
                 title = None
@@ -357,9 +456,16 @@ class DataExtractionService:
                         summary = summaries[0]
                         title = summary.get("itemName")
                         brand = summary.get("brand")
-                        classifications = summary.get("classifications", [])
-                        if classifications:
-                            category = classifications[0].get("displayName")
+
+                    # Classifications is a top-level field, not nested in summaries
+                    classifications = catalog_data.get("classifications", [])
+                    if classifications:
+                        classification = classifications[0]
+                        # Try displayName first, then classificationId
+                        category = (
+                            classification.get("displayName")
+                            or classification.get("classification", {}).get("displayName")
+                        )
 
                     sales_ranks = catalog_data.get("salesRanks", [])
                     if sales_ranks:
@@ -367,20 +473,35 @@ class DataExtractionService:
                         if ranks:
                             bsr = ranks[0].get("value")
 
-                product = Product(
-                    account_id=account.id,
-                    asin=asin,
-                    title=title,
-                    brand=brand,
-                    category=category,
-                    current_price=competitive_price,
-                    current_bsr=bsr,
-                    review_count=None,
-                    rating=None,
-                    is_active=True,
-                )
+                # Upsert: find existing product by (account_id, asin) or create new
+                existing = (await self.db.execute(
+                    select(Product).where(
+                        Product.account_id == account.id,
+                        Product.asin == asin,
+                    )
+                )).scalar_one_or_none()
 
-                await self.db.merge(product)
+                if existing:
+                    existing.title = title or existing.title
+                    existing.brand = brand or existing.brand
+                    existing.category = category or existing.category
+                    existing.current_price = competitive_price if competitive_price is not None else existing.current_price
+                    existing.current_bsr = bsr if bsr is not None else existing.current_bsr
+                    existing.is_active = True
+                else:
+                    product = Product(
+                        account_id=account.id,
+                        asin=asin,
+                        title=title,
+                        brand=brand,
+                        category=category,
+                        current_price=competitive_price,
+                        current_bsr=bsr,
+                        review_count=None,
+                        rating=None,
+                        is_active=True,
+                    )
+                    self.db.add(product)
                 count += 1
 
             # Sleep between batches to respect rate limits
@@ -391,41 +512,10 @@ class DataExtractionService:
         logger.info(f"Synced {count} products for {account.account_name}")
         return count
 
-    async def _mock_sync_products(self, account: AmazonAccount) -> int:
-        """Generate mock product data for demonstration."""
-        import random
-
-        sample_products = [
-            {"asin": "B08N5WRWNW", "title": "Premium Wireless Earbuds", "brand": "TechBrand", "category": "Electronics"},
-            {"asin": "B08N5M7S6K", "title": "Bluetooth Speaker", "brand": "SoundMax", "category": "Electronics"},
-            {"asin": "B08MQZYSVC", "title": "Fitness Tracker Watch", "brand": "FitLife", "category": "Sports"},
-            {"asin": "B09KMQV3QJ", "title": "Organic Coffee Beans", "brand": "CafeBio", "category": "Grocery"},
-            {"asin": "B09B8YWXWB", "title": "Yoga Mat Premium", "brand": "ZenFit", "category": "Sports"},
-        ]
-
-        count = 0
-        for prod in sample_products:
-            product = Product(
-                account_id=account.id,
-                asin=prod["asin"],
-                sku=f"SKU-{prod['asin'][-4:]}",
-                title=prod["title"],
-                brand=prod["brand"],
-                category=prod["category"],
-                current_price=Decimal(str(random.uniform(20, 150))).quantize(Decimal("0.01")),
-                current_bsr=random.randint(1000, 50000),
-                review_count=random.randint(50, 5000),
-                rating=Decimal(str(random.uniform(3.5, 5.0))).quantize(Decimal("0.01")),
-                is_active=True,
-            )
-
-            await self.db.merge(product)
-            count += 1
-
-        await self.db.flush()
-        return count
-
-    # ---- Advertising (unchanged - always mock for now) ----
+    # ---- Advertising ----
+    # NOTE: No real Ads API integration yet. This method still generates
+    # placeholder data. Replace with real Amazon Advertising API calls
+    # once credentials and client are implemented.
 
     async def sync_advertising_data(self, account: AmazonAccount, organization=None) -> int:
         """Sync advertising data for an account."""

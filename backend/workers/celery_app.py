@@ -16,6 +16,7 @@ celery_app = Celery(
         "workers.tasks.extraction",
         "workers.tasks.forecasting",
         "workers.tasks.notifications",
+        "workers.tasks.market_research",
     ],
 )
 

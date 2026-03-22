@@ -1,23 +1,26 @@
 """Analytics and dashboard endpoints."""
 from typing import List, Optional
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, time as dt_time
 from uuid import UUID
 from decimal import Decimal
+import logging
 from fastapi import APIRouter, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 from app.models.amazon_account import AmazonAccount
 from app.models.sales_data import SalesData
+from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
 from app.models.product import Product
 from app.schemas.analytics import (
     DashboardKPIs, MetricValue, TrendData, TrendDataPoint,
     ComparisonData, ProductPerformance, TopPerformers,
-    AdvertisingInsights
+    AdvertisingInsights, CategorySalesData, HourlyOrdersData,
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def calculate_change(current: float, previous: float) -> tuple:
@@ -59,7 +62,7 @@ async def get_dashboard_kpis(
     if account_ids:
         accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
 
-    # Current period aggregates
+    # Current period aggregates (use daily totals to avoid double-counting)
     current_query = (
         select(
             func.sum(SalesData.ordered_product_sales).label("revenue"),
@@ -68,6 +71,7 @@ async def get_dashboard_kpis(
         )
         .where(
             SalesData.account_id.in_(accounts_query),
+            SalesData.asin == DAILY_TOTAL_ASIN,
             SalesData.date >= start_date,
             SalesData.date <= end_date,
         )
@@ -75,7 +79,7 @@ async def get_dashboard_kpis(
     current_result = await db.execute(current_query)
     current = current_result.one()
 
-    # Previous period aggregates
+    # Previous period aggregates (use daily totals to avoid double-counting)
     prev_query = (
         select(
             func.sum(SalesData.ordered_product_sales).label("revenue"),
@@ -84,6 +88,7 @@ async def get_dashboard_kpis(
         )
         .where(
             SalesData.account_id.in_(accounts_query),
+            SalesData.asin == DAILY_TOTAL_ASIN,
             SalesData.date >= prev_start,
             SalesData.date <= prev_end,
         )
@@ -139,11 +144,12 @@ async def get_dashboard_kpis(
     acos = (ad_spend / ad_sales) * 100 if ad_sales > 0 else 0
     ctr = (clicks / impressions) * 100 if impressions > 0 else 0
 
-    # Count active ASINs and synced accounts
+    # Count active ASINs and synced accounts (exclude sentinel)
     asin_count = await db.execute(
         select(func.count(func.distinct(SalesData.asin)))
         .where(
             SalesData.account_id.in_(accounts_query),
+            SalesData.asin != DAILY_TOTAL_ASIN,
             SalesData.date >= start_date,
         )
     )
@@ -222,6 +228,7 @@ async def get_trends(
                 )
                 .where(
                     SalesData.account_id.in_(accounts_query),
+                    SalesData.asin == DAILY_TOTAL_ASIN,
                     SalesData.date >= start_date,
                     SalesData.date <= end_date,
                 )
@@ -236,6 +243,7 @@ async def get_trends(
                 )
                 .where(
                     SalesData.account_id.in_(accounts_query),
+                    SalesData.asin == DAILY_TOTAL_ASIN,
                     SalesData.date >= start_date,
                     SalesData.date <= end_date,
                 )
@@ -293,6 +301,7 @@ async def get_comparison(
             )
             .where(
                 SalesData.account_id.in_(accounts_query),
+                SalesData.asin == DAILY_TOTAL_ASIN,
                 SalesData.date >= start,
                 SalesData.date <= end,
             )
@@ -335,14 +344,17 @@ async def get_top_performers(
     db: DbSession,
     start_date: date = Query(default=date.today() - timedelta(days=30)),
     end_date: date = Query(default=date.today()),
+    account_ids: Optional[List[UUID]] = Query(default=None),
     limit: int = Query(default=10, le=50),
 ):
     """Get top performing products."""
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
+    if account_ids:
+        accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
 
-    # Top by revenue
+    # Top by revenue (real ASINs only)
     revenue_query = (
         select(
             SalesData.asin,
@@ -352,6 +364,7 @@ async def get_top_performers(
         )
         .where(
             SalesData.account_id.in_(accounts_query),
+            SalesData.asin != DAILY_TOTAL_ASIN,
             SalesData.date >= start_date,
             SalesData.date <= end_date,
         )
@@ -387,6 +400,201 @@ async def get_top_performers(
         by_units=by_revenue,  # Same for now
         by_growth=[],  # Would require historical comparison
     )
+
+
+@router.get("/sales-by-category", response_model=List[CategorySalesData])
+async def get_sales_by_category(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    start_date: date = Query(default=date.today() - timedelta(days=30)),
+    end_date: date = Query(default=date.today()),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    category: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, le=100),
+):
+    """Get sales aggregates grouped by product category."""
+    accounts_query = select(AmazonAccount.id).where(
+        AmazonAccount.organization_id == organization.id
+    )
+    if account_ids:
+        accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
+
+    category_expr = func.coalesce(Product.category, "Uncategorized")
+    query = (
+        select(
+            category_expr.label("category"),
+            func.sum(SalesData.ordered_product_sales).label("total_revenue"),
+            func.sum(SalesData.units_ordered).label("total_units"),
+            func.sum(SalesData.total_order_items).label("total_orders"),
+        )
+        .select_from(SalesData)
+        .outerjoin(
+            Product,
+            and_(
+                Product.account_id == SalesData.account_id,
+                Product.asin == SalesData.asin,
+            ),
+        )
+        .where(
+            SalesData.account_id.in_(accounts_query),
+            SalesData.asin != DAILY_TOTAL_ASIN,
+            SalesData.date >= start_date,
+            SalesData.date <= end_date,
+        )
+    )
+
+    if category:
+        query = query.where(Product.category == category)
+
+    query = (
+        query.group_by(category_expr)
+        .order_by(func.sum(SalesData.ordered_product_sales).desc())
+        .limit(limit)
+    )
+
+    rows = (await db.execute(query)).all()
+    return [
+        CategorySalesData(
+            category=row.category or "Uncategorized",
+            total_revenue=float(row.total_revenue or 0),
+            total_units=int(row.total_units or 0),
+            total_orders=int(row.total_orders or 0),
+        )
+        for row in rows
+    ]
+
+
+@router.get("/orders-by-hour", response_model=List[HourlyOrdersData])
+async def get_orders_by_hour(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    start_date: date = Query(default=date.today() - timedelta(days=30)),
+    end_date: date = Query(default=date.today()),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    max_pages_per_account: int = Query(default=10, ge=1, le=50),
+):
+    """Get order counts by hour (UTC) from SP-API Orders endpoint."""
+    accounts_stmt = select(AmazonAccount).where(
+        AmazonAccount.organization_id == organization.id,
+        AmazonAccount.is_active == True,
+    )
+    if account_ids:
+        accounts_stmt = accounts_stmt.where(AmazonAccount.id.in_(account_ids))
+
+    accounts = (await db.execute(accounts_stmt)).scalars().all()
+    hourly_counts = {h: 0 for h in range(24)}
+
+    if not accounts:
+        return [HourlyOrdersData(hour=h, orders=0) for h in range(24)]
+
+    # Include the full end day by default, but keep the upper bound at least
+    # 2 minutes behind current UTC time to satisfy Orders API constraints.
+    lower_bound = datetime.combine(start_date, dt_time.min)
+    upper_bound = datetime.combine(end_date + timedelta(days=1), dt_time.min)
+    safe_now = datetime.utcnow() - timedelta(minutes=2)
+    if upper_bound > safe_now:
+        upper_bound = safe_now
+    if upper_bound <= lower_bound:
+        upper_bound = lower_bound + timedelta(minutes=1)
+
+    created_after = lower_bound.isoformat()
+    created_before = upper_bound.isoformat()
+
+    from app.core.amazon.credentials import resolve_credentials
+    from app.core.amazon.sp_api_client import SPAPIClient, resolve_marketplace
+
+    from app.models.amazon_account import AccountType
+
+    for account in accounts:
+        try:
+            credentials = resolve_credentials(account, organization)
+            marketplace = resolve_marketplace(account.marketplace_country)
+            client = SPAPIClient(credentials, marketplace, account_type=account.account_type.value)
+
+            if account.account_type == AccountType.VENDOR:
+                # Vendor accounts use VendorOrders (purchase orders) API
+                api = client._vendor_orders_api()
+                page_count = 0
+                next_token = None
+
+                while True:
+                    kwargs = {
+                        "createdAfter": created_after,
+                        "createdBefore": created_before,
+                    }
+                    if next_token:
+                        kwargs["nextToken"] = next_token
+
+                    response = api.get_purchase_orders(**kwargs)
+                    payload = response.payload or {}
+                    orders = payload.get("orders", [])
+
+                    for order in orders:
+                        po_date = (
+                            order.get("orderDetails", {}).get("purchaseOrderDate")
+                            or order.get("purchaseOrderDate")
+                        )
+                        if not po_date:
+                            continue
+                        try:
+                            ts = str(po_date).replace("Z", "+00:00")
+                            hour = datetime.fromisoformat(ts).hour
+                            hourly_counts[hour] = hourly_counts.get(hour, 0) + 1
+                        except Exception:
+                            continue
+
+                    page_count += 1
+                    pagination = payload.get("pagination", {})
+                    next_token = pagination.get("nextToken")
+                    if not next_token or page_count >= max_pages_per_account:
+                        break
+            else:
+                # Seller accounts use the Orders API
+                api = client._orders_api()
+
+                page_count = 0
+                response = api.get_orders(
+                    CreatedAfter=created_after,
+                    CreatedBefore=created_before,
+                )
+
+                while True:
+                    payload = response.payload or {}
+                    orders = payload.get("Orders") or payload.get("orders") or []
+
+                    for order in orders:
+                        purchase_date = (
+                            order.get("PurchaseDate")
+                            or order.get("purchaseDate")
+                            or order.get("LastUpdateDate")
+                            or order.get("lastUpdateDate")
+                        )
+                        if not purchase_date:
+                            continue
+
+                        try:
+                            ts = str(purchase_date).replace("Z", "+00:00")
+                            hour = datetime.fromisoformat(ts).hour
+                            hourly_counts[hour] = hourly_counts.get(hour, 0) + 1
+                        except Exception:
+                            continue
+
+                    page_count += 1
+                    next_token = payload.get("NextToken") or payload.get("nextToken")
+                    if not next_token or page_count >= max_pages_per_account:
+                        break
+                    response = api.get_orders(NextToken=next_token)
+        except Exception as exc:
+            logger.warning(
+                "Failed hourly orders extraction for account %s (%s): %s",
+                account.account_name,
+                account.id,
+                exc,
+            )
+
+    return [HourlyOrdersData(hour=h, orders=hourly_counts[h]) for h in range(24)]
 
 
 @router.get("/advertising", response_model=AdvertisingInsights)

@@ -1,6 +1,6 @@
 """Forecasting service for sales predictions."""
 from datetime import date, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from uuid import UUID
 import logging
 
@@ -9,6 +9,7 @@ from sqlalchemy import select, func
 
 from app.models.sales_data import SalesData
 from app.models.forecast import Forecast
+from app.services.data_extraction import DAILY_TOTAL_ASIN
 
 logger = logging.getLogger(__name__)
 
@@ -27,30 +28,48 @@ class ForecastService:
         model: str = "prophet",
     ) -> Forecast:
         """Generate a sales forecast using the specified model."""
-        # Get historical data
         historical_data = await self._get_historical_data(account_id, asin, days=90)
 
-        if len(historical_data) < 14:
-            raise ValueError("Insufficient historical data for forecasting")
+        if len(historical_data) < 7:
+            raise ValueError("Insufficient historical data for forecasting (need at least 7 days)")
 
-        # Generate predictions based on model
-        if model == "prophet":
-            predictions = await self._prophet_forecast(historical_data, horizon_days)
-        elif model == "simple":
-            predictions = await self._simple_forecast(historical_data, horizon_days)
+        # Fill date gaps with zeros for a continuous time series
+        historical_data = self._fill_date_gaps(historical_data)
+        n_days = len(historical_data)
+
+        # Choose strategy based on data availability
+        strategy = self._choose_strategy(n_days)
+        chosen_model = strategy["model"] if model == "prophet" else model
+
+        # Cap horizon: strict cap for Prophet, relaxed for simple model
+        max_horizon = strategy["max_horizon"]
+        effective_horizon = min(horizon_days, max_horizon)
+        # Simple model (weighted averages) can safely predict up to 90 days
+        simple_horizon = min(horizon_days, 90)
+
+        logger.info(
+            f"Forecast strategy: {strategy['label']} | "
+            f"{n_days} data points | model={chosen_model} | "
+            f"horizon={effective_horizon}d (requested {horizon_days}d)"
+        )
+
+        if chosen_model == "prophet":
+            predictions = await self._prophet_forecast(
+                historical_data, effective_horizon, strategy,
+                fallback_horizon=simple_horizon,
+            )
         else:
-            predictions = await self._simple_forecast(historical_data, horizon_days)
+            predictions = self._simple_forecast(historical_data, simple_horizon)
 
-        # Calculate model metrics
-        mape, rmse = self._calculate_metrics(historical_data, predictions)
+        # Metrics via holdout validation
+        mape, rmse = self._calculate_metrics(historical_data, chosen_model, strategy)
 
-        # Create forecast record
         forecast = Forecast(
             account_id=account_id,
             asin=asin,
             forecast_type="sales",
-            forecast_horizon_days=horizon_days,
-            model_used=model,
+            forecast_horizon_days=len(predictions),
+            model_used=chosen_model,
             confidence_interval=0.95,
             predictions=predictions,
             mape=mape,
@@ -62,6 +81,52 @@ class ForecastService:
         await self.db.refresh(forecast)
 
         return forecast
+
+    # ------------------------------------------------------------------
+    # Strategy
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _choose_strategy(n_days: int) -> Dict[str, Any]:
+        """Pick model configuration based on how much data we have."""
+        if n_days >= 365:
+            return {
+                "label": "full",
+                "model": "prophet",
+                "yearly_seasonality": True,
+                "weekly_seasonality": True,
+                "changepoint_prior_scale": 0.05,
+                "max_horizon": 90,
+            }
+        if n_days >= 90:
+            return {
+                "label": "medium",
+                "model": "prophet",
+                "yearly_seasonality": False,
+                "weekly_seasonality": True,
+                "changepoint_prior_scale": 0.01,
+                "max_horizon": 30,
+            }
+        if n_days >= 28:
+            return {
+                "label": "limited",
+                "model": "prophet",
+                "yearly_seasonality": False,
+                "weekly_seasonality": True,
+                "changepoint_prior_scale": 0.05,
+                "seasonality_prior_scale": 1.0,
+                "max_horizon": 14,
+            }
+        # < 28 days — too little for Prophet
+        return {
+            "label": "minimal",
+            "model": "simple",
+            "max_horizon": 7,
+        }
+
+    # ------------------------------------------------------------------
+    # Historical data
+    # ------------------------------------------------------------------
 
     async def _get_historical_data(
         self,
@@ -87,6 +152,8 @@ class ForecastService:
 
         if asin:
             query = query.where(SalesData.asin == asin)
+        else:
+            query = query.where(SalesData.asin == DAILY_TOTAL_ASIN)
 
         result = await self.db.execute(query)
         rows = result.all()
@@ -96,34 +163,55 @@ class ForecastService:
             for row in rows
         ]
 
+    @staticmethod
+    def _fill_date_gaps(data: List[Dict]) -> List[Dict]:
+        """Fill missing dates with value=0 so models see a continuous series."""
+        if len(data) < 2:
+            return data
+
+        by_date = {d["date"]: d["value"] for d in data}
+        start = data[0]["date"]
+        end = data[-1]["date"]
+        filled = []
+        current = start
+        while current <= end:
+            filled.append({"date": current, "value": by_date.get(current, 0.0)})
+            current += timedelta(days=1)
+        return filled
+
+    # ------------------------------------------------------------------
+    # Prophet forecast (adaptive)
+    # ------------------------------------------------------------------
+
     async def _prophet_forecast(
         self,
         historical_data: List[Dict],
         horizon_days: int,
+        strategy: Dict[str, Any],
+        fallback_horizon: Optional[int] = None,
     ) -> List[Dict]:
-        """Generate forecast using Prophet model."""
+        """Generate forecast using Prophet with strategy-tuned parameters."""
+        fb_horizon = fallback_horizon or horizon_days
         try:
             import pandas as pd
             from prophet import Prophet
 
-            # Prepare data for Prophet
             df = pd.DataFrame(historical_data)
             df.columns = ["ds", "y"]
 
-            # Create and fit model
             model = Prophet(
-                yearly_seasonality=True,
-                weekly_seasonality=True,
+                yearly_seasonality=strategy.get("yearly_seasonality", False),
+                weekly_seasonality=strategy.get("weekly_seasonality", True),
                 daily_seasonality=False,
+                changepoint_prior_scale=strategy.get("changepoint_prior_scale", 0.01),
+                seasonality_prior_scale=strategy.get("seasonality_prior_scale", 1.0),
                 interval_width=0.95,
             )
             model.fit(df)
 
-            # Make predictions
             future = model.make_future_dataframe(periods=horizon_days)
             forecast = model.predict(future)
 
-            # Extract predictions for future dates
             predictions = []
             for _, row in forecast.tail(horizon_days).iterrows():
                 predictions.append({
@@ -137,36 +225,63 @@ class ForecastService:
 
         except ImportError:
             logger.warning("Prophet not installed, falling back to simple forecast")
-            return await self._simple_forecast(historical_data, horizon_days)
+            return self._simple_forecast(historical_data, fb_horizon)
         except Exception as e:
-            logger.exception("Prophet forecast failed")
-            return await self._simple_forecast(historical_data, horizon_days)
+            logger.exception("Prophet forecast failed, falling back to simple")
+            return self._simple_forecast(historical_data, fb_horizon)
 
-    async def _simple_forecast(
-        self,
+    # ------------------------------------------------------------------
+    # Simple forecast (day-of-week weighted average)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _simple_forecast(
         historical_data: List[Dict],
         horizon_days: int,
     ) -> List[Dict]:
-        """Generate simple moving average forecast."""
-        import random
-
+        """Forecast using day-of-week weighted averages with a light trend."""
         if not historical_data:
             return []
 
-        # Calculate moving average
-        values = [d["value"] for d in historical_data]
-        avg_value = sum(values[-14:]) / min(14, len(values))
-        std_dev = (sum((v - avg_value) ** 2 for v in values[-14:]) / min(14, len(values))) ** 0.5
+        # Build day-of-week averages from the most recent data
+        dow_values: Dict[int, List[float]] = {i: [] for i in range(7)}
+        for d in historical_data:
+            dow = d["date"].weekday()
+            dow_values[dow].append(d["value"])
 
-        # Generate predictions with some variance
-        predictions = []
+        dow_avg = {}
+        for dow, vals in dow_values.items():
+            dow_avg[dow] = sum(vals) / len(vals) if vals else 0.0
+
+        # Overall stats (needed for trend cap and confidence intervals)
+        all_values = [d["value"] for d in historical_data]
+        mean_val = sum(all_values) / len(all_values) if all_values else 0
+        std_dev = (sum((v - mean_val) ** 2 for v in all_values) / len(all_values)) ** 0.5
+
+        # Light linear trend from last 14 days, capped to avoid overshooting
+        recent = historical_data[-14:]
+        if len(recent) >= 7:
+            first_half = sum(d["value"] for d in recent[: len(recent) // 2])
+            second_half = sum(d["value"] for d in recent[len(recent) // 2 :])
+            first_n = len(recent) // 2
+            second_n = len(recent) - first_n
+            daily_trend = (second_half / second_n - first_half / first_n) if first_n and second_n else 0
+            # Cap trend to ±20% of mean to prevent runaway predictions
+            cap = mean_val * 0.2
+            daily_trend = max(-cap, min(cap, daily_trend))
+        else:
+            daily_trend = 0
+
         last_date = historical_data[-1]["date"]
+        predictions = []
 
         for i in range(1, horizon_days + 1):
             pred_date = last_date + timedelta(days=i)
-            # Add some random walk behavior
-            noise = random.gauss(0, std_dev * 0.1)
-            value = max(0, avg_value * (1 + noise))
+            dow = pred_date.weekday()
+            base = dow_avg.get(dow, mean_val)
+            # Apply trend, damped exponentially over time
+            dampened_trend = daily_trend * (0.9 ** i)
+            value = max(0, base + dampened_trend)
 
             predictions.append({
                 "date": pred_date.isoformat(),
@@ -177,19 +292,54 @@ class ForecastService:
 
         return predictions
 
+    # ------------------------------------------------------------------
+    # Metrics (holdout cross-validation)
+    # ------------------------------------------------------------------
+
     def _calculate_metrics(
         self,
         historical_data: List[Dict],
-        predictions: List[Dict],
-    ) -> tuple:
-        """Calculate forecast accuracy metrics."""
-        import random
+        model: str,
+        strategy: Dict[str, Any],
+    ) -> Tuple[float, float]:
+        """Calculate MAPE/RMSE via holdout: train on all-but-last-7, predict 7, compare."""
+        holdout_size = min(7, len(historical_data) // 3)
+        if holdout_size < 3:
+            return self._variance_metrics(historical_data)
 
-        # In production, these would be calculated from holdout data
-        mape = random.uniform(5, 15)
-        rmse = random.uniform(100, 500)
+        train = historical_data[:-holdout_size]
+        actuals = [d["value"] for d in historical_data[-holdout_size:]]
+
+        # Use simple forecast for holdout validation (fast, no async needed)
+        preds_raw = self._simple_forecast(train, holdout_size)
+        preds = [p["value"] for p in preds_raw]
+        if len(preds) < holdout_size:
+            return self._variance_metrics(historical_data)
+
+        # MAPE (skip zero actuals)
+        ape_sum = sum(abs(a - p) / a for a, p in zip(actuals, preds) if a != 0)
+        non_zero = sum(1 for a in actuals if a != 0)
+        mape = (ape_sum / non_zero * 100) if non_zero else 0
+
+        # RMSE
+        mse = sum((a - p) ** 2 for a, p in zip(actuals, preds)) / holdout_size
+        rmse = mse ** 0.5
 
         return round(mape, 4), round(rmse, 4)
+
+    @staticmethod
+    def _variance_metrics(data: List[Dict]) -> Tuple[float, float]:
+        """Fallback metrics from variance when not enough data for holdout."""
+        values = [d["value"] for d in data]
+        mean_val = sum(values) / len(values) if values else 1
+        std_val = (sum((v - mean_val) ** 2 for v in values) / len(values)) ** 0.5 if values else 0
+        mape = (std_val / mean_val * 100) if mean_val else 0
+        rmse = std_val
+        return round(mape, 4), round(rmse, 4)
+
+    # ------------------------------------------------------------------
+    # Product trend score
+    # ------------------------------------------------------------------
 
     async def get_product_trend_score(
         self,
@@ -197,12 +347,10 @@ class ForecastService:
         asin: str,
     ) -> Dict[str, Any]:
         """Calculate trend score for a product."""
-        # Get last 30 days of data
         end_date = date.today()
         start_date = end_date - timedelta(days=30)
         mid_date = end_date - timedelta(days=15)
 
-        # First half average
         first_half = await self.db.execute(
             select(func.avg(SalesData.ordered_product_sales))
             .where(
@@ -214,7 +362,6 @@ class ForecastService:
         )
         first_avg = float(first_half.scalar() or 0)
 
-        # Second half average
         second_half = await self.db.execute(
             select(func.avg(SalesData.ordered_product_sales))
             .where(
@@ -226,7 +373,6 @@ class ForecastService:
         )
         second_avg = float(second_half.scalar() or 0)
 
-        # Calculate trend
         if first_avg > 0:
             trend_score = ((second_avg - first_avg) / first_avg) * 100
         elif second_avg > 0:

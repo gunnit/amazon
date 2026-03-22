@@ -21,11 +21,26 @@ export function formatPercent(value: number): string {
 }
 
 export function formatDate(date: string | Date): string {
-  return new Date(date).toLocaleDateString('en-US', {
+  // Parse date-only strings as local time to avoid timezone shift
+  const d = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? new Date(date + 'T00:00:00')
+    : new Date(date)
+  return d.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
   })
+}
+
+export function downloadBlob(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  window.URL.revokeObjectURL(url)
+  document.body.removeChild(anchor)
 }
 
 export function getDateRange(days: number): { start: string; end: string } {
@@ -33,8 +48,11 @@ export function getDateRange(days: number): { start: string; end: string } {
   const start = new Date()
   start.setDate(start.getDate() - days)
 
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
   return {
-    start: start.toISOString().split('T')[0],
-    end: end.toISOString().split('T')[0],
+    start: fmt(start),
+    end: fmt(end),
   }
 }

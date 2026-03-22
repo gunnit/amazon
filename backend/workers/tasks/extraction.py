@@ -10,12 +10,24 @@ logger = logging.getLogger(__name__)
 
 
 def run_async(coro):
-    """Run async function in sync context."""
+    """Run async function in sync context with a fresh event loop.
+
+    Disposes the shared engine afterwards so that asyncpg connections
+    don't leak across event loops in the Celery worker process.
+    """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         return loop.run_until_complete(coro)
     finally:
+        # Dispose the shared engine to release asyncpg connections tied
+        # to this loop — prevents "Future attached to a different loop"
+        # errors on subsequent calls within the same Celery worker.
+        try:
+            from app.db.session import engine
+            loop.run_until_complete(engine.dispose())
+        except Exception:
+            pass
         loop.close()
 
 
@@ -28,9 +40,15 @@ def sync_account(self, account_id: str):
     async def _sync():
         async with AsyncSessionLocal() as db:
             service = DataExtractionService(db)
-            result = await service.sync_account(UUID(account_id))
-            await db.commit()
-            return result
+            try:
+                result = await service.sync_account(UUID(account_id))
+                await db.commit()
+                return result
+            except Exception:
+                # sync_account sets ERROR status via flush(); commit it
+                # before the exception propagates so the status is persisted.
+                await db.commit()
+                raise
 
     try:
         logger.info(f"Starting sync for account {account_id}")
@@ -39,21 +57,19 @@ def sync_account(self, account_id: str):
         return result
 
     except AmazonAPIError as e:
-        # Do not retry on logic/credential errors
-        logger.error(f"SP-API error for account {account_id}: {e.message} (code={e.error_code})")
+        logger.error(
+            f"SP-API error for account {account_id}: "
+            f"{e.message} (code={e.error_code})"
+        )
         if e.error_code in ("MISSING_CREDENTIALS", "AUTH_FAILED", "INVALID_MARKETPLACE"):
-            # Mark account as ERROR without retry
-            _mark_account_error(account_id, e.message)
-            raise
+            raise  # Error status already committed by _sync
         raise self.retry(exc=e, countdown=300)
 
     except Exception as e:
-        # Check for specific SP-API library exceptions
         exc_name = type(e).__name__
         if exc_name == "SellingApiForbiddenException":
             logger.error(f"SP-API forbidden for account {account_id}: {e}")
-            _mark_account_error(account_id, f"Access forbidden: {e}")
-            raise
+            raise  # Error status already committed by _sync
 
         if exc_name == "SellingApiRequestThrottledException":
             logger.warning(f"SP-API throttled for account {account_id}, retrying in 60s")
@@ -63,31 +79,13 @@ def sync_account(self, account_id: str):
             "SellingApiServerException",
             "SellingApiTemporarilyUnavailableException",
         ):
-            logger.warning(f"SP-API server error for account {account_id}: {e}, retrying in 300s")
+            logger.warning(
+                f"SP-API server error for account {account_id}: {e}, retrying in 300s"
+            )
             raise self.retry(exc=e, countdown=300)
 
         logger.exception(f"Sync failed for account {account_id}")
         raise self.retry(exc=e, countdown=300)
-
-
-def _mark_account_error(account_id: str, error_message: str):
-    """Mark an account as ERROR status (no retry)."""
-    from app.db.session import AsyncSessionLocal
-    from app.models.amazon_account import AmazonAccount, SyncStatus
-    from sqlalchemy import select
-
-    async def _update():
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(AmazonAccount).where(AmazonAccount.id == UUID(account_id))
-            )
-            account = result.scalar_one_or_none()
-            if account:
-                account.sync_status = SyncStatus.ERROR
-                account.sync_error_message = error_message
-                await db.commit()
-
-    run_async(_update())
 
 
 @celery_app.task
@@ -137,7 +135,11 @@ def sync_sales_data(account_id: str, start_date: str = None, end_date: str = Non
             organization = await service._load_organization(account)
             sd = date.fromisoformat(start_date) if start_date else None
             ed = date.fromisoformat(end_date) if end_date else None
-            count = await service.sync_sales_data(account, organization, sd, ed)
+            from app.models.amazon_account import AccountType
+            if account.account_type == AccountType.VENDOR:
+                count = await service.sync_vendor_sales_data(account, organization, sd, ed)
+            else:
+                count = await service.sync_sales_data(account, organization, sd, ed)
             await db.commit()
             return {"records": count}
 
@@ -164,7 +166,12 @@ def sync_inventory_data(account_id: str):
 
             service = DataExtractionService(db)
             organization = await service._load_organization(account)
-            count = await service.sync_inventory_data(account, organization)
+            from app.models.amazon_account import AccountType
+            if account.account_type == AccountType.VENDOR:
+                logger.info(f"Skipping FBA inventory sync for vendor account {account_id}")
+                count = 0
+            else:
+                count = await service.sync_inventory_data(account, organization)
             await db.commit()
             return {"records": count}
 

@@ -6,6 +6,7 @@ import {
   FileText,
   BarChart3,
   TrendingUp,
+  Search,
   Settings,
   LogOut,
   Menu,
@@ -19,14 +20,16 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useAuthStore } from '@/store/authStore'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { useTranslation } from '@/i18n'
 
-const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Accounts', href: '/accounts', icon: Store },
-  { name: 'Reports', href: '/reports', icon: FileText },
-  { name: 'Analytics', href: '/analytics', icon: BarChart3 },
-  { name: 'Forecasts', href: '/forecasts', icon: TrendingUp },
-  { name: 'Settings', href: '/settings', icon: Settings },
+const navItems = [
+  { key: 'nav.dashboard', href: '/', icon: LayoutDashboard },
+  { key: 'nav.accounts', href: '/accounts', icon: Store },
+  { key: 'nav.reports', href: '/reports', icon: FileText },
+  { key: 'nav.analytics', href: '/analytics', icon: BarChart3 },
+  { key: 'nav.forecasts', href: '/forecasts', icon: TrendingUp },
+  { key: 'nav.marketResearch', href: '/market-research', icon: Search },
+  { key: 'nav.settings', href: '/settings', icon: Settings },
 ]
 
 export default function Layout() {
@@ -35,6 +38,7 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, organization, logout } = useAuthStore()
+  const { t } = useTranslation()
 
   const handleLogout = () => {
     logout()
@@ -65,11 +69,11 @@ export default function Layout() {
           </Button>
         </div>
         <nav className="flex flex-col gap-1 p-4">
-          {navigation.map((item) => {
+          {navItems.map((item) => {
             const isActive = location.pathname === item.href
             return (
               <Link
-                key={item.name}
+                key={item.key}
                 to={item.href}
                 onClick={() => setSidebarOpen(false)}
                 className={cn(
@@ -80,7 +84,7 @@ export default function Layout() {
                 )}
               >
                 <item.icon className="h-5 w-5" />
-                {item.name}
+                {t(item.key)}
               </Link>
             )
           })}
@@ -109,7 +113,7 @@ export default function Layout() {
               size="icon"
               className={cn(sidebarCollapsed && "absolute right-2")}
               onClick={() => setSidebarCollapsed((prev) => !prev)}
-              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label={sidebarCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
             >
               {sidebarCollapsed ? (
                 <ChevronRight className="h-5 w-5" />
@@ -119,11 +123,11 @@ export default function Layout() {
             </Button>
           </div>
           <nav className="flex flex-col gap-1 p-4 flex-1">
-            {navigation.map((item) => {
+            {navItems.map((item) => {
               const isActive = location.pathname === item.href
               return (
                 <Link
-                  key={item.name}
+                  key={item.key}
                   to={item.href}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
@@ -135,9 +139,9 @@ export default function Layout() {
                 >
                   <item.icon className="h-5 w-5" />
                   {sidebarCollapsed ? (
-                    <span className="sr-only">{item.name}</span>
+                    <span className="sr-only">{t(item.key)}</span>
                   ) : (
-                    item.name
+                    t(item.key)
                   )}
                 </Link>
               )
@@ -191,7 +195,7 @@ export default function Layout() {
             <Popover>
               <PopoverTrigger asChild>
                 <button className="hidden sm:flex items-center gap-2 text-sm rounded-md px-3 py-1.5 hover:bg-muted transition-colors">
-                  <span className="text-muted-foreground">Organization:</span>
+                  <span className="text-muted-foreground">{t('nav.organization')}</span>
                   <span className="font-medium">{organization?.name}</span>
                   <ChevronDown className="h-4 w-4 text-muted-foreground" />
                 </button>
@@ -207,14 +211,14 @@ export default function Layout() {
                   className="flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm hover:bg-muted transition-colors w-full"
                 >
                   <Settings className="h-4 w-4 text-muted-foreground" />
-                  Organization settings
+                  {t('nav.orgSettings')}
                 </Link>
                 <button
                   onClick={handleLogout}
                   className="flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm hover:bg-muted transition-colors w-full text-left"
                 >
                   <LogOut className="h-4 w-4 text-muted-foreground" />
-                  Log out
+                  {t('nav.logout')}
                 </button>
               </PopoverContent>
             </Popover>

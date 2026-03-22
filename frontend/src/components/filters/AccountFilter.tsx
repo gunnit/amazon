@@ -6,10 +6,12 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { accountsApi } from '@/services/api'
 import { useFilterStore } from '@/store/filterStore'
+import { useTranslation } from '@/i18n'
 import type { AmazonAccount } from '@/types'
 
 export function AccountFilter() {
   const { accountIds, toggleAccountId, setAccountIds } = useFilterStore()
+  const { t } = useTranslation()
 
   const { data: accounts } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -19,10 +21,10 @@ export function AccountFilter() {
   const selectedCount = accountIds.length
   const label =
     selectedCount === 0
-      ? 'All accounts'
+      ? t('filter.allAccounts')
       : selectedCount === 1
         ? accounts?.find((a) => a.id === accountIds[0])?.account_name || '1 account'
-        : `${selectedCount} accounts`
+        : t('filter.nAccounts', { n: selectedCount })
 
   return (
     <Popover>
@@ -36,13 +38,13 @@ export function AccountFilter() {
       <PopoverContent className="w-64 p-3" align="start">
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">Accounts</span>
+            <span className="text-sm font-medium">{t('filter.accounts')}</span>
             {selectedCount > 0 && (
               <button
                 className="text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => setAccountIds([])}
               >
-                Clear
+                {t('common.clear')}
               </button>
             )}
           </div>
@@ -63,7 +65,7 @@ export function AccountFilter() {
               </label>
             ))}
             {(!accounts || accounts.length === 0) && (
-              <p className="text-xs text-muted-foreground py-2">No accounts found</p>
+              <p className="text-xs text-muted-foreground py-2">{t('filter.noAccountsFound')}</p>
             )}
           </div>
         </div>

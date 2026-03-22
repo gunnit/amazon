@@ -41,3 +41,5 @@ logs/
 
 # Build outputs
 frontend/dist/
+.mcp.json
+backend/celerybeat-schedule
