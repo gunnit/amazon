@@ -15,7 +15,16 @@ from app.config import settings
 config = context.config
 
 # Set sqlalchemy.url from settings - use sync driver for migrations
-sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg", "postgresql+psycopg2")
+# Handle Render's postgres:// URLs and local postgresql+asyncpg:// URLs
+db_url = settings.DATABASE_URL
+if db_url.startswith("postgres://"):
+    sync_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+elif db_url.startswith("postgresql://"):
+    sync_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+elif "asyncpg" in db_url:
+    sync_url = db_url.replace("postgresql+asyncpg", "postgresql+psycopg2")
+else:
+    sync_url = db_url
 config.set_main_option("sqlalchemy.url", sync_url)
 
 # Interpret the config file for Python logging

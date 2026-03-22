@@ -1,5 +1,6 @@
 """Market research endpoints."""
 import logging
+import threading
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
@@ -14,7 +15,7 @@ from app.schemas.market_research import (
     AIAnalysis,
     AIRecommendation,
 )
-from app.services.market_research_service import MarketResearchService
+from app.services.market_research_service import MarketResearchService, process_report_background
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,14 @@ async def generate_report(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(e),
         )
+
+    # Launch background processing in a thread (no Celery/Redis needed)
+    thread = threading.Thread(
+        target=process_report_background,
+        args=(str(report.id), data.extra_competitor_asins or []),
+        daemon=True,
+    )
+    thread.start()
 
     return _report_to_response(report)
 

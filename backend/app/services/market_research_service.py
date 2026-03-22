@@ -1,5 +1,8 @@
 """Market research service for competitive analysis."""
+import asyncio
 import logging
+import time
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -12,6 +15,9 @@ from app.models.competitor import Competitor
 from app.schemas.market_research import MarketResearchCreate
 
 logger = logging.getLogger(__name__)
+
+# How many competitors to auto-discover
+AUTO_DISCOVER_COUNT = 8
 
 
 class MarketResearchService:
@@ -26,10 +32,9 @@ class MarketResearchService:
         user_id: UUID,
         data: MarketResearchCreate,
     ) -> MarketResearchReport:
-        """Create a new market research report and dispatch Celery task.
+        """Create a new market research report.
 
-        The Celery task will automatically discover competitors via SP-API
-        catalog search based on the source product's title/category.
+        The background processing is triggered separately by the API endpoint.
         """
         # Verify account belongs to org
         result = await self.db.execute(
@@ -57,13 +62,6 @@ class MarketResearchService:
         self.db.add(report)
         await self.db.flush()
         await self.db.refresh(report)
-
-        # Dispatch Celery task — competitor discovery happens inside the task
-        from workers.tasks.market_research import process_market_research
-        process_market_research.delay(
-            str(report.id),
-            data.extra_competitor_asins or [],
-        )
 
         return report
 
@@ -113,3 +111,219 @@ class MarketResearchService:
 
         result = await self.db.execute(query)
         return list(result.scalars().all())
+
+
+def process_report_background(report_id: str, extra_asins: Optional[List[str]] = None):
+    """Process a market research report synchronously in a background thread.
+
+    This replaces the Celery task for deployments without Redis.
+    Runs: SP-API fetch + auto-discover competitors + AI analysis.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.market_research import MarketResearchReport
+    from app.models.amazon_account import AmazonAccount
+    from app.core.amazon.sp_api_client import SPAPIClient, resolve_marketplace
+    from app.core.amazon.credentials import resolve_credentials
+    from app.config import settings
+
+    async def _process():
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(MarketResearchReport).where(
+                    MarketResearchReport.id == UUID(report_id)
+                )
+            )
+            report = result.scalar_one_or_none()
+            if not report:
+                logger.error(f"Market research report {report_id} not found")
+                return
+
+            try:
+                report.status = "processing"
+                await db.flush()
+
+                # Load account
+                acc_result = await db.execute(
+                    select(AmazonAccount).where(AmazonAccount.id == report.account_id)
+                )
+                account = acc_result.scalar_one_or_none()
+                if not account:
+                    raise ValueError(f"Account {report.account_id} not found")
+
+                from app.models.user import Organization
+                org_result = await db.execute(
+                    select(Organization).where(Organization.id == report.organization_id)
+                )
+                organization = org_result.scalar_one_or_none()
+
+                # Build SP-API client
+                credentials = resolve_credentials(account, organization)
+                marketplace = resolve_marketplace(account.marketplace_country)
+                client = SPAPIClient(
+                    credentials, marketplace,
+                    account_type=account.account_type.value,
+                )
+
+                # Step 1: Fetch source product
+                product_snapshot = _fetch_product_data(client, report.source_asin)
+                report.product_snapshot = product_snapshot
+
+                source_title = product_snapshot.get("title", "")
+                source_brand = product_snapshot.get("brand")
+                source_category = product_snapshot.get("category")
+
+                if source_title:
+                    report.title = f"Market Research: {source_title[:80]}"
+
+                # Step 2: Auto-discover competitors
+                discovered_asins = _discover_competitors(
+                    client,
+                    source_asin=report.source_asin,
+                    source_title=source_title,
+                    source_brand=source_brand,
+                    max_results=AUTO_DISCOVER_COUNT,
+                )
+
+                # Merge with manual ASINs
+                all_competitor_asins = list(dict.fromkeys(
+                    discovered_asins + (extra_asins or [])
+                ))
+                all_competitor_asins = [
+                    a for a in all_competitor_asins
+                    if a != report.source_asin
+                ][:10]
+
+                logger.info(
+                    f"Report {report_id}: discovered {len(discovered_asins)} competitors, "
+                    f"{len(extra_asins or [])} manual, {len(all_competitor_asins)} total"
+                )
+
+                # Step 3: Fetch data for each competitor
+                comp_data = []
+                for comp_asin in all_competitor_asins:
+                    comp_snapshot = _fetch_product_data(client, comp_asin)
+                    comp_data.append(comp_snapshot)
+                    time.sleep(0.5)
+
+                report.competitor_data = comp_data
+
+                # Step 4: AI analysis
+                if settings.ANTHROPIC_API_KEY:
+                    from app.services.ai_analysis_service import AIAnalysisService
+                    ai_service = AIAnalysisService(settings.ANTHROPIC_API_KEY)
+                    analysis = ai_service.analyze(
+                        product_data=product_snapshot,
+                        competitor_data=comp_data,
+                        category=source_category,
+                        language=report.language,
+                    )
+                    report.ai_analysis = analysis
+
+                report.status = "completed"
+                report.completed_at = datetime.utcnow()
+                await db.commit()
+                logger.info(
+                    f"Market research {report_id} completed: "
+                    f"{len(comp_data)} competitors analyzed"
+                )
+
+            except Exception as e:
+                report.status = "failed"
+                report.error_message = str(e)[:500]
+                await db.commit()
+                logger.exception(f"Market research {report_id} failed: {e}")
+
+    # Run async processing in a new event loop (this runs in a thread)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_process())
+    finally:
+        try:
+            from app.db.session import engine
+            loop.run_until_complete(engine.dispose())
+        except Exception:
+            pass
+        loop.close()
+
+
+def _discover_competitors(
+    client,
+    source_asin: str,
+    source_title: str,
+    source_brand: Optional[str],
+    max_results: int = 8,
+) -> List[str]:
+    """Auto-discover competitor ASINs via SP-API catalog search."""
+    if not source_title:
+        logger.warning(f"No title for {source_asin}, cannot discover competitors")
+        return []
+
+    noise_words = {
+        "the", "a", "an", "for", "and", "or", "with", "in", "of", "to",
+        "per", "con", "e", "di", "da", "il", "la", "le", "un", "una",
+        "-", "&", "|", "/", ",", ".", "(", ")", "[", "]",
+    }
+    words = source_title.split()
+    keywords = []
+    for w in words:
+        clean = w.strip("()[].,;:-\u2013\u2014\"'").lower()
+        if len(clean) < 2:
+            continue
+        if clean in noise_words:
+            continue
+        if source_brand and clean == source_brand.lower():
+            continue
+        keywords.append(w.strip("()[].,;:-\u2013\u2014\"'"))
+        if len(keywords) >= 5:
+            break
+
+    if not keywords:
+        logger.warning(f"Could not extract keywords from title: {source_title}")
+        return []
+
+    search_query = " ".join(keywords)
+    logger.info(f"Competitor search query: '{search_query}' (from: {source_title[:60]})")
+
+    results = client.search_competitor_asins(
+        keywords=search_query,
+        source_asin=source_asin,
+        source_brand=source_brand,
+        max_results=max_results,
+    )
+
+    return [r["asin"] for r in results]
+
+
+def _fetch_product_data(client, asin: str) -> dict:
+    """Fetch product catalog details and competitive pricing for an ASIN."""
+    snapshot = {"asin": asin}
+
+    catalog = client.get_catalog_item_details(asin)
+    if catalog:
+        summaries = catalog.get("summaries", [])
+        if summaries:
+            summary = summaries[0]
+            snapshot["title"] = summary.get("itemName")
+            snapshot["brand"] = summary.get("brand")
+
+        classifications = catalog.get("classifications", [])
+        if classifications:
+            snapshot["category"] = classifications[0].get("displayName")
+
+        sales_ranks = catalog.get("salesRanks", [])
+        if sales_ranks:
+            for rank_list in sales_ranks:
+                ranks = rank_list.get("ranks", [])
+                for rank in ranks:
+                    if rank.get("link") is None:
+                        snapshot["bsr"] = rank.get("value")
+                        break
+                if "bsr" in snapshot:
+                    break
+
+    price = client.get_competitive_pricing(asin)
+    if price is not None:
+        snapshot["price"] = float(price)
+
+    return snapshot
