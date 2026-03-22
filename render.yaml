@@ -75,10 +75,12 @@ services:
       - key: SECRET_KEY
         fromService:
           name: inthezon-api
+          type: web
           envVarKey: SECRET_KEY
       - key: ENCRYPTION_KEY
         fromService:
           name: inthezon-api
+          type: web
           envVarKey: ENCRYPTION_KEY
       - key: SENDGRID_API_KEY
         sync: false
@@ -120,7 +122,6 @@ services:
   - type: web
     name: inthezon-frontend
     runtime: static
-    region: frankfurt
     buildCommand: |
       cd frontend && npm install && npm run build
     staticPublishPath: frontend/dist
