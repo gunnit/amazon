@@ -7,6 +7,8 @@ from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
 from app.models.product import Product, BSRHistory
 from app.models.competitor import Competitor, CompetitorHistory
 from app.models.forecast import Forecast
+from app.models.forecast_export_job import ForecastExportJob
+from app.models.scheduled_report import ScheduledReport, ScheduledReportRun
 from app.models.sync_job import SyncJob
 from app.models.alert import AlertRule, Alert
 from app.models.market_research import MarketResearchReport
@@ -25,6 +27,9 @@ __all__ = [
     "Competitor",
     "CompetitorHistory",
     "Forecast",
+    "ForecastExportJob",
+    "ScheduledReport",
+    "ScheduledReportRun",
     "SyncJob",
     "AlertRule",
     "Alert",

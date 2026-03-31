@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
-  Store,
   FileText,
   BarChart3,
   TrendingUp,
@@ -24,7 +23,6 @@ import { useTranslation } from '@/i18n'
 
 const navItems = [
   { key: 'nav.dashboard', href: '/', icon: LayoutDashboard },
-  { key: 'nav.accounts', href: '/accounts', icon: Store },
   { key: 'nav.reports', href: '/reports', icon: FileText },
   { key: 'nav.analytics', href: '/analytics', icon: BarChart3 },
   { key: 'nav.forecasts', href: '/forecasts', icon: TrendingUp },

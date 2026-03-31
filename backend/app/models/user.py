@@ -62,6 +62,11 @@ class Organization(Base):
         "AlertRule", back_populates="organization", cascade="all, delete-orphan"
     )
 
+    @property
+    def timezone(self) -> str:
+        """Expose the default organization timezone stored in settings."""
+        return (self.settings or {}).get("timezone", "UTC")
+
 
 class OrganizationMember(Base):
     """Organization membership model."""

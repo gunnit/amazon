@@ -15,8 +15,10 @@ celery_app = Celery(
     include=[
         "workers.tasks.extraction",
         "workers.tasks.forecasting",
+        "workers.tasks.forecast_exports",
         "workers.tasks.notifications",
         "workers.tasks.market_research",
+        "workers.tasks.scheduled_reports",
     ],
 )
 
@@ -55,6 +57,11 @@ celery_app.conf.beat_schedule = {
     "hourly-alert-check": {
         "task": "workers.tasks.notifications.check_alerts",
         "schedule": crontab(minute=0),
+    },
+    # Poll recurring operational reports every 5 minutes
+    "scheduled-report-scan": {
+        "task": "workers.tasks.scheduled_reports.scan_scheduled_reports_due",
+        "schedule": crontab(minute="*/5"),
     },
 }
 

@@ -7,6 +7,7 @@ import logging
 
 from app.config import settings
 from app.api.v1.router import api_router
+from sqlalchemy import text as sa_text
 from app.db.session import engine
 from app.db.base import Base
 
@@ -25,11 +26,19 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Inthezon Platform API")
     logger.info(f"Environment: {settings.APP_ENV}")
 
-    # Create tables if they don't exist (for development)
-    if settings.APP_ENV == "development":
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database tables created/verified")
+    # Run migrations and ensure schema is up to date
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        # Add columns that create_all can't add to existing tables
+        for statement in [
+            "ALTER TABLE market_research_reports ADD COLUMN IF NOT EXISTS progress_step VARCHAR(100)",
+            "ALTER TABLE market_research_reports ADD COLUMN IF NOT EXISTS progress_pct INTEGER DEFAULT 0",
+        ]:
+            try:
+                await conn.execute(sa_text(statement))
+            except Exception:
+                pass  # Column already exists or table doesn't exist yet
+    logger.info("Database tables created/verified")
 
     yield
 

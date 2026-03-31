@@ -134,8 +134,8 @@ class SPAPIClient:
     def _inventories_api(self) -> Inventories:
         return Inventories(**self._api_kwargs)
 
-    def _catalog_api(self) -> CatalogItems:
-        return CatalogItems(**self._api_kwargs)
+    def _catalog_api(self, version: str = "2022-04-01") -> CatalogItems:
+        return CatalogItems(**self._api_kwargs, version=version)
 
     def _products_api(self) -> Products:
         return Products(**self._api_kwargs)
@@ -306,7 +306,7 @@ class SPAPIClient:
             api = self._catalog_api()
             response = api.get_catalog_item(
                 asin=asin,
-                marketplaceIds=[self.marketplace.marketplace_id],
+                marketplaceIds=self.marketplace.marketplace_id,
                 includedData=["summaries", "salesRanks", "classifications"],
             )
             return response.payload
@@ -318,22 +318,108 @@ class SPAPIClient:
     def get_competitive_pricing(self, asin: str) -> Optional[Decimal]:
         """Get competitive pricing for a product."""
         try:
+            if self.is_vendor:
+                logger.debug(
+                    "Skipping pricing lookup for %s because Product Pricing API is seller-only",
+                    asin,
+                )
+                return None
+
             api = self._products_api()
             response = api.get_competitive_pricing_for_asins([asin])
-            products = response.payload or []
-            for product in products:
-                prices = product.get("Product", {}).get(
-                    "CompetitivePricing", {}
-                ).get("CompetitivePrices", [])
-                for price_entry in prices:
-                    landed = price_entry.get("Price", {}).get("LandedPrice", {})
-                    amount = landed.get("Amount")
-                    if amount is not None:
-                        return Decimal(str(amount))
-            return None
+            price = self._extract_price_amount(response.payload)
+            if price is not None:
+                return price
+
+            # Fallback: lowest offers by ASIN often contain pricing when
+            # competitive pricing does not expose it in CompetitivePrices.
+            offers_response = api.get_item_offers(asin=asin, item_condition="New")
+            return self._extract_price_amount(offers_response.payload)
         except Exception as e:
             logger.warning(f"Failed to get competitive pricing for {asin}: {e}")
             return None
+
+    def _extract_price_amount(self, payload: Any) -> Optional[Decimal]:
+        """Extract a representative price from Product Pricing payloads."""
+        candidates: List[Decimal] = []
+
+        def add_amount(container: Optional[Dict[str, Any]]):
+            if not isinstance(container, dict):
+                return
+            amount = container.get("Amount")
+            if amount is None:
+                return
+            try:
+                candidates.append(Decimal(str(amount)))
+            except Exception:
+                return
+
+        def add_price_node(node: Any):
+            if not isinstance(node, dict):
+                return
+
+            # Prefer landed price when present, then listing/buying price.
+            add_amount(node.get("LandedPrice"))
+            add_amount(node.get("ListingPrice"))
+            add_amount(node.get("BuyingPrice"))
+            add_amount(node.get("price"))
+
+            price_node = node.get("Price")
+            if isinstance(price_node, dict):
+                add_amount(price_node.get("LandedPrice"))
+                add_amount(price_node.get("ListingPrice"))
+                if price_node.get("Amount") is not None:
+                    add_amount({"Amount": price_node.get("Amount")})
+
+            shipping = node.get("Shipping")
+            listing = node.get("ListingPrice")
+            if isinstance(listing, dict) and isinstance(shipping, dict):
+                listing_amount = listing.get("Amount")
+                shipping_amount = shipping.get("Amount")
+                if listing_amount is not None and shipping_amount is not None:
+                    try:
+                        candidates.append(
+                            Decimal(str(listing_amount)) + Decimal(str(shipping_amount))
+                        )
+                    except Exception:
+                        pass
+
+        def walk(node: Any):
+            if isinstance(node, list):
+                for item in node:
+                    walk(item)
+                return
+            if not isinstance(node, dict):
+                return
+
+            add_price_node(node)
+
+            for key in (
+                "CompetitivePrices",
+                "LowestPrices",
+                "BuyBoxPrices",
+                "Offers",
+                "price",
+                "Price",
+            ):
+                value = node.get(key)
+                if value is not None:
+                    walk(value)
+
+            product = node.get("Product")
+            if isinstance(product, dict):
+                walk(product)
+
+            competitive = node.get("CompetitivePricing")
+            if isinstance(competitive, dict):
+                walk(competitive)
+
+            summary = node.get("Summary")
+            if isinstance(summary, dict):
+                walk(summary)
+
+        walk(payload)
+        return candidates[0] if candidates else None
 
     @with_throttle_retry(max_retries=3, base_delay=3.0)
     def search_competitor_asins(
@@ -351,7 +437,7 @@ class SPAPIClient:
             api = self._catalog_api()
             response = api.search_catalog_items(
                 keywords=keywords,
-                marketplaceIds=[self.marketplace.marketplace_id],
+                marketplaceIds=self.marketplace.marketplace_id,
                 includedData=["summaries", "salesRanks", "classifications"],
                 pageSize=min(max_results + 5, 20),  # fetch extra to filter
             )
@@ -387,9 +473,87 @@ class SPAPIClient:
                 f"{len(results)} results (source={source_asin})"
             )
             return results
+        except SellingApiRequestThrottledException:
+            raise
+        except AmazonAPIError:
+            raise
         except Exception as e:
-            logger.warning(f"Catalog search failed for '{keywords[:50]}': {e}")
-            return []
+            logger.exception(f"Catalog search failed for '{keywords[:50]}': {e}")
+            raise AmazonAPIError(
+                f"Catalog search failed: {e}",
+                error_code="CATALOG_SEARCH_FAILED",
+            )
+
+    @with_throttle_retry(max_retries=3, base_delay=3.0)
+    def search_catalog_by_keyword(
+        self,
+        keywords: str,
+        max_results: int = 20,
+    ) -> List[Dict]:
+        """Search catalog by keyword/brand and return products with metrics.
+
+        Unlike search_competitor_asins, this does NOT filter out any
+        specific ASIN or brand — it returns all matching products.
+        Used by Market Tracker 360.
+        """
+        try:
+            api = self._catalog_api()
+            response = api.search_catalog_items(
+                keywords=keywords,
+                marketplaceIds=self.marketplace.marketplace_id,
+                includedData=["summaries", "salesRanks", "classifications"],
+                pageSize=min(max_results, 20),
+            )
+            items = response.payload.get("items", [])
+            results = []
+            for item in items:
+                asin = item.get("asin", "")
+                summaries = item.get("summaries", [])
+                summary = summaries[0] if summaries else {}
+
+                # Extract BSR
+                bsr = None
+                sales_ranks = item.get("salesRanks", [])
+                for rank_list in sales_ranks:
+                    for rank in rank_list.get("ranks", []):
+                        if rank.get("link") is None:
+                            bsr = rank.get("value")
+                            break
+                    if bsr is not None:
+                        break
+
+                # Extract category
+                category = None
+                classifications = item.get("classifications", [])
+                if classifications:
+                    category = classifications[0].get("displayName")
+
+                result = {
+                    "asin": asin,
+                    "title": summary.get("itemName"),
+                    "brand": summary.get("brand") or None,
+                    "category": category,
+                    "bsr": bsr,
+                }
+                results.append(result)
+
+                if len(results) >= max_results:
+                    break
+
+            logger.info(
+                f"Market search for '{keywords[:50]}' returned {len(results)} results"
+            )
+            return results
+        except SellingApiRequestThrottledException:
+            raise
+        except AmazonAPIError:
+            raise
+        except Exception as e:
+            logger.exception(f"Market search failed for '{keywords[:50]}': {e}")
+            raise AmazonAPIError(
+                f"Market search failed: {e}",
+                error_code="MARKET_SEARCH_FAILED",
+            )
 
     # ---- Vendor-specific methods ----
 

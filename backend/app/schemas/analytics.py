@@ -11,6 +11,8 @@ class MetricValue(BaseModel):
     previous_value: Optional[float] = None
     change_percent: Optional[float] = None
     trend: str = "stable"  # up, down, stable
+    is_available: bool = True
+    unavailable_reason: Optional[str] = None
 
 
 class DashboardKPIs(BaseModel):
@@ -60,13 +62,32 @@ class HourlyOrdersData(BaseModel):
     orders: int
 
 
-class ComparisonData(BaseModel):
-    """Period-over-period comparison."""
+class ComparisonPeriod(BaseModel):
+    """Date range used in period comparison."""
+    start: date
+    end: date
+
+
+class ComparisonMetric(BaseModel):
+    """Single metric in a period-over-period comparison."""
     metric_name: str
-    current_period: Dict[str, Any]
-    previous_period: Dict[str, Any]
-    change_absolute: float
-    change_percent: float
+    label: str
+    current_value: Optional[float] = None
+    previous_value: Optional[float] = None
+    change_percent: Optional[float] = None
+    trend: str = "stable"
+    format: str = "number"
+    is_available: bool = True
+    unavailable_reason: Optional[str] = None
+
+
+class ComparisonResponse(BaseModel):
+    """Period-over-period comparison response."""
+    preset: Optional[str] = None
+    category: Optional[str] = None
+    period_1: ComparisonPeriod
+    period_2: ComparisonPeriod
+    metrics: List[ComparisonMetric]
 
 
 class ProductPerformance(BaseModel):
@@ -112,6 +133,20 @@ class ForecastPrediction(BaseModel):
     upper_bound: float
 
 
+class ForecastHistoricalPoint(BaseModel):
+    """Single historical data point for chart context."""
+    date: date
+    value: float
+
+
+class ForecastProductOption(BaseModel):
+    """ASIN option that has enough history for forecasting."""
+    asin: str
+    title: Optional[str] = None
+    history_days: int
+    last_sale_date: Optional[date] = None
+
+
 class ForecastResponse(BaseModel):
     """Forecast response."""
     id: str
@@ -123,6 +158,7 @@ class ForecastResponse(BaseModel):
     model_used: str
     confidence_interval: float
     predictions: List[ForecastPrediction]
+    historical_data: List[ForecastHistoricalPoint] = []
     mape: Optional[float]
     rmse: Optional[float]
 
@@ -136,3 +172,62 @@ class AdvertisingInsights(BaseModel):
     top_campaigns: List[Dict[str, Any]]
     underperforming_campaigns: List[Dict[str, Any]]
     recommendations: List[str]
+
+
+class ProductTrendRecommendation(BaseModel):
+    """Actionable recommendation for trend insights."""
+    priority: str
+    action: str
+    rationale: str
+    expected_impact: str
+
+
+class ProductTrendInsights(BaseModel):
+    """Structured insight block for trends."""
+    summary: str
+    key_trends: List[str]
+    risks: List[str]
+    opportunities: List[str]
+    recommendations: List[ProductTrendRecommendation]
+
+
+class ProductTrendItem(BaseModel):
+    """Single product trend record."""
+    asin: str
+    title: Optional[str] = None
+    category: Optional[str] = None
+    trend_score: float
+    direction: str
+    strength: str
+    current_revenue: float
+    previous_revenue: float
+    current_units: int
+    previous_units: int
+    revenue_change_percent: float
+    units_change_percent: float
+    current_bsr: Optional[int] = None
+    previous_bsr: Optional[int] = None
+    bsr_change_percent: Optional[float] = None
+    data_quality: str
+    reason_tags: List[str]
+
+
+class ProductTrendSummary(BaseModel):
+    """Aggregate summary for product trends."""
+    eligible_products: int
+    rising_count: int
+    declining_count: int
+    stable_count: int
+    average_trend_score: float
+    strongest_riser: Optional[ProductTrendItem] = None
+    strongest_decliner: Optional[ProductTrendItem] = None
+
+
+class ProductTrendsResponse(BaseModel):
+    """Product trends response."""
+    summary: ProductTrendSummary
+    rising_products: List[ProductTrendItem]
+    declining_products: List[ProductTrendItem]
+    insights: ProductTrendInsights
+    generated_with_ai: bool
+    ai_available: bool

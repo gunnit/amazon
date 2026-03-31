@@ -1,0 +1,12 @@
+{
+  "name": "inthezon-mcp-distribution",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @inthezon/shared-sdk && npm run build -w @inthezon/mcp-server && npm run build -w @inthezon/mcp-cli",
+    "clean": "npm run clean -w @inthezon/shared-sdk && npm run clean -w @inthezon/mcp-server && npm run clean -w @inthezon/mcp-cli"
+  }
+}

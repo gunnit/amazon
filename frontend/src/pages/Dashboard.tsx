@@ -22,10 +22,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { analyticsApi, accountsApi } from '@/services/api'
 import { formatCurrency, formatNumber, formatPercent, cn } from '@/lib/utils'
-import { FilterBar, DateRangeFilter, AccountFilter } from '@/components/filters'
-import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
+import { FilterBar, DateRangeFilter, AccountFilter, ComparisonFilter } from '@/components/filters'
+import { PeriodComparisonCard } from '@/components/PeriodComparisonCard'
+import { useFilterStore, getComparisonPeriods, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
-import type { DashboardKPIs, TrendData, AccountSummary } from '@/types'
+import type { DashboardKPIs, TrendData, AccountSummary, ComparisonResponse } from '@/types'
 
 function KPICard({
   title,
@@ -133,8 +134,21 @@ function ChartEmptyState({
 export default function Dashboard() {
   const { t } = useTranslation()
   const filterState = useFilterStore()
-  const { datePreset, customStartDate, customEndDate, accountIds, resetDashboard } = filterState
+  const {
+    datePreset,
+    customStartDate,
+    customEndDate,
+    accountIds,
+    resetDashboard,
+    resetComparison,
+  } = filterState
   const dateRange = getFilterDateRange({ datePreset, customStartDate, customEndDate })
+  const comparisonPeriods = getComparisonPeriods(filterState)
+
+  const handleReset = () => {
+    resetDashboard()
+    resetComparison()
+  }
 
   const { data: kpis, isLoading: kpisLoading } = useQuery<DashboardKPIs>({
     queryKey: ['dashboard-kpis', dateRange, accountIds],
@@ -158,6 +172,18 @@ export default function Dashboard() {
   const { data: accountSummary, isLoading: accountsLoading } = useQuery<AccountSummary>({
     queryKey: ['accounts-summary'],
     queryFn: () => accountsApi.getSummary(),
+  })
+
+  const { data: comparison, isLoading: comparisonLoading } = useQuery<ComparisonResponse>({
+    queryKey: ['dashboard-comparison', comparisonPeriods, accountIds],
+    queryFn: () => analyticsApi.getComparison({
+      period1_start: comparisonPeriods.period1.start,
+      period1_end: comparisonPeriods.period1.end,
+      period2_start: comparisonPeriods.period2.start,
+      period2_end: comparisonPeriods.period2.end,
+      preset: comparisonPeriods.preset || undefined,
+      account_ids: accountIds.length > 0 ? accountIds : undefined,
+    }),
   })
 
   const isLoading = kpisLoading || trendsLoading || accountsLoading
@@ -184,9 +210,10 @@ export default function Dashboard() {
             {t('dashboard.subtitle')}
           </p>
         </div>
-        <FilterBar onReset={resetDashboard}>
+        <FilterBar onReset={handleReset}>
           <DateRangeFilter />
           <AccountFilter />
+          <ComparisonFilter />
         </FilterBar>
       </div>
 
@@ -234,6 +261,12 @@ export default function Dashboard() {
           icon={Package}
         />
       </div>
+
+      <PeriodComparisonCard
+        comparison={comparisonLoading ? undefined : comparison}
+        title={t('comparison.dashboardTitle')}
+        description={t('comparison.dashboardDescription')}
+      />
 
       {/* Charts */}
       <div className="grid gap-4 md:grid-cols-2">

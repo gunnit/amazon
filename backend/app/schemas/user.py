@@ -49,6 +49,7 @@ class OrganizationResponse(BaseModel):
     id: UUID
     name: str
     slug: str
+    timezone: str = "UTC"
     created_at: datetime
 
     class Config:

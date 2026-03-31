@@ -12,6 +12,7 @@ export interface Organization {
   id: string
   name: string
   slug: string
+  timezone: string
   created_at: string
 }
 
@@ -67,6 +68,8 @@ export interface MetricValue {
   previous_value: number | null
   change_percent: number | null
   trend: 'up' | 'down' | 'stable'
+  is_available?: boolean
+  unavailable_reason?: string | null
 }
 
 export interface DashboardKPIs {
@@ -98,6 +101,31 @@ export interface TrendData {
   max_value: number
 }
 
+export interface ComparisonPeriod {
+  start: string
+  end: string
+}
+
+export interface ComparisonMetric {
+  metric_name: 'revenue' | 'units' | 'orders' | 'returns' | 'roas' | 'ctr'
+  label: string
+  current_value: number | null
+  previous_value: number | null
+  change_percent: number | null
+  trend: 'up' | 'down' | 'stable'
+  format: 'currency' | 'number' | 'percent' | 'ratio'
+  is_available: boolean
+  unavailable_reason: string | null
+}
+
+export interface ComparisonResponse {
+  preset: 'mom' | 'qoq' | 'yoy' | null
+  category: string | null
+  period_1: ComparisonPeriod
+  period_2: ComparisonPeriod
+  metrics: ComparisonMetric[]
+}
+
 export interface CategorySalesData {
   category: string
   total_revenue: number
@@ -105,9 +133,80 @@ export interface CategorySalesData {
   total_orders: number
 }
 
+export interface TopPerformerData {
+  asin: string
+  title: string | null
+  total_revenue: number
+  total_units: number
+  total_orders: number
+}
+
+export interface TopPerformersResponse {
+  by_revenue: TopPerformerData[]
+  by_units: TopPerformerData[]
+}
+
 export interface HourlyOrdersData {
   hour: number
   orders: number
+}
+
+export type TrendDirection = 'up' | 'down' | 'stable'
+export type TrendStrength = 'weak' | 'moderate' | 'strong'
+export type TrendDataQuality = 'high' | 'medium' | 'low'
+
+export interface ProductTrendRecommendation {
+  priority: 'high' | 'medium' | 'low'
+  action: string
+  rationale: string
+  expected_impact: string
+}
+
+export interface ProductTrendInsights {
+  summary: string
+  key_trends: string[]
+  risks: string[]
+  opportunities: string[]
+  recommendations: ProductTrendRecommendation[]
+}
+
+export interface ProductTrendItem {
+  asin: string
+  title: string | null
+  category: string | null
+  trend_score: number
+  direction: TrendDirection
+  strength: TrendStrength
+  current_revenue: number
+  previous_revenue: number
+  current_units: number
+  previous_units: number
+  revenue_change_percent: number
+  units_change_percent: number
+  current_bsr: number | null
+  previous_bsr: number | null
+  bsr_change_percent: number | null
+  data_quality: TrendDataQuality
+  reason_tags: string[]
+}
+
+export interface ProductTrendSummary {
+  eligible_products: number
+  rising_count: number
+  declining_count: number
+  stable_count: number
+  average_trend_score: number
+  strongest_riser: ProductTrendItem | null
+  strongest_decliner: ProductTrendItem | null
+}
+
+export interface ProductTrendsResponse {
+  summary: ProductTrendSummary
+  rising_products: ProductTrendItem[]
+  declining_products: ProductTrendItem[]
+  insights: ProductTrendInsights
+  generated_with_ai: boolean
+  ai_available: boolean
 }
 
 // Sales data types
@@ -165,6 +264,54 @@ export interface AdvertisingMetricsItem {
   roas: number | string | null
 }
 
+export type ScheduledReportType = 'sales' | 'inventory' | 'advertising'
+export type ScheduledReportFrequency = 'weekly' | 'monthly'
+export type ScheduledReportFormat = 'excel' | 'pdf'
+export type ScheduledReportRunStatus = 'pending' | 'processing' | 'generated' | 'delivered' | 'failed'
+
+export interface ScheduledReportParameters {
+  group_by: 'day' | 'week' | 'month'
+  low_stock_only: boolean
+  language: 'en' | 'it'
+  include_comparison: boolean
+}
+
+export interface ScheduledReport {
+  id: string
+  name: string
+  report_types: ScheduledReportType[]
+  frequency: ScheduledReportFrequency
+  format: ScheduledReportFormat
+  timezone: string
+  account_ids: string[]
+  recipients: string[]
+  parameters: ScheduledReportParameters
+  schedule_config: Record<string, unknown>
+  is_enabled: boolean
+  last_run_at: string | null
+  last_run_status: string | null
+  next_run_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ScheduledReportRun {
+  id: string
+  scheduled_report_id: string
+  status: ScheduledReportRunStatus
+  generation_status: string
+  delivery_status: string
+  progress_step: string | null
+  error_message: string | null
+  triggered_at: string
+  period_start: string
+  period_end: string
+  completed_at: string | null
+  artifact_filename: string | null
+  download_ready: boolean
+  recipients: string[]
+}
+
 // Product types
 export interface Product {
   id: string
@@ -189,6 +336,18 @@ export interface ForecastPrediction {
   upper_bound: number
 }
 
+export interface ForecastProductOption {
+  asin: string
+  title: string | null
+  history_days: number
+  last_sale_date: string | null
+}
+
+export interface ForecastHistoricalPoint {
+  date: string
+  value: number
+}
+
 export interface Forecast {
   id: string
   account_id: string
@@ -199,8 +358,24 @@ export interface Forecast {
   model_used: string
   confidence_interval: number
   predictions: ForecastPrediction[]
+  historical_data: ForecastHistoricalPoint[]
   mape: number | null
   rmse: number | null
+}
+
+export interface ForecastExportJob {
+  id: string
+  forecast_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  progress_step: string | null
+  progress_pct: number
+  error_message: string | null
+  include_insights: boolean
+  template: 'clean' | 'corporate' | 'executive'
+  language: 'en' | 'it'
+  download_ready: boolean
+  created_at: string
+  completed_at: string | null
 }
 
 // Market Research types
@@ -241,6 +416,8 @@ export interface MarketResearchReport {
   language: 'en' | 'it'
   title: string | null
   status: 'pending' | 'processing' | 'completed' | 'failed'
+  progress_step: string | null
+  progress_pct: number
   error_message: string | null
   product_snapshot: ProductSnapshot | null
   competitor_data: CompetitorSnapshot[] | null
@@ -257,6 +434,27 @@ export interface MarketResearchListItem {
   language: 'en' | 'it'
   created_at: string
   competitor_count: number
+}
+
+// Market Tracker 360 types
+export interface MarketSearchResult {
+  asin: string
+  title: string | null
+  brand: string | null
+  category: string | null
+  price: number | null
+  bsr: number | null
+  review_count: number | null
+  rating: number | null
+}
+
+export interface MarketSearchResponse {
+  results: MarketSearchResult[]
+  total_found: number
+  query: string
+  search_type: string
+  error?: string
+  error_code?: string
 }
 
 export interface CompetitorSuggestion {

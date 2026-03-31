@@ -3,18 +3,72 @@ import logging
 from typing import List, Optional
 from datetime import date, timedelta
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import and_, func, select
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 from app.models.amazon_account import AmazonAccount
 from app.models.forecast import Forecast
-from app.schemas.analytics import ForecastResponse, ForecastPrediction
+from app.models.product import Product
+from app.models.sales_data import SalesData
+from app.schemas.analytics import ForecastHistoricalPoint, ForecastProductOption, ForecastResponse, ForecastPrediction
+from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.forecast_service import ForecastService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _fetch_historical(
+    db,
+    account_id,
+    asin: Optional[str],
+    days: int = 30,
+) -> List[ForecastHistoricalPoint]:
+    """Fetch recent sales history to display alongside the forecast chart."""
+    start_date = date.today() - timedelta(days=days)
+    query = (
+        select(SalesData.date, func.sum(SalesData.ordered_product_sales).label("value"))
+        .where(SalesData.account_id == account_id, SalesData.date >= start_date)
+        .group_by(SalesData.date)
+        .order_by(SalesData.date)
+    )
+    if asin:
+        query = query.where(SalesData.asin == asin)
+    else:
+        query = query.where(SalesData.asin == DAILY_TOTAL_ASIN)
+    result = await db.execute(query)
+    return [
+        ForecastHistoricalPoint(date=row.date, value=float(row.value or 0))
+        for row in result.all()
+    ]
+
+
+def _build_response(f, historical: List[ForecastHistoricalPoint]) -> ForecastResponse:
+    """Build a ForecastResponse from a Forecast model instance."""
+    return ForecastResponse(
+        id=str(f.id),
+        account_id=str(f.account_id),
+        asin=f.asin,
+        forecast_type=f.forecast_type or "sales",
+        generated_at=f.generated_at.isoformat() if f.generated_at else "",
+        horizon_days=f.forecast_horizon_days or 30,
+        model_used=f.model_used or "prophet",
+        confidence_interval=float(f.confidence_interval or 0.95),
+        predictions=[
+            ForecastPrediction(
+                date=date.fromisoformat(p["date"]) if isinstance(p["date"], str) else p["date"],
+                predicted_value=p["value"],
+                lower_bound=p.get("lower", p["value"] * 0.8),
+                upper_bound=p.get("upper", p["value"] * 1.2),
+            )
+            for p in (f.predictions or [])
+        ],
+        historical_data=historical,
+        mape=float(f.mape) if f.mape else None,
+        rmse=float(f.rmse) if f.rmse else None,
+    )
 
 
 @router.get("", response_model=List[ForecastResponse])
@@ -46,29 +100,73 @@ async def list_forecasts(
     result = await db.execute(query)
     forecasts = result.scalars().all()
 
-    return [
-        ForecastResponse(
-            id=str(f.id),
-            account_id=str(f.account_id),
-            asin=f.asin,
-            forecast_type=f.forecast_type or "sales",
-            generated_at=f.generated_at.isoformat() if f.generated_at else "",
-            horizon_days=f.forecast_horizon_days or 30,
-            model_used=f.model_used or "prophet",
-            confidence_interval=float(f.confidence_interval or 0.95),
-            predictions=[
-                ForecastPrediction(
-                    date=date.fromisoformat(p["date"]) if isinstance(p["date"], str) else p["date"],
-                    predicted_value=p["value"],
-                    lower_bound=p.get("lower", p["value"] * 0.8),
-                    upper_bound=p.get("upper", p["value"] * 1.2),
-                )
-                for p in (f.predictions or [])
-            ],
-            mape=float(f.mape) if f.mape else None,
-            rmse=float(f.rmse) if f.rmse else None,
+    responses = []
+    for f in forecasts:
+        historical = await _fetch_historical(db, f.account_id, f.asin)
+        responses.append(_build_response(f, historical))
+    return responses
+
+
+@router.get("/available-products", response_model=List[ForecastProductOption])
+async def list_forecast_available_products(
+    account_id: UUID,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    lookback_days: int = Query(default=365, ge=30, le=730),
+    min_history_days: int = Query(default=ForecastService.MIN_HISTORY_DAYS, ge=1, le=30),
+    limit: int = Query(default=1000, ge=1, le=5000),
+):
+    """List account ASINs that have enough sales history for a forecast."""
+    account_result = await db.execute(
+        select(AmazonAccount.id).where(
+            AmazonAccount.id == account_id,
+            AmazonAccount.organization_id == organization.id,
         )
-        for f in forecasts
+    )
+    account = account_result.scalar_one_or_none()
+
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Account not found",
+        )
+
+    start_date = date.today() - timedelta(days=lookback_days)
+    result = await db.execute(
+        select(
+            SalesData.asin,
+            func.max(Product.title).label("title"),
+            func.count(func.distinct(SalesData.date)).label("history_days"),
+            func.max(SalesData.date).label("last_sale_date"),
+        )
+        .select_from(SalesData)
+        .outerjoin(
+            Product,
+            and_(
+                Product.account_id == SalesData.account_id,
+                Product.asin == SalesData.asin,
+            ),
+        )
+        .where(
+            SalesData.account_id == account_id,
+            SalesData.asin != DAILY_TOTAL_ASIN,
+            SalesData.date >= start_date,
+        )
+        .group_by(SalesData.asin)
+        .having(func.count(func.distinct(SalesData.date)) >= min_history_days)
+        .order_by(func.max(SalesData.date).desc(), SalesData.asin)
+        .limit(limit)
+    )
+
+    return [
+        ForecastProductOption(
+            asin=row.asin,
+            title=row.title,
+            history_days=int(row.history_days or 0),
+            last_sale_date=row.last_sale_date,
+        )
+        for row in result.all()
     ]
 
 
@@ -148,27 +246,8 @@ async def get_forecast(
             detail="Forecast not found"
         )
 
-    return ForecastResponse(
-        id=str(forecast.id),
-        account_id=str(forecast.account_id),
-        asin=forecast.asin,
-        forecast_type=forecast.forecast_type or "sales",
-        generated_at=forecast.generated_at.isoformat() if forecast.generated_at else "",
-        horizon_days=forecast.forecast_horizon_days or 30,
-        model_used=forecast.model_used or "prophet",
-        confidence_interval=float(forecast.confidence_interval or 0.95),
-        predictions=[
-            ForecastPrediction(
-                date=date.fromisoformat(p["date"]) if isinstance(p["date"], str) else p["date"],
-                predicted_value=p["value"],
-                lower_bound=p.get("lower", p["value"] * 0.8),
-                upper_bound=p.get("upper", p["value"] * 1.2),
-            )
-            for p in (forecast.predictions or [])
-        ],
-        mape=float(forecast.mape) if forecast.mape else None,
-        rmse=float(forecast.rmse) if forecast.rmse else None,
-    )
+    historical = await _fetch_historical(db, forecast.account_id, forecast.asin)
+    return _build_response(forecast, historical)
 
 
 @router.get("/products/{asin}", response_model=ForecastResponse)
@@ -200,24 +279,5 @@ async def get_product_forecast(
             detail=f"No forecast found for ASIN {asin}"
         )
 
-    return ForecastResponse(
-        id=str(forecast.id),
-        account_id=str(forecast.account_id),
-        asin=forecast.asin,
-        forecast_type=forecast.forecast_type or "sales",
-        generated_at=forecast.generated_at.isoformat() if forecast.generated_at else "",
-        horizon_days=forecast.forecast_horizon_days or 30,
-        model_used=forecast.model_used or "prophet",
-        confidence_interval=float(forecast.confidence_interval or 0.95),
-        predictions=[
-            ForecastPrediction(
-                date=date.fromisoformat(p["date"]) if isinstance(p["date"], str) else p["date"],
-                predicted_value=p["value"],
-                lower_bound=p.get("lower", p["value"] * 0.8),
-                upper_bound=p.get("upper", p["value"] * 1.2),
-            )
-            for p in (forecast.predictions or [])
-        ],
-        mape=float(forecast.mape) if forecast.mape else None,
-        rmse=float(forecast.rmse) if forecast.rmse else None,
-    )
+    historical = await _fetch_historical(db, forecast.account_id, forecast.asin)
+    return _build_response(forecast, historical)

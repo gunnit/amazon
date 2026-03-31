@@ -19,6 +19,7 @@ import {
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
 import { ExportModal } from '@/components/ExportModal'
+import { ScheduledReportsPanel } from '@/components/ScheduledReportsPanel'
 import type { AdvertisingMetricsItem, InventoryReportItem, SalesAggregated } from '@/types'
 
 type ReportTab = 'sales' | 'inventory' | 'advertising'
@@ -295,6 +296,7 @@ export default function Reports() {
       </Tabs>
 
       <ExportModal open={exportModalOpen} onOpenChange={setExportModalOpen} />
+      <ScheduledReportsPanel />
     </div>
   )
 }

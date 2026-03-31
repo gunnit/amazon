@@ -2,12 +2,15 @@ import axios from 'axios'
 import type {
   User, AuthTokens, Organization,
   AmazonAccount, AccountSummary,
-  DashboardKPIs, TrendData, SalesAggregated,
-  CategorySalesData, HourlyOrdersData,
+  DashboardKPIs, TrendData, SalesAggregated, ComparisonResponse,
+  CategorySalesData, HourlyOrdersData, ProductTrendsResponse, TopPerformersResponse,
   Forecast, Product,
+  ForecastExportJob,
+  ForecastProductOption,
   InventoryReportItem, AdvertisingMetricsItem,
+  ScheduledReport, ScheduledReportRun,
   ApiKeysUpdate, ApiKeysResponse,
-  MarketResearchReport, MarketResearchListItem, CompetitorSuggestion,
+  MarketResearchReport, MarketResearchListItem, MarketSearchResponse, CompetitorSuggestion,
 } from '@/types'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -202,6 +205,77 @@ export const reportsApi = {
     const response = await api.get('/reports/advertising', { params })
     return response.data
   },
+
+  listSchedules: async (): Promise<ScheduledReport[]> => {
+    const response = await api.get('/reports/schedules')
+    return response.data
+  },
+
+  createSchedule: async (data: {
+    name: string
+    report_types: string[]
+    frequency: 'weekly' | 'monthly'
+    format: 'excel' | 'pdf'
+    timezone: string
+    account_ids: string[]
+    recipients: string[]
+    parameters: {
+      group_by: 'day' | 'week' | 'month'
+      low_stock_only: boolean
+      language: 'en' | 'it'
+      include_comparison: boolean
+    }
+    schedule_config: Record<string, unknown>
+    is_enabled: boolean
+  }): Promise<ScheduledReport> => {
+    const response = await api.post('/reports/schedules', data)
+    return response.data
+  },
+
+  updateSchedule: async (scheduleId: string, data: Partial<{
+    name: string
+    report_types: string[]
+    frequency: 'weekly' | 'monthly'
+    format: 'excel' | 'pdf'
+    timezone: string
+    account_ids: string[]
+    recipients: string[]
+    parameters: {
+      group_by: 'day' | 'week' | 'month'
+      low_stock_only: boolean
+      language: 'en' | 'it'
+      include_comparison: boolean
+    }
+    schedule_config: Record<string, unknown>
+    is_enabled: boolean
+  }>): Promise<ScheduledReport> => {
+    const response = await api.put(`/reports/schedules/${scheduleId}`, data)
+    return response.data
+  },
+
+  toggleSchedule: async (scheduleId: string, enabled: boolean): Promise<ScheduledReport> => {
+    const response = await api.post(`/reports/schedules/${scheduleId}/toggle`, null, {
+      params: { enabled },
+    })
+    return response.data
+  },
+
+  listScheduleRuns: async (scheduleId: string, limit = 20): Promise<ScheduledReportRun[]> => {
+    const response = await api.get(`/reports/schedules/${scheduleId}/runs`, { params: { limit } })
+    return response.data
+  },
+
+  runScheduleNow: async (scheduleId: string): Promise<ScheduledReportRun> => {
+    const response = await api.post(`/reports/schedules/${scheduleId}/run-now`)
+    return response.data
+  },
+
+  downloadScheduleRun: async (runId: string): Promise<Blob> => {
+    const response = await api.get(`/reports/schedules/runs/${runId}/download`, {
+      responseType: 'blob',
+    })
+    return response.data
+  },
 }
 
 // Analytics API
@@ -225,15 +299,25 @@ export const analyticsApi = {
     return response.data
   },
 
+  getComparison: async (params: {
+    period1_start: string
+    period1_end: string
+    period2_start: string
+    period2_end: string
+    preset?: 'mom' | 'qoq' | 'yoy'
+    category?: string
+    account_ids?: string[]
+  }): Promise<ComparisonResponse> => {
+    const response = await api.get('/analytics/comparison', { params })
+    return response.data
+  },
+
   getTopPerformers: async (params: {
     start_date: string
     end_date: string
     limit?: number
     account_ids?: string[]
-  }): Promise<{
-    by_revenue?: Array<{ asin: string; total_revenue: number; total_units: number }>
-    by_units?: Array<{ asin: string; total_revenue: number; total_units: number }>
-  }> => {
+  }): Promise<TopPerformersResponse> => {
     const response = await api.get('/analytics/top-performers', { params })
     return response.data
   },
@@ -257,12 +341,30 @@ export const analyticsApi = {
     const response = await api.get('/analytics/orders-by-hour', { params })
     return response.data
   },
+
+  getProductTrends: async (params: {
+    start_date: string
+    end_date: string
+    account_ids?: string[]
+    language?: 'en' | 'it'
+    limit?: number
+  }): Promise<ProductTrendsResponse> => {
+    const response = await api.get('/analytics/product-trends', { params })
+    return response.data
+  },
 }
 
 // Forecasts API
 export const forecastsApi = {
   list: async (): Promise<Forecast[]> => {
     const response = await api.get('/forecasts')
+    return response.data
+  },
+
+  getAvailableProducts: async (account_id: string): Promise<ForecastProductOption[]> => {
+    const response = await api.get('/forecasts/available-products', {
+      params: { account_id },
+    })
     return response.data
   },
 
@@ -289,6 +391,7 @@ export const catalogApi = {
     category?: string
     active_only?: boolean
     limit?: number
+    account_ids?: string[]
   }): Promise<Product[]> => {
     const response = await api.get('/catalog/products', { params })
     return response.data
@@ -379,15 +482,63 @@ export const exportsApi = {
     })
     return response.data
   },
+
+  exportForecastExcel: async (params: {
+    forecast_id: string
+    template?: 'clean' | 'corporate' | 'executive'
+    language?: 'en' | 'it'
+  }): Promise<Blob> => {
+    const response = await api.post('/exports/forecast-excel', null, {
+      params,
+      responseType: 'blob',
+    })
+    return response.data
+  },
+
+  createForecastPackage: async (params: {
+    forecast_id: string
+    template?: 'clean' | 'corporate' | 'executive'
+    language?: 'en' | 'it'
+    include_insights: boolean
+  }): Promise<ForecastExportJob> => {
+    const response = await api.post('/exports/forecast-package', params)
+    return response.data
+  },
+
+  getForecastPackage: async (jobId: string): Promise<ForecastExportJob> => {
+    const response = await api.get(`/exports/forecast-package/${jobId}`)
+    return response.data
+  },
+
+  downloadForecastPackage: async (jobId: string): Promise<Blob> => {
+    const response = await api.get(`/exports/forecast-package/${jobId}/download`, {
+      responseType: 'blob',
+    })
+    return response.data
+  },
+
+  exportMarketResearchPdf: async (params: {
+    report_id: string
+    language: string
+    chart_images?: Record<string, string>
+  }): Promise<Blob> => {
+    const response = await api.post('/exports/market-research-pdf', params, {
+      responseType: 'blob',
+    })
+    return response.data
+  },
 }
 
 // Market Research API
 export const marketResearchApi = {
   generate: async (params: {
-    source_asin: string
+    source_asin?: string
     account_id: string
     language: string
     extra_competitor_asins?: string[]
+    market_competitor_asins?: string[]
+    search_query?: string
+    search_type?: string
   }): Promise<MarketResearchReport> => {
     const response = await api.post('/market-research/generate', params)
     return response.data
@@ -412,6 +563,16 @@ export const marketResearchApi = {
     marketplace?: string
   }): Promise<CompetitorSuggestion[]> => {
     const response = await api.get('/market-research/competitors/suggest', { params })
+    return response.data
+  },
+
+  marketSearch: async (params: {
+    account_id: string
+    search_type: string
+    query: string
+    language?: string
+  }): Promise<MarketSearchResponse> => {
+    const response = await api.post('/market-research/market-search', params)
     return response.data
   },
 }

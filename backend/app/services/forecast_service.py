@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 class ForecastService:
     """Service for generating sales forecasts."""
 
+    MIN_HISTORY_DAYS = 7
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -30,7 +32,12 @@ class ForecastService:
         """Generate a sales forecast using the specified model."""
         historical_data = await self._get_historical_data(account_id, asin, days=90)
 
-        if len(historical_data) < 7:
+        # Product-level series are often sparse in the most recent 90 days even when
+        # the account has enough older data to build a forecast.
+        if asin and len(historical_data) < self.MIN_HISTORY_DAYS:
+            historical_data = await self._get_historical_data(account_id, asin, days=365)
+
+        if len(historical_data) < self.MIN_HISTORY_DAYS:
             raise ValueError("Insufficient historical data for forecasting (need at least 7 days)")
 
         # Fill date gaps with zeros for a continuous time series

@@ -13,7 +13,7 @@ from app.schemas.report import (
     AdvertisingMetricsResponse, DateRangeParams
 )
 from app.schemas.analytics import (
-    DashboardKPIs, TrendData, ComparisonData,
+    DashboardKPIs, TrendData, ComparisonResponse,
     CompetitorAnalysis
 )
 
@@ -25,5 +25,5 @@ __all__ = [
     "AccountStatusResponse",
     "SalesDataResponse", "InventoryDataResponse",
     "AdvertisingMetricsResponse", "DateRangeParams",
-    "DashboardKPIs", "TrendData", "ComparisonData", "CompetitorAnalysis",
+    "DashboardKPIs", "TrendData", "ComparisonResponse", "CompetitorAnalysis",
 ]

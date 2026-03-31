@@ -38,6 +38,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    env_file:
+      - ./backend/.env
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/inthezon
       - REDIS_URL=redis://redis:6379/0
@@ -59,6 +61,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: celery -A workers.celery_app worker --loglevel=info
+    env_file:
+      - ./backend/.env
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/inthezon
       - REDIS_URL=redis://redis:6379/0
@@ -78,6 +82,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: celery -A workers.celery_app beat --loglevel=info
+    env_file:
+      - ./backend/.env
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/inthezon
       - REDIS_URL=redis://redis:6379/0

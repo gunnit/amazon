@@ -1,7 +1,7 @@
 """Catalog management endpoints."""
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, status, UploadFile, File
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
@@ -17,7 +17,7 @@ async def list_products(
     current_user: CurrentUser,
     organization: CurrentOrganization,
     db: DbSession,
-    account_ids: Optional[List[UUID]] = None,
+    account_ids: Optional[List[UUID]] = Query(default=None),
     search: Optional[str] = None,
     category: Optional[str] = None,
     active_only: bool = True,

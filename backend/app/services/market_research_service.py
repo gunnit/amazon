@@ -34,8 +34,16 @@ class MarketResearchService:
     ) -> MarketResearchReport:
         """Create a new market research report.
 
-        The background processing is triggered separately by the API endpoint.
+        Supports two modes:
+        - Product Analysis: source_asin is provided (existing flow)
+        - Market Search: search_query + search_type provided (Market Tracker 360)
         """
+        # Validate that we have either source_asin or search_query
+        if not data.source_asin and not data.search_query:
+            raise ValueError("Either source_asin or search_query must be provided")
+        if data.search_query and not data.search_type:
+            raise ValueError("search_type is required when search_query is provided")
+
         # Verify account belongs to org
         result = await self.db.execute(
             select(AmazonAccount).where(
@@ -47,13 +55,18 @@ class MarketResearchService:
         if not account:
             raise ValueError("Account not found or does not belong to organization")
 
-        title = f"Market Research: {data.source_asin}"
+        # For Market Tracker 360, use the query as a placeholder source_asin
+        source_asin = data.source_asin or data.search_query[:20]
+        if data.search_query:
+            title = f"Market Search: {data.search_query[:80]}"
+        else:
+            title = f"Market Research: {data.source_asin}"
 
         report = MarketResearchReport(
             organization_id=org_id,
             created_by_id=user_id,
             account_id=account.id,
-            source_asin=data.source_asin,
+            source_asin=source_asin,
             marketplace=account.marketplace_country,
             language=data.language,
             title=title,
@@ -113,21 +126,49 @@ class MarketResearchService:
         return list(result.scalars().all())
 
 
-def process_report_background(report_id: str, extra_asins: Optional[List[str]] = None):
+def process_report_background(
+    report_id: str,
+    extra_asins: Optional[List[str]] = None,
+    market_competitor_asins: Optional[List[str]] = None,
+    search_query: Optional[str] = None,
+    search_type: Optional[str] = None,
+):
     """Process a market research report synchronously in a background thread.
 
     This replaces the Celery task for deployments without Redis.
-    Runs: SP-API fetch + auto-discover competitors + AI analysis.
+    Supports two modes:
+    - Product Analysis (default): source ASIN → discover competitors → AI analysis
+    - Market Search (search_query provided): keyword/brand search → AI analysis
     """
-    from app.db.session import AsyncSessionLocal
+    from sqlalchemy import text as sa_text
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
     from app.models.market_research import MarketResearchReport
     from app.models.amazon_account import AmazonAccount
     from app.core.amazon.sp_api_client import SPAPIClient, resolve_marketplace
     from app.core.amazon.credentials import resolve_credentials
     from app.config import settings
 
+    # Build a private engine + session factory for this invocation.
+    # The shared engine (app.db.session.engine) uses an asyncpg connection pool
+    # that is bound to the event loop where connections were first created.
+    # Since each call here runs in its own asyncio.new_event_loop(), reusing
+    # the shared pool causes "another operation is in progress" errors.
+    from app.db.session import db_url as _db_url
+    _local_engine = create_async_engine(
+        _db_url,
+        echo=settings.APP_DEBUG,
+        pool_size=2,
+        max_overflow=1,
+    )
+    _LocalSession = async_sessionmaker(
+        bind=_local_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+    )
+
     async def _process():
-        async with AsyncSessionLocal() as db:
+        async with _LocalSession() as db:
             result = await db.execute(
                 select(MarketResearchReport).where(
                     MarketResearchReport.id == UUID(report_id)
@@ -138,9 +179,27 @@ def process_report_background(report_id: str, extra_asins: Optional[List[str]] =
                 logger.error(f"Market research report {report_id} not found")
                 return
 
+            async def _set_progress(step: str, pct: int):
+                """Update progress via a separate session so it's immediately
+                visible to polling GET requests regardless of main tx state."""
+                try:
+                    async with _LocalSession() as pdb:
+                        await pdb.execute(
+                            sa_text(
+                                "UPDATE market_research_reports "
+                                "SET progress_step = :step, progress_pct = :pct "
+                                "WHERE id = :rid"
+                            ),
+                            {"step": step, "pct": pct, "rid": report_id},
+                        )
+                        await pdb.commit()
+                except Exception as exc:
+                    logger.warning(f"Progress update failed for {report_id}: {exc}")
+
             try:
                 report.status = "processing"
-                await db.flush()
+                await db.commit()
+                await _set_progress("Initializing analysis...", 5)
 
                 # Load account
                 acc_result = await db.execute(
@@ -164,51 +223,187 @@ def process_report_background(report_id: str, extra_asins: Optional[List[str]] =
                     account_type=account.account_type.value,
                 )
 
-                # Step 1: Fetch source product
-                product_snapshot = _fetch_product_data(client, report.source_asin)
-                report.product_snapshot = product_snapshot
+                if search_query:
+                    # ── Market Tracker 360 mode ──
+                    logger.info(
+                        f"Report {report_id}: Market Search mode "
+                        f"({search_type}): '{search_query}'"
+                    )
+                    await _set_progress("Searching Amazon catalog...", 10)
 
-                source_title = product_snapshot.get("title", "")
-                source_brand = product_snapshot.get("brand")
-                source_category = product_snapshot.get("category")
+                    selected_reference_asin = (
+                        report.source_asin.upper() if report.source_asin else None
+                    )
+                    seeded_competitor_asins = list(
+                        dict.fromkeys(
+                            [
+                                asin.upper()
+                                for asin in (market_competitor_asins or [])
+                                if asin
+                            ]
+                        )
+                    )
 
-                if source_title:
-                    report.title = f"Market Research: {source_title[:80]}"
+                    if search_type == "asin":
+                        # Fetch the specific ASIN as reference product
+                        await _set_progress("Fetching product data...", 15)
+                        reference_asin = selected_reference_asin or search_query.upper()
+                        product_snapshot = _fetch_product_data(
+                            client, reference_asin
+                        )
+                        report.product_snapshot = product_snapshot
+                        report.source_asin = reference_asin
+                        source_title = product_snapshot.get("title", "")
+                        source_category = product_snapshot.get("category")
+                        if source_title:
+                            report.title = f"Market Search: {source_title[:80]}"
 
-                # Step 2: Auto-discover competitors
-                discovered_asins = _discover_competitors(
-                    client,
-                    source_asin=report.source_asin,
-                    source_title=source_title,
-                    source_brand=source_brand,
-                    max_results=AUTO_DISCOVER_COUNT,
-                )
+                        if seeded_competitor_asins:
+                            comp_asins = [
+                                asin for asin in seeded_competitor_asins
+                                if asin != reference_asin
+                            ][:10]
+                        else:
+                            # Discover related products
+                            await _set_progress("Discovering related products...", 25)
+                            search_kw = source_title[:80] if source_title else search_query
+                            raw = client.search_catalog_by_keyword(
+                                search_kw, max_results=15
+                            )
+                            comp_asins = [
+                                r["asin"] for r in raw
+                                if r["asin"] != reference_asin
+                            ][:10]
+                    else:
+                        if seeded_competitor_asins and selected_reference_asin:
+                            await _set_progress("Fetching reference product...", 20)
+                            reference_asin = selected_reference_asin
+                            product_snapshot = _fetch_product_data(
+                                client, reference_asin
+                            )
+                            sample_size = len(seeded_competitor_asins) + 1
+                            comp_asins = [
+                                asin for asin in seeded_competitor_asins
+                                if asin != reference_asin
+                            ][:10]
+                        else:
+                            # keyword or brand search
+                            await _set_progress("Searching market...", 15)
+                            raw = client.search_catalog_by_keyword(
+                                search_query, max_results=15
+                            )
+                            if not raw:
+                                raise ValueError(
+                                    f"No products found for '{search_query}'. "
+                                    "Try a different search term."
+                                )
 
-                # Merge with manual ASINs
-                all_competitor_asins = list(dict.fromkeys(
-                    discovered_asins + (extra_asins or [])
-                ))
-                all_competitor_asins = [
-                    a for a in all_competitor_asins
-                    if a != report.source_asin
-                ][:10]
+                            reference_asin = selected_reference_asin
+                            if not reference_asin:
+                                reference_asin = raw[0]["asin"]
 
-                logger.info(
-                    f"Report {report_id}: discovered {len(discovered_asins)} competitors, "
-                    f"{len(extra_asins or [])} manual, {len(all_competitor_asins)} total"
-                )
+                            await _set_progress("Fetching reference product...", 20)
+                            product_snapshot = _fetch_product_data(
+                                client, reference_asin
+                            )
+                            sample_size = len(raw)
+                            comp_asins = [
+                                r["asin"] for r in raw
+                                if r["asin"] != reference_asin
+                            ][:10]
 
-                # Step 3: Fetch data for each competitor
-                comp_data = []
-                for comp_asin in all_competitor_asins:
-                    comp_snapshot = _fetch_product_data(client, comp_asin)
-                    comp_data.append(comp_snapshot)
-                    time.sleep(0.5)
+                        report.product_snapshot = product_snapshot
+                        report.source_asin = reference_asin
+                        source_category = product_snapshot.get("category")
+                        report.title = (
+                            f"Market Search: {search_query[:60]} "
+                            f"({sample_size} products)"
+                        )
 
-                report.competitor_data = comp_data
+                    # Fetch competitor data
+                    comp_data = []
+                    total_comps = len(comp_asins)
+                    for i, asin in enumerate(comp_asins):
+                        pct = 30 + int((i / max(total_comps, 1)) * 40)
+                        await _set_progress(
+                            f"Analyzing competitor {i + 1}/{total_comps}...", pct
+                        )
+                        comp_data.append(_fetch_product_data(client, asin))
+                        time.sleep(0.5)
+                    report.competitor_data = comp_data
+
+                else:
+                    # ── Classic Product Analysis mode ──
+                    # Step 1: Fetch source product
+                    await _set_progress("Fetching product data...", 10)
+                    product_snapshot = _fetch_product_data(
+                        client, report.source_asin
+                    )
+                    report.product_snapshot = product_snapshot
+
+                    source_title = product_snapshot.get("title", "")
+                    source_brand = product_snapshot.get("brand")
+                    source_category = product_snapshot.get("category")
+
+                    if source_title:
+                        report.title = f"Market Research: {source_title[:80]}"
+
+                    if not source_title:
+                        logger.warning(
+                            f"Report {report_id}: SP-API returned no data for "
+                            f"{report.source_asin}. Check ASIN and credentials."
+                        )
+
+                    # Step 2: Auto-discover competitors
+                    await _set_progress("Discovering competitors...", 20)
+                    discovered_asins = _discover_competitors(
+                        client,
+                        source_asin=report.source_asin,
+                        source_title=source_title,
+                        source_brand=source_brand,
+                        max_results=AUTO_DISCOVER_COUNT,
+                    )
+
+                    # Merge with manual ASINs
+                    all_competitor_asins = list(dict.fromkeys(
+                        discovered_asins + (extra_asins or [])
+                    ))
+                    all_competitor_asins = [
+                        a for a in all_competitor_asins
+                        if a != report.source_asin
+                    ][:10]
+
+                    logger.info(
+                        f"Report {report_id}: "
+                        f"{len(discovered_asins)} discovered, "
+                        f"{len(extra_asins or [])} manual, "
+                        f"{len(all_competitor_asins)} total"
+                    )
+
+                    if not source_title and not all_competitor_asins:
+                        raise ValueError(
+                            "Could not retrieve product data from Amazon "
+                            "SP-API. Please verify the ASIN is correct and "
+                            "the account credentials are configured."
+                        )
+
+                    # Step 3: Fetch data for each competitor
+                    comp_data = []
+                    total_comps = len(all_competitor_asins)
+                    for i, comp_asin in enumerate(all_competitor_asins):
+                        pct = 30 + int((i / max(total_comps, 1)) * 40)
+                        await _set_progress(
+                            f"Analyzing competitor {i + 1}/{total_comps}...", pct
+                        )
+                        comp_data.append(
+                            _fetch_product_data(client, comp_asin)
+                        )
+                        time.sleep(0.5)
+                    report.competitor_data = comp_data
 
                 # Step 4: AI analysis
                 if settings.ANTHROPIC_API_KEY:
+                    await _set_progress("Generating AI insights...", 75)
                     from app.services.ai_analysis_service import AIAnalysisService
                     ai_service = AIAnalysisService(settings.ANTHROPIC_API_KEY)
                     analysis = ai_service.analyze(
@@ -219,7 +414,10 @@ def process_report_background(report_id: str, extra_asins: Optional[List[str]] =
                     )
                     report.ai_analysis = analysis
 
+                await _set_progress("Finalizing report...", 95)
                 report.status = "completed"
+                report.progress_step = "Complete"
+                report.progress_pct = 100
                 report.completed_at = datetime.utcnow()
                 await db.commit()
                 logger.info(
@@ -228,22 +426,36 @@ def process_report_background(report_id: str, extra_asins: Optional[List[str]] =
                 )
 
             except Exception as e:
-                report.status = "failed"
-                report.error_message = str(e)[:500]
-                await db.commit()
                 logger.exception(f"Market research {report_id} failed: {e}")
+                try:
+                    await db.rollback()
+                    report.status = "failed"
+                    report.error_message = str(e)[:500]
+                    await db.commit()
+                except Exception:
+                    # Last resort: try a separate session to mark as failed
+                    try:
+                        async with _LocalSession() as fdb:
+                            await fdb.execute(
+                                sa_text(
+                                    "UPDATE market_research_reports "
+                                    "SET status = 'failed', error_message = :msg "
+                                    "WHERE id = :rid"
+                                ),
+                                {"msg": str(e)[:500], "rid": report_id},
+                            )
+                            await fdb.commit()
+                    except Exception:
+                        logger.error(f"Could not mark report {report_id} as failed")
 
-    # Run async processing in a new event loop (this runs in a thread)
+    # Run async processing in a new event loop (this runs in a thread).
+    # Dispose the private engine afterwards to release connections.
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(_process())
     finally:
-        try:
-            from app.db.session import engine
-            loop.run_until_complete(engine.dispose())
-        except Exception:
-            pass
+        loop.run_until_complete(_local_engine.dispose())
         loop.close()
 
 

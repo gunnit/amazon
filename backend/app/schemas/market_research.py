@@ -8,11 +8,16 @@ class MarketResearchCreate(BaseModel):
 
     The system automatically discovers competitors via SP-API catalog search.
     Optionally, extra ASINs can be provided to include in the analysis.
+
+    For Market Tracker 360: provide search_query + search_type instead of source_asin.
     """
-    source_asin: str = Field(..., max_length=20)
+    source_asin: Optional[str] = Field(default=None, max_length=20)
     account_id: str
     language: str = Field(default="en", pattern="^(en|it)$")
     extra_competitor_asins: Optional[List[str]] = Field(default=None, max_length=5)
+    market_competitor_asins: Optional[List[str]] = Field(default=None, max_length=15)
+    search_query: Optional[str] = Field(default=None, max_length=200)
+    search_type: Optional[str] = Field(default=None, pattern="^(keyword|brand|asin)$")
 
 
 class ProductSnapshot(BaseModel):
@@ -54,11 +59,13 @@ class MarketResearchResponse(BaseModel):
     id: str
     organization_id: str
     account_id: str
-    source_asin: str
+    source_asin: Optional[str] = None
     marketplace: Optional[str] = None
     language: str
     title: Optional[str] = None
     status: str
+    progress_step: Optional[str] = None
+    progress_pct: Optional[int] = 0
     error_message: Optional[str] = None
     product_snapshot: Optional[ProductSnapshot] = None
     competitor_data: Optional[List[CompetitorSnapshot]] = None
@@ -76,3 +83,33 @@ class MarketResearchListItem(BaseModel):
     language: str
     created_at: str
     competitor_count: int = 0
+
+
+# ── Market Tracker 360 schemas ──
+
+class MarketSearchRequest(BaseModel):
+    """Request to search the market by keyword, brand, or ASIN."""
+    account_id: str
+    search_type: str = Field(..., pattern="^(keyword|brand|asin)$")
+    query: str = Field(..., min_length=1, max_length=200)
+    language: str = Field(default="en", pattern="^(en|it)$")
+
+
+class MarketSearchResult(BaseModel):
+    """A single product found in the market search."""
+    asin: str
+    title: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    price: Optional[float] = None
+    bsr: Optional[int] = None
+    review_count: Optional[int] = None
+    rating: Optional[float] = None
+
+
+class MarketSearchResponse(BaseModel):
+    """Response from a market search."""
+    results: List[MarketSearchResult]
+    total_found: int
+    query: str
+    search_type: str

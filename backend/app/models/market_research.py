@@ -2,7 +2,7 @@
 from __future__ import annotations
 import uuid
 from datetime import datetime
-from sqlalchemy import String, ForeignKey, DateTime, Text
+from sqlalchemy import String, Integer, ForeignKey, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 
@@ -29,6 +29,8 @@ class MarketResearchReport(Base):
 
     title: Mapped[str] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    progress_step: Mapped[str] = mapped_column(String(100), nullable=True)
+    progress_pct: Mapped[int] = mapped_column(Integer, nullable=True, default=0)
     error_message: Mapped[str] = mapped_column(Text, nullable=True)
 
     # JSONB data fields

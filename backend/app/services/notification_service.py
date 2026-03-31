@@ -1,4 +1,5 @@
 """Notification service for email and alerts."""
+import base64
 from typing import List, Optional, Dict, Any
 import logging
 
@@ -17,6 +18,7 @@ class NotificationService:
         subject: str,
         html_content: str,
         from_email: str = "noreply@niuexa.ai",
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         """Send email using SendGrid."""
         if not self.sendgrid_api_key:
@@ -25,7 +27,7 @@ class NotificationService:
 
         try:
             from sendgrid import SendGridAPIClient
-            from sendgrid.helpers.mail import Mail
+            from sendgrid.helpers.mail import Attachment, Disposition, FileContent, FileName, FileType, Mail
 
             message = Mail(
                 from_email=from_email,
@@ -33,6 +35,15 @@ class NotificationService:
                 subject=subject,
                 html_content=html_content,
             )
+
+            for attachment in attachments or []:
+                encoded = base64.b64encode(attachment["content"]).decode("ascii")
+                message.attachment = Attachment(
+                    file_content=FileContent(encoded),
+                    file_name=FileName(attachment["filename"]),
+                    file_type=FileType(attachment.get("content_type") or "application/octet-stream"),
+                    disposition=Disposition("attachment"),
+                )
 
             sg = SendGridAPIClient(self.sendgrid_api_key)
             response = sg.send(message)

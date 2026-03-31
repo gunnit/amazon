@@ -1,20 +1,50 @@
-"""Export endpoints for Excel, PowerPoint, and CSV packages."""
-from typing import List, Optional
+"""Export endpoints for Excel, PowerPoint, CSV, and PDF packages."""
+from typing import Dict, List, Optional
 from datetime import date, timedelta
 from uuid import UUID
 import io
+import logging
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 from app.models.amazon_account import AmazonAccount
+from app.models.forecast_export_job import ForecastExportJob
 from app.models.sales_data import SalesData
+from app.schemas.exports import ForecastExportCreate, ForecastExportJobResponse
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.export_service import ExportService
+from app.services.forecast_export_service import (
+    ForecastExportService,
+    build_forecast_excel_filename,
+    build_forecast_workbook_bytes,
+)
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
+from workers.tasks.forecast_exports import process_forecast_export
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _forecast_export_job_to_response(job: ForecastExportJob) -> ForecastExportJobResponse:
+    """Convert a forecast export job model to its response schema."""
+    return ForecastExportJobResponse(
+        id=str(job.id),
+        forecast_id=str(job.forecast_id),
+        status=job.status,
+        progress_step=job.progress_step,
+        progress_pct=job.progress_pct or 0,
+        error_message=job.error_message,
+        include_insights=job.include_insights,
+        template=job.template,
+        language=job.language,
+        download_ready=job.status == "completed" and bool(job.artifact_data),
+        created_at=job.created_at.isoformat() if job.created_at else "",
+        completed_at=job.completed_at.isoformat() if job.completed_at else None,
+    )
 
 
 @router.post("/csv")
@@ -375,6 +405,200 @@ async def export_to_powerpoint(
         output,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@router.post("/forecast-excel")
+async def export_forecast_excel(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    forecast_id: UUID = Query(...),
+    template: str = Query(default="corporate", regex="^(clean|corporate|executive)$"),
+    language: str = Query(default="en", regex="^(en|it)$"),
+):
+    """Generate a styled Excel workbook for a single forecast."""
+    service = ForecastExportService(db)
+    try:
+        context = await service._get_forecast_context(
+            org_id=organization.id,
+            forecast_id=forecast_id,
+            template=template,
+            language=language,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Forecast not found",
+        )
+
+    workbook_bytes = build_forecast_workbook_bytes(
+        context.forecast,
+        context.account_name,
+        template=template,
+        language=language,
+    )
+    filename = build_forecast_excel_filename(
+        context.forecast,
+        context.account_name,
+        template=template,
+        language=language,
+    )
+
+    return StreamingResponse(
+        io.BytesIO(workbook_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/forecast-package", response_model=ForecastExportJobResponse)
+async def create_forecast_export_package(
+    request: ForecastExportCreate,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """Create an async forecast export package job."""
+    service = ForecastExportService(db)
+    try:
+        job = await service.create_job(
+            org_id=organization.id,
+            user_id=current_user.id,
+            forecast_id=UUID(request.forecast_id),
+            template=request.template,
+            language=request.language,
+            include_insights=request.include_insights,
+        )
+        await db.commit()
+    except ValueError as exc:
+        message = str(exc)
+        if "not configured" in message:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=message)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message)
+
+    try:
+        process_forecast_export.delay(str(job.id))
+    except Exception:
+        logger.exception(
+            "Failed to enqueue forecast export %s on Celery; falling back to in-process thread",
+            job.id,
+        )
+        import threading
+
+        from app.services.forecast_export_service import process_forecast_export_job
+
+        thread = threading.Thread(
+            target=process_forecast_export_job,
+            args=(str(job.id),),
+            daemon=True,
+        )
+        thread.start()
+
+    return _forecast_export_job_to_response(job)
+
+
+@router.get("/forecast-package/{job_id}", response_model=ForecastExportJobResponse)
+async def get_forecast_export_package(
+    job_id: UUID,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """Get forecast export package job status."""
+    service = ForecastExportService(db)
+    job = await service.get_job(job_id, organization.id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Forecast export job not found",
+        )
+    return _forecast_export_job_to_response(job)
+
+
+@router.get("/forecast-package/{job_id}/download")
+async def download_forecast_export_package(
+    job_id: UUID,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """Download a completed forecast export package."""
+    service = ForecastExportService(db)
+    job = await service.get_job(job_id, organization.id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Forecast export job not found",
+        )
+    if job.status != "completed" or not job.artifact_data:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Forecast export is not ready (status: {job.status})",
+        )
+
+    filename = job.artifact_filename or f"forecast_export_{job.id}.zip"
+    return StreamingResponse(
+        io.BytesIO(job.artifact_data),
+        media_type=job.artifact_content_type or "application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+class MarketResearchPdfRequest(BaseModel):
+    """Request to generate a PDF for a market research report."""
+    report_id: str
+    language: str = Field(default="en", pattern="^(en|it)$")
+    chart_images: Optional[Dict[str, str]] = None  # key -> base64 PNG
+
+
+@router.post("/market-research-pdf")
+async def export_market_research_pdf(
+    request: MarketResearchPdfRequest,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """Generate a professional PDF for a completed market research report."""
+    from app.services.market_research_service import MarketResearchService
+    from app.services.pdf_service import MarketResearchPdfBuilder
+
+    service = MarketResearchService(db)
+    report = await service.get_report(UUID(request.report_id), organization.id)
+
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found",
+        )
+    if report.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Report is not completed (status: {report.status})",
+        )
+
+    try:
+        builder = MarketResearchPdfBuilder(
+            report=report,
+            chart_images=request.chart_images,
+            language=request.language,
+        )
+        pdf_bytes = builder.build()
+    except Exception as e:
+        logger.exception("PDF generation failed for report %s", request.report_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"PDF generation failed: {str(e)[:200]}",
+        )
+
+    # Build filename
+    safe_title = (report.title or "report").replace(" ", "_").replace(":", "")[:60]
+    filename = f"inthezon_{safe_title}_{date.today()}.pdf"
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

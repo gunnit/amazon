@@ -5,7 +5,6 @@ import Layout from '@/components/Layout'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
 import Dashboard from '@/pages/Dashboard'
-import Accounts from '@/pages/Accounts'
 import Reports from '@/pages/Reports'
 import Analytics from '@/pages/Analytics'
 import Forecasts from '@/pages/Forecasts'
@@ -41,7 +40,7 @@ function App() {
           </ProtectedRoute>
         }>
           <Route index element={<Dashboard />} />
-          <Route path="accounts" element={<Accounts />} />
+          <Route path="accounts" element={<Navigate to="/settings?tab=accounts" replace />} />
           <Route path="reports" element={<Reports />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="forecasts" element={<Forecasts />} />

@@ -3,6 +3,19 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 
 export type DatePreset = '7' | '14' | '30' | '60' | '90' | 'custom'
 export type GroupBy = 'day' | 'week' | 'month'
+export type ComparisonMode = 'preset' | 'custom'
+export type ComparisonPreset = 'mom' | 'qoq' | 'yoy'
+
+interface ComparisonRange {
+  start: string
+  end: string
+}
+
+interface ComparisonPeriods {
+  preset: ComparisonPreset | null
+  period1: ComparisonRange
+  period2: ComparisonRange
+}
 
 interface FilterState {
   // Shared filters
@@ -10,6 +23,12 @@ interface FilterState {
   customStartDate: string | null
   customEndDate: string | null
   accountIds: string[]
+  comparisonMode: ComparisonMode
+  comparisonPreset: ComparisonPreset
+  comparisonPeriod1Start: string | null
+  comparisonPeriod1End: string | null
+  comparisonPeriod2Start: string | null
+  comparisonPeriod2End: string | null
 
   // Analytics-specific
   analyticsGroupBy: GroupBy
@@ -24,6 +43,10 @@ interface FilterState {
   setCustomDateRange: (start: string, end: string) => void
   setAccountIds: (ids: string[]) => void
   toggleAccountId: (id: string) => void
+  setComparisonMode: (mode: ComparisonMode) => void
+  setComparisonPreset: (preset: ComparisonPreset) => void
+  setComparisonPeriod1Range: (start: string, end: string) => void
+  setComparisonPeriod2Range: (start: string, end: string) => void
 
   setAnalyticsGroupBy: (groupBy: GroupBy) => void
   setAnalyticsCategory: (category: string) => void
@@ -35,6 +58,7 @@ interface FilterState {
   resetDashboard: () => void
   resetAnalytics: () => void
   resetReports: () => void
+  resetComparison: () => void
 }
 
 const defaultState = {
@@ -42,6 +66,12 @@ const defaultState = {
   customStartDate: null as string | null,
   customEndDate: null as string | null,
   accountIds: [] as string[],
+  comparisonMode: 'preset' as ComparisonMode,
+  comparisonPreset: 'mom' as ComparisonPreset,
+  comparisonPeriod1Start: null as string | null,
+  comparisonPeriod1End: null as string | null,
+  comparisonPeriod2Start: null as string | null,
+  comparisonPeriod2End: null as string | null,
   analyticsGroupBy: 'day' as GroupBy,
   analyticsCategory: '',
   reportsGroupBy: 'day' as GroupBy,
@@ -72,6 +102,19 @@ export const useFilterStore = create<FilterState>()(
           : [...state.accountIds, id],
       })),
 
+      setComparisonMode: (mode) => set({ comparisonMode: mode }),
+      setComparisonPreset: (preset) => set({ comparisonMode: 'preset', comparisonPreset: preset }),
+      setComparisonPeriod1Range: (start, end) => set({
+        comparisonMode: 'custom',
+        comparisonPeriod1Start: start,
+        comparisonPeriod1End: end,
+      }),
+      setComparisonPeriod2Range: (start, end) => set({
+        comparisonMode: 'custom',
+        comparisonPeriod2Start: start,
+        comparisonPeriod2End: end,
+      }),
+
       setAnalyticsGroupBy: (groupBy) => set({ analyticsGroupBy: groupBy }),
       setAnalyticsCategory: (category) => set({ analyticsCategory: category }),
 
@@ -92,6 +135,14 @@ export const useFilterStore = create<FilterState>()(
       resetReports: () => set({
         reportsGroupBy: 'day',
         reportsLowStockOnly: false,
+      }),
+      resetComparison: () => set({
+        comparisonMode: 'preset',
+        comparisonPreset: 'mom',
+        comparisonPeriod1Start: null,
+        comparisonPeriod1End: null,
+        comparisonPeriod2Start: null,
+        comparisonPeriod2End: null,
       }),
     }),
     {
@@ -121,5 +172,74 @@ export function getFilterDateRange(state: Pick<FilterState, 'datePreset' | 'cust
   return {
     start: fmt(start),
     end: fmt(end),
+  }
+}
+
+function parseDate(dateValue: string): Date {
+  return new Date(dateValue + 'T00:00:00')
+}
+
+function formatDate(dateValue: Date): string {
+  return `${dateValue.getFullYear()}-${String(dateValue.getMonth() + 1).padStart(2, '0')}-${String(dateValue.getDate()).padStart(2, '0')}`
+}
+
+function shiftDate(dateValue: Date, preset: ComparisonPreset): Date {
+  const shifted = new Date(dateValue)
+  if (preset === 'mom') {
+    shifted.setMonth(shifted.getMonth() - 1)
+  } else if (preset === 'qoq') {
+    shifted.setMonth(shifted.getMonth() - 3)
+  } else {
+    shifted.setFullYear(shifted.getFullYear() - 1)
+  }
+  return shifted
+}
+
+/** Resolve the two date ranges used by the period comparison feature. */
+export function getComparisonPeriods(
+  state: Pick<
+    FilterState,
+    | 'datePreset'
+    | 'customStartDate'
+    | 'customEndDate'
+    | 'comparisonMode'
+    | 'comparisonPreset'
+    | 'comparisonPeriod1Start'
+    | 'comparisonPeriod1End'
+    | 'comparisonPeriod2Start'
+    | 'comparisonPeriod2End'
+  >
+): ComparisonPeriods {
+  if (
+    state.comparisonMode === 'custom' &&
+    state.comparisonPeriod1Start &&
+    state.comparisonPeriod1End &&
+    state.comparisonPeriod2Start &&
+    state.comparisonPeriod2End
+  ) {
+    return {
+      preset: null,
+      period1: {
+        start: state.comparisonPeriod1Start,
+        end: state.comparisonPeriod1End,
+      },
+      period2: {
+        start: state.comparisonPeriod2Start,
+        end: state.comparisonPeriod2End,
+      },
+    }
+  }
+
+  const baseRange = getFilterDateRange(state)
+  const currentStart = parseDate(baseRange.start)
+  const currentEnd = parseDate(baseRange.end)
+
+  return {
+    preset: state.comparisonPreset,
+    period1: baseRange,
+    period2: {
+      start: formatDate(shiftDate(currentStart, state.comparisonPreset)),
+      end: formatDate(shiftDate(currentEnd, state.comparisonPreset)),
+    },
   }
 }

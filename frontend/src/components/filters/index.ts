@@ -1,6 +1,7 @@
 export { FilterBar } from './FilterBar'
 export { DateRangeFilter } from './DateRangeFilter'
 export { AccountFilter } from './AccountFilter'
+export { ComparisonFilter } from './ComparisonFilter'
 export { GroupByFilter } from './GroupByFilter'
 export { CategoryFilter } from './CategoryFilter'
 export { ToggleFilter } from './ToggleFilter'

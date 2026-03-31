@@ -1,9 +1,9 @@
 """Report and data schemas."""
 from datetime import datetime, date
-from typing import Optional, List
+from typing import Literal, Optional, List
 from uuid import UUID
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 class DateRangeParams(BaseModel):
@@ -113,15 +113,15 @@ class ProductResponse(BaseModel):
 
 
 class ReportScheduleCreate(BaseModel):
-    """Schema for creating a report schedule."""
+    """Legacy placeholder schema for creating a report schedule."""
     account_ids: List[UUID]
-    report_type: str  # sales, inventory, advertising
+    report_type: str
     schedule_cron: str
     email_recipients: Optional[List[str]] = None
 
 
 class ReportScheduleResponse(BaseModel):
-    """Schema for report schedule response."""
+    """Legacy placeholder schema for report schedule response."""
     id: UUID
     account_id: UUID
     job_type: str
@@ -133,3 +133,137 @@ class ReportScheduleResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+ScheduledReportType = Literal["sales", "inventory", "advertising"]
+ScheduledReportFrequency = Literal["weekly", "monthly"]
+ScheduledReportFormat = Literal["excel", "pdf"]
+ScheduledReportRunStatus = Literal["pending", "processing", "generated", "delivered", "failed"]
+
+
+class ScheduledReportParameters(BaseModel):
+    """Supported runtime parameters for scheduled reports."""
+
+    group_by: Literal["day", "week", "month"] = "day"
+    low_stock_only: bool = False
+    language: Literal["en", "it"] = "en"
+    include_comparison: bool = True
+
+
+class WeeklyScheduleConfig(BaseModel):
+    """Weekly schedule settings."""
+
+    weekday: int = Field(..., ge=0, le=6)
+    hour: int = Field(..., ge=0, le=23)
+    minute: int = Field(..., ge=0, le=59)
+
+
+class MonthlyScheduleConfig(BaseModel):
+    """Monthly schedule settings."""
+
+    day_of_month: int = Field(..., ge=1, le=31)
+    hour: int = Field(..., ge=0, le=23)
+    minute: int = Field(..., ge=0, le=59)
+
+
+class ScheduledReportCreate(BaseModel):
+    """Create payload for a recurring operational report."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    report_types: List[ScheduledReportType]
+    frequency: ScheduledReportFrequency
+    format: ScheduledReportFormat
+    timezone: str = Field(default="UTC", min_length=1, max_length=64)
+    account_ids: List[UUID] = Field(default_factory=list)
+    recipients: List[EmailStr]
+    parameters: ScheduledReportParameters = Field(default_factory=ScheduledReportParameters)
+    schedule_config: dict
+    is_enabled: bool = True
+
+    @field_validator("report_types")
+    @classmethod
+    def validate_report_types(cls, value: List[ScheduledReportType]) -> List[ScheduledReportType]:
+        if not value:
+            raise ValueError("At least one report type is required")
+        return list(dict.fromkeys(value))
+
+    @field_validator("recipients")
+    @classmethod
+    def validate_recipients(cls, value: List[EmailStr]) -> List[EmailStr]:
+        if not value:
+            raise ValueError("At least one recipient is required")
+        return value
+
+    @model_validator(mode="after")
+    def validate_schedule_config(self) -> "ScheduledReportCreate":
+        if self.frequency == "weekly":
+            WeeklyScheduleConfig(**self.schedule_config)
+        else:
+            MonthlyScheduleConfig(**self.schedule_config)
+
+        if "inventory" not in self.report_types and self.parameters.low_stock_only:
+            raise ValueError("low_stock_only requires the inventory report")
+        if "sales" not in self.report_types and self.parameters.group_by != "day":
+            raise ValueError("group_by only applies to the sales report")
+        return self
+
+
+class ScheduledReportUpdate(BaseModel):
+    """Update payload for a recurring operational report."""
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    report_types: Optional[List[ScheduledReportType]] = None
+    frequency: Optional[ScheduledReportFrequency] = None
+    format: Optional[ScheduledReportFormat] = None
+    timezone: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    account_ids: Optional[List[UUID]] = None
+    recipients: Optional[List[EmailStr]] = None
+    parameters: Optional[ScheduledReportParameters] = None
+    schedule_config: Optional[dict] = None
+    is_enabled: Optional[bool] = None
+
+
+class ScheduledReportRunResponse(BaseModel):
+    """Read model for a scheduled report execution."""
+
+    id: str
+    scheduled_report_id: str
+    status: ScheduledReportRunStatus
+    generation_status: str
+    delivery_status: str
+    progress_step: Optional[str] = None
+    error_message: Optional[str] = None
+    triggered_at: str
+    period_start: str
+    period_end: str
+    completed_at: Optional[str] = None
+    artifact_filename: Optional[str] = None
+    download_ready: bool = False
+    recipients: List[str] = Field(default_factory=list)
+
+
+class ScheduledReportResponse(BaseModel):
+    """Read model for a scheduled report configuration."""
+
+    id: str
+    name: str
+    report_types: List[ScheduledReportType]
+    frequency: ScheduledReportFrequency
+    format: ScheduledReportFormat
+    timezone: str
+    account_ids: List[str]
+    recipients: List[str]
+    parameters: ScheduledReportParameters
+    schedule_config: dict
+    is_enabled: bool
+    last_run_at: Optional[str] = None
+    last_run_status: Optional[str] = None
+    next_run_at: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class ScheduledReportListResponse(BaseModel):
+    """List wrapper for scheduled reports."""
+
+    items: List[ScheduledReportResponse]

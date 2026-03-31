@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { User, Bell, Shield, Database, Loader2, CheckCircle2, Globe, AlertTriangle, Trash2 } from 'lucide-react'
+import { User, Bell, Shield, Database, Loader2, CheckCircle2, Globe, AlertTriangle, Trash2, Store, Key } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -17,6 +18,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/store/authStore'
 import { authApi, exportsApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
+import { AccountsSection } from '@/components/settings/AccountsSection'
 import type { Language } from '@/store/languageStore'
 import type { ApiKeysResponse } from '@/types'
 
@@ -24,8 +26,10 @@ export default function Settings() {
   const { user, organization } = useAuthStore()
   const { toast } = useToast()
   const queryClient = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [isSaving, setIsSaving] = useState(false)
   const { t, language, setLanguage } = useTranslation()
+  const activeTab = searchParams.get('tab') || 'profile'
 
   const [profile, setProfile] = useState({
     fullName: user?.full_name || '',
@@ -236,14 +240,21 @@ export default function Settings() {
         </p>
       </div>
 
-      <Tabs defaultValue="profile" className="space-y-4">
-        <TabsList>
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => setSearchParams(value === 'profile' ? {} : { tab: value }, { replace: true })}
+        className="space-y-4"
+      >
+        <TabsList className="h-auto flex-wrap justify-start">
+          <TabsTrigger value="accounts" className="gap-2">
+            <Store className="h-4 w-4" /> {t('settings.tabAccounts')}
+          </TabsTrigger>
           <TabsTrigger value="profile" className="gap-2">
             <User className="h-4 w-4" /> {t('settings.tabProfile')}
           </TabsTrigger>
-          {/* <TabsTrigger value="amazon-api" className="gap-2">
+          <TabsTrigger value="amazon-api" className="gap-2">
             <Key className="h-4 w-4" /> {t('settings.tabAmazonApi')}
-          </TabsTrigger> */}
+          </TabsTrigger>
           <TabsTrigger value="notifications" className="gap-2">
             <Bell className="h-4 w-4" /> {t('settings.tabNotifications')}
           </TabsTrigger>
@@ -254,6 +265,10 @@ export default function Settings() {
             <Database className="h-4 w-4" /> {t('settings.tabData')}
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="accounts" className="space-y-4">
+          <AccountsSection embedded />
+        </TabsContent>
 
         <TabsContent value="profile" className="space-y-4">
           <Card>

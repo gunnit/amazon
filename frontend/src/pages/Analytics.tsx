@@ -8,8 +8,10 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { Loader2 } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Loader2, Minus } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
 import { analyticsApi } from '@/services/api'
 import { formatCurrency, formatNumber } from '@/lib/utils'
 import {
@@ -20,10 +22,88 @@ import {
 } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
-import type { CategorySalesData, HourlyOrdersData } from '@/types'
+import ProductTrendList from '@/components/analytics/ProductTrendList'
+import TrendInsightsCard from '@/components/analytics/TrendInsightsCard'
+import type { CategorySalesData, HourlyOrdersData, ProductTrendItem } from '@/types'
+
+function truncateLabel(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value
+  }
+
+  return `${value.slice(0, maxLength - 3)}...`
+}
+
+function getChartAxisMax(values: number[]): number {
+  const maxValue = Math.max(...values, 0)
+
+  if (maxValue <= 0) {
+    return 100
+  }
+
+  return Math.ceil(maxValue * 1.1)
+}
+
+function formatAxisCurrency(value: number): string {
+  const absoluteValue = Math.abs(value)
+
+  if (absoluteValue >= 1000) {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'EUR',
+      notation: 'compact',
+      maximumFractionDigits: absoluteValue >= 10000 ? 0 : 1,
+    })
+      .format(value)
+      .replace('K', 'k')
+  }
+
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'EUR',
+    maximumFractionDigits: 0,
+  }).format(value)
+}
+
+function SummaryHighlight({
+  label,
+  product,
+  tone,
+}: {
+  label: string
+  product: ProductTrendItem | null
+  tone: 'up' | 'down' | 'stable'
+}) {
+  const iconClass =
+    tone === 'up'
+      ? 'text-green-600 dark:text-green-400'
+      : tone === 'down'
+        ? 'text-red-600 dark:text-red-400'
+        : 'text-muted-foreground'
+  const Icon = tone === 'up' ? ArrowUpRight : tone === 'down' ? ArrowDownRight : Minus
+
+  return (
+    <div className="rounded-lg border p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <Icon className={`h-4 w-4 ${iconClass}`} />
+        <p className="text-sm font-medium">{label}</p>
+      </div>
+      {product ? (
+        <>
+          <p className="truncate text-sm font-semibold">{product.title || product.asin}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {product.asin} · {product.trend_score > 0 ? '+' : ''}{product.trend_score.toFixed(1)}
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground">-</p>
+      )}
+    </div>
+  )
+}
 
 export default function Analytics() {
-  const { t } = useTranslation()
+  const { t, language } = useTranslation()
   const filterState = useFilterStore()
   const {
     datePreset,
@@ -71,7 +151,7 @@ export default function Analytics() {
     }),
   })
 
-  const { data: kpis } = useQuery({
+  const { data: kpis, isLoading: kpisLoading } = useQuery({
     queryKey: ['dashboard-kpis-analytics', dateRange, accountIds],
     queryFn: () => analyticsApi.getDashboard({
       start_date: dateRange.start,
@@ -80,12 +160,41 @@ export default function Analytics() {
     }),
   })
 
-  const isLoading = topPerformersLoading || categoryLoading || hourlyLoading
+  const { data: productTrends, isLoading: productTrendsLoading } = useQuery({
+    queryKey: ['product-trends', dateRange, accountIds, language],
+    queryFn: () => analyticsApi.getProductTrends({
+      start_date: dateRange.start,
+      end_date: dateRange.end,
+      account_ids: accountIds.length > 0 ? accountIds : undefined,
+      language,
+      limit: 8,
+    }),
+  })
+
+  const loadingStates = [
+    topPerformersLoading,
+    categoryLoading,
+    hourlyLoading,
+    kpisLoading,
+    productTrendsLoading,
+  ]
+  const completedRequests = loadingStates.filter((loading) => !loading).length
+  const loadingProgress = (completedRequests / loadingStates.length) * 100
+  const isLoading = loadingStates.some(Boolean)
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex h-96 items-center justify-center">
+        <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-sm">
+          <div className="flex items-center justify-center gap-3">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium">{t('analytics.title')}</p>
+              <p className="text-xs text-muted-foreground">{Math.round(loadingProgress)}% loaded</p>
+            </div>
+          </div>
+          <Progress value={loadingProgress} className="mt-4 h-2" />
+        </div>
       </div>
     )
   }
@@ -96,6 +205,20 @@ export default function Analytics() {
   const categoryChartData = analyticsCategory
     ? (salesByCategory || []).filter((row) => row.category === analyticsCategory)
     : (salesByCategory || [])
+  const topProductsChartData = (topPerformers?.by_revenue || []).slice(0, 5).map((product) => ({
+    ...product,
+    displayLabel: truncateLabel(product.title || product.asin, 22),
+  }))
+  const categoryRevenueChartData = categoryChartData.slice(0, 8).map((row) => ({
+    ...row,
+    displayCategory: truncateLabel(row.category, 14),
+  }))
+  const topProductsAxisMax = getChartAxisMax(
+    topProductsChartData.map((product) => Number(product.total_revenue) || 0)
+  )
+  const categoryRevenueAxisMax = getChartAxisMax(
+    categoryRevenueChartData.map((row) => Number(row.total_revenue) || 0)
+  )
 
   return (
     <div className="space-y-6">
@@ -126,23 +249,45 @@ export default function Analytics() {
           </CardHeader>
           <CardContent>
             <div className="h-[300px]">
-              {topPerformers?.by_revenue && topPerformers.by_revenue.length > 0 ? (
+              {topProductsChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={topPerformers.by_revenue.slice(0, 5)}
+                    data={topProductsChartData}
                     layout="vertical"
-                    margin={{ left: 80 }}
+                    margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis type="number" tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis
+                      type="number"
+                      domain={[0, topProductsAxisMax]}
+                      tickCount={6}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(value) => formatAxisCurrency(Number(value))}
+                    />
                     <YAxis
                       type="category"
-                      dataKey="asin"
-                      width={70}
-                      tickFormatter={(value) => value.slice(0, 8)}
+                      dataKey="displayLabel"
+                      width={132}
+                      axisLine={false}
+                      tickLine={false}
                     />
-                    <Tooltip formatter={(value: number) => [formatCurrency(value), t('common.revenue')]} />
-                    <Bar dataKey="total_revenue" fill="hsl(var(--primary))" />
+                    <Tooltip
+                      labelFormatter={(_label, payload) => {
+                        const product = payload?.[0]?.payload
+                        if (!product) {
+                          return ''
+                        }
+
+                        return product.title ? `${product.title} (${product.asin})` : product.asin
+                      }}
+                      formatter={(value: number) => [formatCurrency(Number(value)), t('common.revenue')]}
+                    />
+                    <Bar
+                      dataKey="total_revenue"
+                      fill="hsl(var(--primary))"
+                      radius={[0, 4, 4, 0]}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -166,21 +311,35 @@ export default function Analytics() {
           </CardHeader>
           <CardContent>
             <div className="h-[300px]">
-              {categoryChartData.length > 0 ? (
+              {categoryRevenueChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={categoryChartData.slice(0, 8)} margin={{ left: 24, right: 12 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
+                  <BarChart data={categoryRevenueChartData} margin={{ top: 8, right: 12, left: 8, bottom: 12 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis
-                      dataKey="category"
+                      dataKey="displayCategory"
                       interval={0}
-                      angle={-20}
-                      height={70}
+                      angle={-18}
+                      height={74}
                       textAnchor="end"
-                      tickFormatter={(value) => String(value).slice(0, 12)}
+                      axisLine={false}
+                      tickLine={false}
                     />
-                    <YAxis tickFormatter={(value) => `$${(Number(value) / 1000).toFixed(0)}k`} />
-                    <Tooltip formatter={(value: number) => [formatCurrency(value), t('common.revenue')]} />
-                    <Bar dataKey="total_revenue" fill="hsl(var(--primary))" />
+                    <YAxis
+                      domain={[0, categoryRevenueAxisMax]}
+                      tickCount={6}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(value) => formatAxisCurrency(Number(value))}
+                    />
+                    <Tooltip
+                      labelFormatter={(_label, payload) => payload?.[0]?.payload?.category || ''}
+                      formatter={(value: number) => [formatCurrency(Number(value)), t('common.revenue')]}
+                    />
+                    <Bar
+                      dataKey="total_revenue"
+                      fill="hsl(var(--primary))"
+                      radius={[4, 4, 0, 0]}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -253,6 +412,84 @@ export default function Analytics() {
             </div>
           </CardContent>
         </Card>
+
+        <Card className="col-span-2">
+          <CardHeader>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle>{t('analytics.productTrends')}</CardTitle>
+                <CardDescription>{t('analytics.productTrendsDesc')}</CardDescription>
+              </div>
+              <Badge variant="outline">
+                {t('analytics.eligibleProducts', {
+                  count: productTrends?.summary.eligible_products || 0,
+                })}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {productTrends && productTrends.summary.eligible_products > 0 ? (
+              <div className="grid gap-4 md:grid-cols-4">
+                <div className="rounded-lg border p-4">
+                  <p className="text-sm text-muted-foreground">{t('analytics.risingProducts')}</p>
+                  <p className="mt-2 text-2xl font-bold">{formatNumber(productTrends.summary.rising_count)}</p>
+                </div>
+                <div className="rounded-lg border p-4">
+                  <p className="text-sm text-muted-foreground">{t('analytics.decliningProducts')}</p>
+                  <p className="mt-2 text-2xl font-bold">{formatNumber(productTrends.summary.declining_count)}</p>
+                </div>
+                <div className="rounded-lg border p-4">
+                  <p className="text-sm text-muted-foreground">{t('analytics.stableProducts')}</p>
+                  <p className="mt-2 text-2xl font-bold">{formatNumber(productTrends.summary.stable_count)}</p>
+                </div>
+                <div className="rounded-lg border p-4">
+                  <p className="text-sm text-muted-foreground">{t('analytics.avgTrendScore')}</p>
+                  <p className="mt-2 text-2xl font-bold">
+                    {productTrends.summary.average_trend_score > 0 ? '+' : ''}
+                    {productTrends.summary.average_trend_score.toFixed(1)}
+                  </p>
+                </div>
+                <SummaryHighlight
+                  label={t('analytics.strongestRiser')}
+                  product={productTrends.summary.strongest_riser}
+                  tone="up"
+                />
+                <SummaryHighlight
+                  label={t('analytics.strongestDecliner')}
+                  product={productTrends.summary.strongest_decliner}
+                  tone="down"
+                />
+              </div>
+            ) : (
+              <div className="flex min-h-[160px] items-center justify-center text-sm text-muted-foreground">
+                {t('analytics.noTrendData')}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="col-span-2 grid gap-4 lg:grid-cols-2">
+          <ProductTrendList
+            title={t('analytics.risingProducts')}
+            description={t('analytics.risingProductsDesc')}
+            direction="up"
+            products={productTrends?.rising_products || []}
+          />
+          <ProductTrendList
+            title={t('analytics.decliningProducts')}
+            description={t('analytics.decliningProductsDesc')}
+            direction="down"
+            products={productTrends?.declining_products || []}
+          />
+        </div>
+
+        {productTrends && (
+          <TrendInsightsCard
+            insights={productTrends.insights}
+            generatedWithAi={productTrends.generated_with_ai}
+            aiAvailable={productTrends.ai_available}
+          />
+        )}
       </div>
     </div>
   )
