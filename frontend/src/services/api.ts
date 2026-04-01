@@ -41,6 +41,15 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config
 
+    // 403 from HTTPBearer means no/invalid Authorization header — redirect to login
+    if (error.response?.status === 403 && !originalRequest._retry) {
+      const token = localStorage.getItem('access_token')
+      if (!token) {
+        window.location.href = '/login'
+        return new Promise(() => {})
+      }
+    }
+
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true
 
@@ -61,7 +70,12 @@ api.interceptors.response.use(
           localStorage.removeItem('access_token')
           localStorage.removeItem('refresh_token')
           window.location.href = '/login'
+          return new Promise(() => {})
         }
+      } else {
+        localStorage.removeItem('access_token')
+        window.location.href = '/login'
+        return new Promise(() => {})
       }
     }
 
