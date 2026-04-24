@@ -1,28 +1,39 @@
 """Data extraction Celery tasks."""
+from __future__ import annotations
+
 import asyncio
+from datetime import datetime
 from uuid import UUID
 import logging
 
 from workers.celery_app import celery_app
+from app.core.sync_health import classify_sync_exception
 from app.core.exceptions import AmazonAPIError
 
 logger = logging.getLogger(__name__)
 
 
-def run_async(coro):
-    """Run async function in sync context with a fresh event loop.
+def run_async(coro_factory):
+    """Run an async function in sync context with a fresh event loop.
 
-    Disposes the shared engine afterwards so that asyncpg connections
-    don't leak across event loops in the Celery worker process.
+    Takes a zero-arg callable that returns a coroutine. The callable is
+    invoked *after* a fresh engine/session factory is installed so that
+    asyncpg futures created inside the coroutine are bound to this loop.
+
+    Disposes the shared engine afterwards to release asyncpg connections
+    tied to the loop — prevents "Future attached to a different loop"
+    errors on subsequent calls within the same Celery worker.
     """
+    from app.db.session import reset_engine_for_worker
+
+    # Install a fresh engine + session factory for this task's loop.
+    reset_engine_for_worker()
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(coro)
+        return loop.run_until_complete(coro_factory())
     finally:
-        # Dispose the shared engine to release asyncpg connections tied
-        # to this loop — prevents "Future attached to a different loop"
-        # errors on subsequent calls within the same Celery worker.
         try:
             from app.db.session import engine
             loop.run_until_complete(engine.dispose())
@@ -31,14 +42,38 @@ def run_async(coro):
         loop.close()
 
 
+async def _persist_sync_failure_state(account_id: str, exc: Exception, kind: str, error_code: str | None = None):
+    """Persist failure metadata without losing retry context."""
+    from app.db import session as db_session
+    from app.models.amazon_account import AmazonAccount, SyncStatus
+    from sqlalchemy import select
+
+    async with db_session.AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(AmazonAccount).where(AmazonAccount.id == UUID(account_id))
+        )
+        account = result.scalar_one_or_none()
+        if account is None:
+            return
+
+        failure_at = datetime.utcnow()
+        account.last_sync_failed_at = failure_at
+        account.last_sync_heartbeat_at = failure_at
+        account.sync_error_message = str(exc)
+        account.sync_error_kind = kind
+        account.sync_error_code = error_code
+        account.sync_status = SyncStatus.ERROR if kind == "terminal" else SyncStatus.SYNCING
+        await db.commit()
+
+
 @celery_app.task(bind=True, max_retries=3)
 def sync_account(self, account_id: str):
     """Sync data for a single account."""
-    from app.db.session import AsyncSessionLocal
     from app.services.data_extraction import DataExtractionService
 
     async def _sync():
-        async with AsyncSessionLocal() as db:
+        from app.db import session as db_session
+        async with db_session.AsyncSessionLocal() as db:
             service = DataExtractionService(db)
             try:
                 result = await service.sync_account(UUID(account_id))
@@ -52,58 +87,41 @@ def sync_account(self, account_id: str):
 
     try:
         logger.info(f"Starting sync for account {account_id}")
-        result = run_async(_sync())
+        result = run_async(_sync)
         logger.info(f"Sync completed for account {account_id}: {result}")
         return result
 
-    except AmazonAPIError as e:
-        logger.error(
-            f"SP-API error for account {account_id}: "
-            f"{e.message} (code={e.error_code})"
-        )
-        if e.error_code in ("MISSING_CREDENTIALS", "AUTH_FAILED", "INVALID_MARKETPLACE"):
-            raise  # Error status already committed by _sync
-        raise self.retry(exc=e, countdown=300)
-
     except Exception as e:
-        exc_name = type(e).__name__
-        if exc_name == "SellingApiForbiddenException":
-            logger.error(f"SP-API forbidden for account {account_id}: {e}")
-            raise  # Error status already committed by _sync
+        decision = classify_sync_exception(e, retries=self.request.retries, max_retries=self.max_retries)
+        run_async(lambda: _persist_sync_failure_state(account_id, e, decision.kind, decision.error_code))
 
-        if exc_name == "SellingApiRequestThrottledException":
-            logger.warning(f"SP-API throttled for account {account_id}, retrying in 60s")
-            raise self.retry(exc=e, countdown=60)
+        if decision.kind == "terminal":
+            logger.error(f"Sync failed permanently for account {account_id}: {e}")
+            raise
 
-        if exc_name in (
-            "SellingApiServerException",
-            "SellingApiTemporarilyUnavailableException",
-        ):
-            logger.warning(
-                f"SP-API server error for account {account_id}: {e}, retrying in 300s"
-            )
-            raise self.retry(exc=e, countdown=300)
-
-        logger.exception(f"Sync failed for account {account_id}")
-        raise self.retry(exc=e, countdown=300)
+        logger.warning(
+            f"Sync failed transiently for account {account_id}: {e}. "
+            f"Retrying in {decision.retry_delay}s"
+        )
+        raise self.retry(exc=e, countdown=decision.retry_delay)
 
 
 @celery_app.task
 def sync_all_accounts():
     """Sync all active accounts."""
-    from app.db.session import AsyncSessionLocal
     from app.models.amazon_account import AmazonAccount
     from sqlalchemy import select
 
     async def _get_account_ids():
-        async with AsyncSessionLocal() as db:
+        from app.db import session as db_session
+        async with db_session.AsyncSessionLocal() as db:
             result = await db.execute(
                 select(AmazonAccount.id)
                 .where(AmazonAccount.is_active == True)
             )
             return [str(row[0]) for row in result.all()]
 
-    account_ids = run_async(_get_account_ids())
+    account_ids = run_async(_get_account_ids)
     logger.info(f"Scheduling sync for {len(account_ids)} accounts")
 
     for account_id in account_ids:
@@ -115,14 +133,14 @@ def sync_all_accounts():
 @celery_app.task
 def sync_sales_data(account_id: str, start_date: str = None, end_date: str = None):
     """Sync sales data for an account."""
-    from app.db.session import AsyncSessionLocal
     from app.services.data_extraction import DataExtractionService
     from app.models.amazon_account import AmazonAccount
     from datetime import date
     from sqlalchemy import select
 
     async def _sync():
-        async with AsyncSessionLocal() as db:
+        from app.db import session as db_session
+        async with db_session.AsyncSessionLocal() as db:
             result = await db.execute(
                 select(AmazonAccount).where(AmazonAccount.id == UUID(account_id))
             )
@@ -143,19 +161,19 @@ def sync_sales_data(account_id: str, start_date: str = None, end_date: str = Non
             await db.commit()
             return {"records": count}
 
-    return run_async(_sync())
+    return run_async(_sync)
 
 
 @celery_app.task
 def sync_inventory_data(account_id: str):
     """Sync inventory data for an account."""
-    from app.db.session import AsyncSessionLocal
     from app.services.data_extraction import DataExtractionService
     from app.models.amazon_account import AmazonAccount
     from sqlalchemy import select
 
     async def _sync():
-        async with AsyncSessionLocal() as db:
+        from app.db import session as db_session
+        async with db_session.AsyncSessionLocal() as db:
             result = await db.execute(
                 select(AmazonAccount).where(AmazonAccount.id == UUID(account_id))
             )
@@ -171,23 +189,23 @@ def sync_inventory_data(account_id: str):
                 logger.info(f"Skipping FBA inventory sync for vendor account {account_id}")
                 count = 0
             else:
-                count = await service.sync_inventory_data(account, organization)
+                count = await service.sync_inventory(account, organization)
             await db.commit()
             return {"records": count}
 
-    return run_async(_sync())
+    return run_async(_sync)
 
 
 @celery_app.task
 def sync_advertising_data(account_id: str):
     """Sync advertising data for an account."""
-    from app.db.session import AsyncSessionLocal
     from app.services.data_extraction import DataExtractionService
     from app.models.amazon_account import AmazonAccount
     from sqlalchemy import select
 
     async def _sync():
-        async with AsyncSessionLocal() as db:
+        from app.db import session as db_session
+        async with db_session.AsyncSessionLocal() as db:
             result = await db.execute(
                 select(AmazonAccount).where(AmazonAccount.id == UUID(account_id))
             )
@@ -198,8 +216,8 @@ def sync_advertising_data(account_id: str):
 
             service = DataExtractionService(db)
             organization = await service._load_organization(account)
-            count = await service.sync_advertising_data(account, organization)
+            count = await service.sync_advertising(account, organization)
             await db.commit()
             return {"records": count}
 
-    return run_async(_sync())
+    return run_async(_sync)

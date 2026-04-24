@@ -47,6 +47,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
       - APP_ENV=development
       - APP_DEBUG=true
+      - ENABLE_INPROCESS_SCHEDULER=true
     depends_on:
       postgres:
         condition: service_healthy

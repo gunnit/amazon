@@ -29,6 +29,8 @@ class AmazonAccountCreate(BaseModel):
     refresh_token: Optional[str] = None
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
+    advertising_profile_id: Optional[str] = None
+    advertising_refresh_token: Optional[str] = None
 
     # Optional login credentials for web scraping
     login_email: Optional[str] = None
@@ -42,6 +44,8 @@ class AmazonAccountUpdate(BaseModel):
     refresh_token: Optional[str] = None
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
+    advertising_profile_id: Optional[str] = None
+    advertising_refresh_token: Optional[str] = None
     login_email: Optional[str] = None
     login_password: Optional[str] = None
 
@@ -54,11 +58,20 @@ class AmazonAccountResponse(BaseModel):
     account_type: AccountType
     marketplace_id: str
     marketplace_country: str
+    advertising_profile_id: Optional[str]
     is_active: bool
     last_sync_at: Optional[datetime]
     sync_status: SyncStatus
     sync_error_message: Optional[str]
+    last_sync_started_at: Optional[datetime] = None
+    last_sync_succeeded_at: Optional[datetime] = None
+    last_sync_failed_at: Optional[datetime] = None
+    last_sync_attempt_at: Optional[datetime] = None
+    last_sync_heartbeat_at: Optional[datetime] = None
+    sync_error_code: Optional[str] = None
+    sync_error_kind: Optional[str] = None
     has_refresh_token: bool = False
+    has_advertising_refresh_token: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -74,6 +87,13 @@ class AccountStatusResponse(BaseModel):
     sync_status: SyncStatus
     last_sync_at: Optional[datetime]
     sync_error_message: Optional[str]
+    last_sync_started_at: Optional[datetime] = None
+    last_sync_succeeded_at: Optional[datetime] = None
+    last_sync_failed_at: Optional[datetime] = None
+    last_sync_attempt_at: Optional[datetime] = None
+    last_sync_heartbeat_at: Optional[datetime] = None
+    sync_error_code: Optional[str] = None
+    sync_error_kind: Optional[str] = None
     total_sales_30d: float = 0
     total_units_30d: int = 0
     active_asins: int = 0

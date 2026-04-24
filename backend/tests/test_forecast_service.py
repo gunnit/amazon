@@ -51,7 +51,7 @@ async def test_generate_forecast_retries_with_longer_lookback_for_asin():
     account_id = uuid4()
     session = FakeAsyncSession([
         _rows(6, date(2026, 1, 1)),
-        _rows(8, date(2025, 10, 1)),
+        _rows(15, date(2025, 10, 1)),
     ])
     service = ForecastService(session)  # type: ignore[arg-type]
 
@@ -67,6 +67,9 @@ async def test_generate_forecast_retries_with_longer_lookback_for_asin():
     assert session.refreshed is True
     assert forecast.asin == "B0TESTASIN"
     assert len(forecast.predictions) == 14
+    assert forecast.data_quality_notes is not None
+    assert "Less than 28 days of data" in forecast.data_quality_notes
+    assert "Using simplified model due to limited history" in forecast.data_quality_notes
 
 
 @pytest.mark.asyncio
@@ -88,3 +91,62 @@ async def test_generate_forecast_still_fails_when_asin_history_is_insufficient()
 
     assert session.execute_calls == 2
     assert session.added == []
+
+
+@pytest.mark.asyncio
+async def test_generate_forecast_sets_confidence_level_from_mape(monkeypatch):
+    account_id = uuid4()
+    session = FakeAsyncSession([
+        _rows(20, date(2026, 1, 1)),
+    ])
+    service = ForecastService(session)  # type: ignore[arg-type]
+
+    async def fake_metrics(*args, **kwargs):
+        return 12.0, 5.0
+
+    monkeypatch.setattr(service, "_calculate_metrics", fake_metrics)
+
+    forecast = await service.generate_forecast(
+        account_id=account_id,
+        asin=None,
+        horizon_days=7,
+        model="simple",
+    )
+
+    assert forecast.confidence_level == "high"
+    assert forecast.data_quality_notes is not None
+    assert "Less than 28 days of data" in forecast.data_quality_notes
+
+
+@pytest.mark.asyncio
+async def test_calculate_metrics_uses_prophet_for_prophet_models(monkeypatch):
+    service = ForecastService(FakeAsyncSession([]))  # type: ignore[arg-type]
+    historical_data = [
+        {"date": date(2026, 1, 1) + timedelta(days=offset), "value": float(100 + offset)}
+        for offset in range(21)
+    ]
+    calls = []
+
+    async def fake_prophet(train, horizon, strategy, fallback_horizon=None):
+        calls.append((len(train), horizon, strategy["label"], fallback_horizon))
+        return [
+            {
+                "date": (train[-1]["date"] + timedelta(days=index + 1)).isoformat(),
+                "value": train[-1]["value"],
+                "lower": train[-1]["value"] - 5,
+                "upper": train[-1]["value"] + 5,
+            }
+            for index in range(horizon)
+        ]
+
+    monkeypatch.setattr(service, "_prophet_forecast", fake_prophet)
+
+    mape, rmse = await service._calculate_metrics(
+        historical_data,
+        model="prophet",
+        strategy={"label": "medium"},
+    )
+
+    assert calls == [(14, 7, "medium", 7)]
+    assert mape >= 0
+    assert rmse >= 0

@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import List, Optional
 from sqlalchemy import String, Integer, ForeignKey, DateTime, Numeric
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -33,6 +34,8 @@ class Forecast(Base):
     # Model Metrics
     mape: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=True)
     rmse: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=True)
+    confidence_level: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    data_quality_notes: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True)
 
     # Relationships
     account: Mapped["AmazonAccount"] = relationship("AmazonAccount", back_populates="forecasts")

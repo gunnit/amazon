@@ -68,6 +68,8 @@ def _build_response(f, historical: List[ForecastHistoricalPoint]) -> ForecastRes
         historical_data=historical,
         mape=float(f.mape) if f.mape else None,
         rmse=float(f.rmse) if f.rmse else None,
+        confidence_level=f.confidence_level,
+        data_quality_notes=list(f.data_quality_notes) if isinstance(f.data_quality_notes, list) else None,
     )
 
 

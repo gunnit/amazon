@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 class ForecastService:
     """Service for generating sales forecasts."""
 
-    MIN_HISTORY_DAYS = 7
+    MIN_HISTORY_DAYS = 14
+    MIN_RELIABLE_HISTORY_DAYS = 28
+    RECOMMENDED_HISTORY_DAYS = 90
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -38,7 +40,10 @@ class ForecastService:
             historical_data = await self._get_historical_data(account_id, asin, days=365)
 
         if len(historical_data) < self.MIN_HISTORY_DAYS:
-            raise ValueError("Insufficient historical data for forecasting (need at least 7 days)")
+            raise ValueError(
+                f"Insufficient historical data for forecasting "
+                f"(need at least {self.MIN_HISTORY_DAYS} days)"
+            )
 
         # Fill date gaps with zeros for a continuous time series
         historical_data = self._fill_date_gaps(historical_data)
@@ -69,7 +74,9 @@ class ForecastService:
             predictions = self._simple_forecast(historical_data, simple_horizon)
 
         # Metrics via holdout validation
-        mape, rmse = self._calculate_metrics(historical_data, chosen_model, strategy)
+        mape, rmse = await self._calculate_metrics(historical_data, chosen_model, strategy)
+        confidence_level = self._determine_confidence_level(mape)
+        data_quality_notes = self._build_data_quality_notes(historical_data, strategy, mape)
 
         forecast = Forecast(
             account_id=account_id,
@@ -81,6 +88,8 @@ class ForecastService:
             predictions=predictions,
             mape=mape,
             rmse=rmse,
+            confidence_level=confidence_level,
+            data_quality_notes=data_quality_notes or None,
         )
 
         self.db.add(forecast)
@@ -205,6 +214,13 @@ class ForecastService:
 
             df = pd.DataFrame(historical_data)
             df.columns = ["ds", "y"]
+            holidays_df = None
+            if strategy.get("label") in {"full", "medium"}:
+                holidays_df = self._build_amazon_holidays(
+                    pd,
+                    start_year=int(df["ds"].min().year),
+                    end_year=int((df["ds"].max() + pd.Timedelta(days=horizon_days)).year),
+                )
 
             model = Prophet(
                 yearly_seasonality=strategy.get("yearly_seasonality", False),
@@ -213,6 +229,7 @@ class ForecastService:
                 changepoint_prior_scale=strategy.get("changepoint_prior_scale", 0.01),
                 seasonality_prior_scale=strategy.get("seasonality_prior_scale", 1.0),
                 interval_width=0.95,
+                holidays=holidays_df,
             )
             model.fit(df)
 
@@ -233,7 +250,7 @@ class ForecastService:
         except ImportError:
             logger.warning("Prophet not installed, falling back to simple forecast")
             return self._simple_forecast(historical_data, fb_horizon)
-        except Exception as e:
+        except Exception:
             logger.exception("Prophet forecast failed, falling back to simple")
             return self._simple_forecast(historical_data, fb_horizon)
 
@@ -303,7 +320,7 @@ class ForecastService:
     # Metrics (holdout cross-validation)
     # ------------------------------------------------------------------
 
-    def _calculate_metrics(
+    async def _calculate_metrics(
         self,
         historical_data: List[Dict],
         model: str,
@@ -317,8 +334,15 @@ class ForecastService:
         train = historical_data[:-holdout_size]
         actuals = [d["value"] for d in historical_data[-holdout_size:]]
 
-        # Use simple forecast for holdout validation (fast, no async needed)
-        preds_raw = self._simple_forecast(train, holdout_size)
+        if model == "prophet":
+            preds_raw = await self._prophet_forecast(
+                train,
+                holdout_size,
+                strategy,
+                fallback_horizon=holdout_size,
+            )
+        else:
+            preds_raw = self._simple_forecast(train, holdout_size)
         preds = [p["value"] for p in preds_raw]
         if len(preds) < holdout_size:
             return self._variance_metrics(historical_data)
@@ -343,6 +367,88 @@ class ForecastService:
         mape = (std_val / mean_val * 100) if mean_val else 0
         rmse = std_val
         return round(mape, 4), round(rmse, 4)
+
+    @staticmethod
+    def _determine_confidence_level(mape: Optional[float]) -> Optional[str]:
+        """Map validation error to a confidence label."""
+        if mape is None:
+            return None
+        if mape < 15:
+            return "high"
+        if mape < 30:
+            return "medium"
+        return "low"
+
+    def _build_data_quality_notes(
+        self,
+        historical_data: List[Dict],
+        strategy: Dict[str, Any],
+        mape: Optional[float],
+    ) -> List[str]:
+        """Attach practical quality notes that help explain forecast reliability."""
+        notes: List[str] = []
+        n_days = len(historical_data)
+        values = [d["value"] for d in historical_data]
+        mean_val = sum(values) / len(values) if values else 0
+        std_dev = (sum((v - mean_val) ** 2 for v in values) / len(values)) ** 0.5 if values else 0
+
+        if n_days < self.MIN_RELIABLE_HISTORY_DAYS:
+            notes.append("Less than 28 days of data")
+        elif n_days < self.RECOMMENDED_HISTORY_DAYS:
+            notes.append("Less than 90 days of data")
+
+        if mean_val > 0 and (std_dev / mean_val) >= 1:
+            notes.append("High variance detected")
+
+        if strategy.get("label") == "minimal":
+            notes.append("Using simplified model due to limited history")
+
+        if mape is not None and mape >= 30:
+            notes.append("Historical validation error is high")
+
+        return list(dict.fromkeys(notes))
+
+    @staticmethod
+    def _build_amazon_holidays(pd_module, start_year: int, end_year: int):
+        """Build a small set of major Amazon demand events for Prophet."""
+        holiday_names: List[str] = []
+        holiday_dates = []
+        for year in range(start_year, end_year + 1):
+            black_friday = ForecastService._black_friday(year)
+            cyber_monday = black_friday + timedelta(days=3)
+
+            holiday_names.extend(["prime_day", "prime_day", "black_friday", "cyber_monday"])
+            holiday_dates.extend(
+                [
+                    date(year, 7, 12),
+                    date(year, 7, 13),
+                    black_friday,
+                    cyber_monday,
+                ]
+            )
+
+            holiday_names.extend(["christmas"] * 6)
+            holiday_dates.extend(date(year, 12, christmas_day) for christmas_day in range(20, 26))
+
+        if not holiday_names:
+            return None
+
+        return pd_module.DataFrame(
+            {
+                "holiday": holiday_names,
+                "ds": pd_module.to_datetime(holiday_dates),
+                "lower_window": 0,
+                "upper_window": 1,
+            }
+        )
+
+    @staticmethod
+    def _black_friday(year: int) -> date:
+        """Return the Friday after US Thanksgiving for the given year."""
+        november_first = date(year, 11, 1)
+        days_until_thursday = (3 - november_first.weekday()) % 7
+        thanksgiving = november_first + timedelta(days=days_until_thursday + 21)
+        return thanksgiving + timedelta(days=1)
 
     # ------------------------------------------------------------------
     # Product trend score

@@ -19,6 +19,7 @@ import { useAuthStore } from '@/store/authStore'
 import { authApi, exportsApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
 import { AccountsSection } from '@/components/settings/AccountsSection'
+import { GoogleSheetsIntegration } from '@/components/settings/GoogleSheetsIntegration'
 import type { Language } from '@/store/languageStore'
 import type { ApiKeysResponse } from '@/types'
 
@@ -63,6 +64,21 @@ export default function Settings() {
       })
     }
   }, [savedNotifications])
+
+  useEffect(() => {
+    const googleStatus = searchParams.get('google')
+    if (!googleStatus) return
+
+    if (googleStatus === 'connected') {
+      toast({ title: t('googleSheets.connectedSuccess') })
+    } else if (googleStatus === 'error') {
+      toast({ variant: 'destructive', title: t('googleSheets.connectFailed') })
+    }
+
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete('google')
+    setSearchParams(nextParams, { replace: true })
+  }, [searchParams, setSearchParams, t, toast])
 
   // API Keys state
   const [apiKeys, setApiKeys] = useState({
@@ -257,6 +273,9 @@ export default function Settings() {
           </TabsTrigger>
           <TabsTrigger value="notifications" className="gap-2">
             <Bell className="h-4 w-4" /> {t('settings.tabNotifications')}
+          </TabsTrigger>
+          <TabsTrigger value="integrations" className="gap-2">
+            <Globe className="h-4 w-4" /> {t('settings.tabIntegrations')}
           </TabsTrigger>
           <TabsTrigger value="security" className="gap-2">
             <Shield className="h-4 w-4" /> {t('settings.tabSecurity')}
@@ -562,6 +581,10 @@ export default function Settings() {
               </Button>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="integrations" className="space-y-4">
+          <GoogleSheetsIntegration />
         </TabsContent>
 
         <TabsContent value="security">

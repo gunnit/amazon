@@ -1,26 +1,33 @@
 """Analytics and dashboard endpoints."""
 from typing import List, Optional
-from datetime import date, timedelta, datetime, time as dt_time
+from datetime import date, timedelta, datetime, time as dt_time, timezone
 from uuid import UUID
 from decimal import Decimal
 import logging
+import re
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select, func, and_
+from sqlalchemy import Date, and_, cast, func, select, text
 
-from app.api.deps import CurrentUser, CurrentOrganization, DbSession
+from app.api.deps import CurrentOrganization, CurrentSuperuser, CurrentUser, DbSession
 from app.config import settings
 from app.models.amazon_account import AmazonAccount
+from app.models.order import Order, OrderItem
+from app.models.returns_data import ReturnData
 from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
 from app.models.product import Product
+from app.services.analytics_service import AnalyticsService
 from app.services.ai_analysis_service import ProductTrendInsightsAnalysisService
 from app.services.product_trends_service import ProductTrendsService, build_rule_based_insights
 from app.schemas.analytics import (
     DashboardKPIs, MetricValue, TrendData, TrendDataPoint,
-    ComparisonMetric, ComparisonPeriod, ComparisonResponse,
+    ComparisonDailyPoint, ComparisonMetric, ComparisonPeriod, ComparisonResponse,
     ProductPerformance, TopPerformers,
     AdvertisingInsights, CategorySalesData, HourlyOrdersData, ProductTrendsResponse,
+    ReturnAsinMetric, ReturnReasonBreakdown, ReturnsAnalyticsResponse, ReturnsSummary,
+    ReturnsTrendPoint,
+    AdsVsOrganicResponse,
 )
 
 router = APIRouter()
@@ -28,6 +35,15 @@ logger = logging.getLogger(__name__)
 
 MISSING_DATA_SOURCE = "missing_data_source"
 CATEGORY_FILTER_NOT_SUPPORTED = "category_filter_not_supported"
+SQL_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+DATA_HEALTH_TABLES = (
+    ("sales_data", "date"),
+    ("inventory_data", "snapshot_date"),
+    ("advertising_metrics", "date"),
+    ("returns_data", "return_date"),
+    ("bsr_history", "date"),
+    ("competitor_history", "date"),
+)
 
 
 def calculate_change(current: float, previous: float) -> tuple:
@@ -45,6 +61,20 @@ def calculate_change(current: float, previous: float) -> tuple:
         trend = "stable"
 
     return change, trend
+
+
+def _quoted_identifier(identifier: str) -> str:
+    """Return a safely quoted SQL identifier from the static allowlist."""
+    if not SQL_IDENTIFIER_RE.fullmatch(identifier):
+        raise ValueError(f"Invalid SQL identifier: {identifier}")
+    return f'"{identifier}"'
+
+
+def _decimal_ratio(numerator: Decimal, denominator: Decimal, multiplier: Decimal = Decimal("1")) -> Decimal:
+    """Calculate a Decimal ratio with zero protection."""
+    if denominator <= 0:
+        return Decimal("0")
+    return (numerator * multiplier / denominator).quantize(Decimal("0.0001"))
 
 
 def _validate_period(start_date: date, end_date: date, label: str) -> None:
@@ -70,6 +100,67 @@ def _accounts_query(organization_id: UUID, account_ids: Optional[List[UUID]]) ->
     if account_ids:
         query = query.where(AmazonAccount.id.in_(account_ids))
     return query
+
+
+def _resolve_optional_date_range(
+    date_from: Optional[date],
+    date_to: Optional[date],
+) -> tuple[Optional[date], Optional[date]]:
+    """Default an empty date range to the last 30 days while allowing partial bounds."""
+    if date_from is None and date_to is None:
+        return date.today() - timedelta(days=30), date.today()
+    return date_from, date_to
+
+
+def _order_datetime_bounds(
+    date_from: Optional[date],
+    date_to: Optional[date],
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Convert inclusive date filters to timestamp bounds for order queries."""
+    start = None
+    end = None
+    if date_from:
+        start = datetime.combine(date_from, dt_time.min).replace(tzinfo=timezone.utc)
+    if date_to:
+        end = datetime.combine(date_to + timedelta(days=1), dt_time.min).replace(tzinfo=timezone.utc)
+    return start, end
+
+
+def _return_rate_percent(returned_units: int, ordered_units: Optional[int]) -> Optional[float]:
+    """Return a percentage-based return rate when a denominator is available."""
+    if not ordered_units:
+        return None
+    rate = _decimal_ratio(
+        Decimal(returned_units),
+        Decimal(ordered_units),
+        multiplier=Decimal("100"),
+    )
+    return float(rate)
+
+
+def _merge_account_ids(
+    account_id: Optional[UUID],
+    account_ids: Optional[List[UUID]],
+) -> Optional[List[UUID]]:
+    """Normalize singular/plural account query params into one list."""
+    merged: list[UUID] = []
+    if account_id:
+        merged.append(account_id)
+    if account_ids:
+        merged.extend(account_ids)
+
+    if not merged:
+        return None
+
+    return list(dict.fromkeys(merged))
+
+
+def _normalize_optional_asin(asin: Optional[str]) -> Optional[str]:
+    """Normalize optional ASIN filters across analytics endpoints."""
+    if asin is None:
+        return None
+    normalized = asin.strip().upper()
+    return normalized or None
 
 
 async def _get_sales_period_metrics(
@@ -129,6 +220,100 @@ async def _get_sales_period_metrics(
         "orders": orders,
         "average_order_value": revenue / orders if orders > 0 else 0,
     }
+
+
+async def _get_sales_daily_revenue(
+    db: DbSession,
+    accounts_query,
+    start_date: date,
+    end_date: date,
+    category: Optional[str] = None,
+) -> dict[date, float]:
+    """Aggregate daily revenue using the same comparison filters as sales metrics."""
+    if category:
+        query = (
+            select(
+                SalesData.date.label("period_date"),
+                func.sum(SalesData.ordered_product_sales).label("revenue"),
+            )
+            .select_from(SalesData)
+            .join(
+                Product,
+                and_(
+                    Product.account_id == SalesData.account_id,
+                    Product.asin == SalesData.asin,
+                ),
+            )
+            .where(
+                SalesData.account_id.in_(accounts_query),
+                SalesData.asin != DAILY_TOTAL_ASIN,
+                SalesData.date >= start_date,
+                SalesData.date <= end_date,
+                Product.category == category,
+            )
+            .group_by(SalesData.date)
+            .order_by(SalesData.date)
+        )
+    else:
+        query = (
+            select(
+                SalesData.date.label("period_date"),
+                func.sum(SalesData.ordered_product_sales).label("revenue"),
+            )
+            .where(
+                SalesData.account_id.in_(accounts_query),
+                SalesData.asin == DAILY_TOTAL_ASIN,
+                SalesData.date >= start_date,
+                SalesData.date <= end_date,
+            )
+            .group_by(SalesData.date)
+            .order_by(SalesData.date)
+        )
+
+    rows = (await db.execute(query)).all()
+    return {
+        row.period_date: float(row.revenue or 0)
+        for row in rows
+    }
+
+
+async def _get_returns_period_count(
+    db: DbSession,
+    accounts_query,
+    start_date: date,
+    end_date: date,
+    category: Optional[str] = None,
+) -> int:
+    """Count return records for a comparison period."""
+    if category:
+        query = (
+            select(func.count(ReturnData.id))
+            .select_from(ReturnData)
+            .join(
+                Product,
+                and_(
+                    Product.account_id == ReturnData.account_id,
+                    Product.asin == ReturnData.asin,
+                ),
+            )
+            .where(
+                ReturnData.account_id.in_(accounts_query),
+                ReturnData.return_date >= start_date,
+                ReturnData.return_date <= end_date,
+                Product.category == category,
+            )
+        )
+    else:
+        query = (
+            select(func.count(ReturnData.id))
+            .where(
+                ReturnData.account_id.in_(accounts_query),
+                ReturnData.return_date >= start_date,
+                ReturnData.return_date <= end_date,
+            )
+        )
+
+    return int((await db.execute(query)).scalar() or 0)
 
 
 async def _get_advertising_period_metrics(
@@ -233,6 +418,44 @@ async def _build_period_comparison(
     accounts_query = _accounts_query(organization_id, account_ids)
     current_sales = await _get_sales_period_metrics(db, accounts_query, period_1_start, period_1_end, category)
     previous_sales = await _get_sales_period_metrics(db, accounts_query, period_2_start, period_2_end, category)
+    current_returns = await _get_returns_period_count(db, accounts_query, period_1_start, period_1_end, category)
+    previous_returns = await _get_returns_period_count(db, accounts_query, period_2_start, period_2_end, category)
+    current_daily_revenue = await _get_sales_daily_revenue(
+        db, accounts_query, period_1_start, period_1_end, category
+    )
+    previous_daily_revenue = await _get_sales_daily_revenue(
+        db, accounts_query, period_2_start, period_2_end, category
+    )
+
+    period_1_days = (period_1_end - period_1_start).days + 1
+    period_2_days = (period_2_end - period_2_start).days + 1
+    series_length = max(period_1_days, period_2_days)
+    daily_series = [
+        ComparisonDailyPoint(
+            day_offset=day_offset,
+            period_1_date=(
+                period_1_start + timedelta(days=day_offset)
+                if day_offset < period_1_days
+                else None
+            ),
+            period_1_revenue=(
+                current_daily_revenue.get(period_1_start + timedelta(days=day_offset), 0.0)
+                if day_offset < period_1_days
+                else None
+            ),
+            period_2_date=(
+                period_2_start + timedelta(days=day_offset)
+                if day_offset < period_2_days
+                else None
+            ),
+            period_2_revenue=(
+                previous_daily_revenue.get(period_2_start + timedelta(days=day_offset), 0.0)
+                if day_offset < period_2_days
+                else None
+            ),
+        )
+        for day_offset in range(series_length)
+    ]
 
     metrics = [
         _build_comparison_metric(
@@ -259,9 +482,9 @@ async def _build_period_comparison(
         _build_comparison_metric(
             "returns",
             "Returns",
-            "percent",
-            is_available=False,
-            unavailable_reason=MISSING_DATA_SOURCE,
+            "number",
+            float(current_returns),
+            float(previous_returns),
         ),
     ]
 
@@ -308,6 +531,7 @@ async def _build_period_comparison(
         period_1=ComparisonPeriod(start=period_1_start, end=period_1_end),
         period_2=ComparisonPeriod(start=period_2_start, end=period_2_end),
         metrics=metrics,
+        daily_series=daily_series,
     )
 
 
@@ -396,6 +620,35 @@ async def get_dashboard_kpis(
     )
 
 
+@router.get("/ads-vs-organic", response_model=AdsVsOrganicResponse)
+async def get_ads_vs_organic(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: Optional[UUID] = Query(default=None),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    date_from: date = Query(default=date.today() - timedelta(days=30)),
+    date_to: date = Query(default=date.today()),
+    group_by: str = Query(default="day", pattern="^(day|week|month)$"),
+    asin: Optional[str] = Query(default=None),
+):
+    """Get ad-attributed vs organic sales analytics."""
+    _validate_period(date_from, date_to, "period")
+    selected_account_ids = _merge_account_ids(account_id, account_ids)
+    accounts_stmt = _accounts_query(organization.id, selected_account_ids)
+    resolved_account_ids = list((await db.execute(accounts_stmt)).scalars().all())
+    asin = _normalize_optional_asin(asin)
+
+    service = AnalyticsService(db)
+    return await service.get_ads_vs_organic(
+        account_ids=resolved_account_ids,
+        date_from=date_from,
+        date_to=date_to,
+        group_by=group_by,
+        asin=asin,
+    )
+
+
 @router.get("/trends", response_model=List[TrendData])
 async def get_trends(
     current_user: CurrentUser,
@@ -468,6 +721,252 @@ async def get_trends(
         ))
 
     return trends
+
+
+@router.get("/returns", response_model=ReturnsAnalyticsResponse)
+async def get_returns_analysis(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: Optional[UUID] = Query(default=None),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+    asin: Optional[str] = Query(default=None, min_length=1, max_length=20),
+    limit: int = Query(default=10, ge=1, le=50),
+):
+    """Get return trends, reasons, and ASIN-level return metrics."""
+    date_from, date_to = _resolve_optional_date_range(date_from, date_to)
+    asin = _normalize_optional_asin(asin)
+    if date_from and date_to:
+        _validate_period(date_from, date_to, "period")
+
+    selected_account_ids = _merge_account_ids(account_id, account_ids)
+    accounts_query = _accounts_query(organization.id, selected_account_ids)
+
+    returns_filters = [ReturnData.account_id.in_(accounts_query)]
+    if date_from:
+        returns_filters.append(ReturnData.return_date >= date_from)
+    if date_to:
+        returns_filters.append(ReturnData.return_date <= date_to)
+    if asin:
+        returns_filters.append(ReturnData.asin == asin)
+
+    reason_expr = func.coalesce(func.nullif(ReturnData.reason, ""), "Unknown")
+    disposition_expr = func.coalesce(func.nullif(ReturnData.disposition, ""), "Unknown")
+
+    returns_trend_rows = (
+        await db.execute(
+            select(
+                ReturnData.return_date.label("period_date"),
+                func.sum(ReturnData.quantity).label("returned_units"),
+            )
+            .where(*returns_filters)
+            .group_by(ReturnData.return_date)
+            .order_by(ReturnData.return_date)
+        )
+    ).all()
+
+    reason_rows = (
+        await db.execute(
+            select(
+                reason_expr.label("reason"),
+                func.sum(ReturnData.quantity).label("quantity"),
+            )
+            .where(*returns_filters)
+            .group_by(reason_expr)
+            .order_by(func.sum(ReturnData.quantity).desc(), reason_expr)
+        )
+    ).all()
+
+    returns_asin_rows = (
+        await db.execute(
+            select(
+                ReturnData.asin,
+                func.max(func.nullif(ReturnData.sku, "")).label("sku"),
+                func.sum(ReturnData.quantity).label("quantity_returned"),
+            )
+            .where(
+                *returns_filters,
+                ReturnData.asin.is_not(None),
+                ReturnData.asin != "",
+            )
+            .group_by(ReturnData.asin)
+            .order_by(func.sum(ReturnData.quantity).desc(), ReturnData.asin)
+        )
+    ).all()
+
+    total_returns = sum(int(row.quantity or 0) for row in reason_rows)
+    unique_asins = len(returns_asin_rows)
+
+    order_filters = [Order.account_id.in_(accounts_query)]
+    order_start, order_end = _order_datetime_bounds(date_from, date_to)
+    if order_start:
+        order_filters.append(Order.purchase_date >= order_start)
+    if order_end:
+        order_filters.append(Order.purchase_date < order_end)
+    if asin:
+        order_filters.append(OrderItem.asin == asin)
+
+    ordered_units_total = int(
+        (
+            await db.execute(
+                select(func.sum(OrderItem.quantity))
+                .select_from(OrderItem)
+                .join(Order, Order.id == OrderItem.order_id)
+                .where(*order_filters)
+            )
+        ).scalar()
+        or 0
+    )
+    return_rate_available = ordered_units_total > 0
+
+    order_day_expr = cast(func.date_trunc("day", Order.purchase_date), Date)
+    ordered_trend_rows = (
+        await db.execute(
+            select(
+                order_day_expr.label("period_date"),
+                func.sum(OrderItem.quantity).label("ordered_units"),
+            )
+            .select_from(OrderItem)
+            .join(Order, Order.id == OrderItem.order_id)
+            .where(*order_filters)
+            .group_by(order_day_expr)
+            .order_by(order_day_expr)
+        )
+    ).all()
+    ordered_units_by_date = {
+        row.period_date: int(row.ordered_units or 0)
+        for row in ordered_trend_rows
+    }
+
+    return_rate_over_time = [
+        ReturnsTrendPoint(
+            date=row.period_date,
+            returned_units=int(row.returned_units or 0),
+            ordered_units=ordered_units_by_date.get(row.period_date),
+            return_rate=_return_rate_percent(
+                int(row.returned_units or 0),
+                ordered_units_by_date.get(row.period_date),
+            ),
+        )
+        for row in returns_trend_rows
+    ]
+
+    return_asins = [row.asin for row in returns_asin_rows if row.asin]
+    ordered_units_by_asin: dict[str, int] = {}
+    if return_asins:
+        ordered_asin_rows = (
+            await db.execute(
+                select(
+                    OrderItem.asin,
+                    func.sum(OrderItem.quantity).label("ordered_units"),
+                )
+                .select_from(OrderItem)
+                .join(Order, Order.id == OrderItem.order_id)
+                .where(
+                    *order_filters,
+                    OrderItem.asin.is_not(None),
+                    OrderItem.asin != "",
+                    OrderItem.asin.in_(return_asins),
+                )
+                .group_by(OrderItem.asin)
+            )
+        ).all()
+        ordered_units_by_asin = {
+            row.asin: int(row.ordered_units or 0)
+            for row in ordered_asin_rows
+            if row.asin
+        }
+
+    asin_metrics_by_asin: dict[str, ReturnAsinMetric] = {}
+    for row in returns_asin_rows:
+        quantity_returned = int(row.quantity_returned or 0)
+        ordered_units = ordered_units_by_asin.get(row.asin)
+        asin_metrics_by_asin[row.asin] = ReturnAsinMetric(
+            asin=row.asin,
+            sku=row.sku,
+            quantity_returned=quantity_returned,
+            ordered_units=ordered_units,
+            return_rate=_return_rate_percent(quantity_returned, ordered_units),
+        )
+
+    top_asins_by_returns = sorted(
+        asin_metrics_by_asin.values(),
+        key=lambda item: (-item.quantity_returned, item.asin),
+    )[:limit]
+    top_asins_by_return_rate = sorted(
+        [item for item in asin_metrics_by_asin.values() if item.return_rate is not None],
+        key=lambda item: (-float(item.return_rate or 0), -item.quantity_returned, item.asin),
+    )[:limit]
+
+    response_asins = sorted(
+        {
+            item.asin
+            for item in top_asins_by_returns + top_asins_by_return_rate
+            if item.asin
+        }
+    )
+    if response_asins:
+        asin_detail_rows = (
+            await db.execute(
+                select(
+                    ReturnData.asin,
+                    reason_expr.label("reason"),
+                    disposition_expr.label("disposition"),
+                    func.sum(ReturnData.quantity).label("quantity"),
+                )
+                .where(*returns_filters, ReturnData.asin.in_(response_asins))
+                .group_by(ReturnData.asin, reason_expr, disposition_expr)
+                .order_by(ReturnData.asin, func.sum(ReturnData.quantity).desc())
+            )
+        ).all()
+
+        detail_map: dict[str, tuple[str, str]] = {}
+        for row in asin_detail_rows:
+            if row.asin not in detail_map:
+                detail_map[row.asin] = (row.reason, row.disposition)
+
+        for asin_value, (primary_reason, disposition) in detail_map.items():
+            metric = asin_metrics_by_asin.get(asin_value)
+            if metric:
+                metric.primary_reason = primary_reason
+                metric.disposition = disposition
+
+    summary = ReturnsSummary(
+        total_returns=total_returns,
+        total_ordered_units=ordered_units_total,
+        return_rate=_return_rate_percent(total_returns, ordered_units_total),
+        return_rate_available=return_rate_available,
+        top_reason=reason_rows[0].reason if reason_rows else None,
+        unique_asins=unique_asins,
+    )
+    reason_breakdown = [
+        ReturnReasonBreakdown(
+            reason=row.reason,
+            quantity=int(row.quantity or 0),
+            share_percent=(
+                float(
+                    _decimal_ratio(
+                        Decimal(int(row.quantity or 0)),
+                        Decimal(total_returns),
+                        multiplier=Decimal("100"),
+                    )
+                )
+                if total_returns > 0
+                else 0
+            ),
+        )
+        for row in reason_rows
+    ]
+
+    return ReturnsAnalyticsResponse(
+        summary=summary,
+        return_rate_over_time=return_rate_over_time,
+        reason_breakdown=reason_breakdown,
+        top_asins_by_returns=top_asins_by_returns,
+        top_asins_by_return_rate=top_asins_by_return_rate,
+    )
 
 
 @router.get("/comparison", response_model=ComparisonResponse)
@@ -587,18 +1086,29 @@ async def get_product_trends(
     db: DbSession,
     start_date: date = Query(default=date.today() - timedelta(days=30)),
     end_date: date = Query(default=date.today()),
+    account_id: Optional[UUID] = Query(default=None),
     account_ids: Optional[List[UUID]] = Query(default=None),
+    asin: Optional[str] = Query(default=None),
+    trend_class: Optional[str] = Query(
+        default=None,
+        pattern="^(rising_fast|rising|stable|declining|declining_fast)$",
+    ),
     language: str = Query(default="en", pattern="^(en|it)$"),
-    limit: int = Query(default=8, ge=3, le=20),
+    limit: int = Query(default=50, ge=1, le=100),
 ):
     """Get ranked product trends and structured insights."""
     _validate_period(start_date, end_date, "trend period")
+    asin = _normalize_optional_asin(asin)
+
+    scoped_account_ids = list(account_ids or [])
+    if account_id and account_id not in scoped_account_ids:
+        scoped_account_ids.append(account_id)
 
     accounts_stmt = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
-    if account_ids:
-        accounts_stmt = accounts_stmt.where(AmazonAccount.id.in_(account_ids))
+    if scoped_account_ids:
+        accounts_stmt = accounts_stmt.where(AmazonAccount.id.in_(scoped_account_ids))
 
     resolved_account_ids = list((await db.execute(accounts_stmt)).scalars().all())
     trends_service = ProductTrendsService(db)
@@ -606,6 +1116,10 @@ async def get_product_trends(
         account_ids=resolved_account_ids,
         start_date=start_date,
         end_date=end_date,
+        language=language,
+        organization_id=organization.id,
+        asin=asin,
+        trend_class=trend_class,
         limit=limit,
     )
 
@@ -633,6 +1147,7 @@ async def get_product_trends(
         summary=trend_data["summary"],
         rising_products=trend_data["rising_products"],
         declining_products=trend_data["declining_products"],
+        products=trend_data["products"],
         insights=insights,
         generated_with_ai=generated_with_ai,
         ai_available=ai_available,
@@ -846,18 +1361,17 @@ async def get_advertising_insights(
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
-    campaigns_query = select(AdvertisingCampaign.id).where(
-        AdvertisingCampaign.account_id.in_(accounts_query)
-    )
-
-    # Overall metrics
     overall_query = (
         select(
             func.sum(AdvertisingMetrics.cost).label("spend"),
             func.sum(AdvertisingMetrics.attributed_sales_7d).label("sales"),
+            func.sum(AdvertisingMetrics.impressions).label("impressions"),
+            func.sum(AdvertisingMetrics.clicks).label("clicks"),
         )
+        .select_from(AdvertisingMetrics)
+        .join(AdvertisingCampaign, AdvertisingCampaign.id == AdvertisingMetrics.campaign_id)
         .where(
-            AdvertisingMetrics.campaign_id.in_(campaigns_query),
+            AdvertisingCampaign.account_id.in_(accounts_query),
             AdvertisingMetrics.date >= start_date,
             AdvertisingMetrics.date <= end_date,
         )
@@ -866,19 +1380,140 @@ async def get_advertising_insights(
 
     total_spend = Decimal(str(overall.spend or 0))
     total_sales = Decimal(str(overall.sales or 0))
-    overall_roas = total_sales / total_spend if total_spend > 0 else Decimal(0)
-    overall_acos = (total_spend / total_sales * 100) if total_sales > 0 else Decimal(0)
+    total_impressions = int(overall.impressions or 0)
+    total_clicks = int(overall.clicks or 0)
+    overall_roas = _decimal_ratio(total_sales, total_spend)
+    overall_acos = _decimal_ratio(total_spend, total_sales, Decimal("100"))
+    overall_ctr = _decimal_ratio(Decimal(total_clicks), Decimal(total_impressions), Decimal("100"))
+
+    campaign_query = (
+        select(
+            AdvertisingCampaign.campaign_id.label("campaign_id"),
+            AdvertisingCampaign.campaign_name.label("campaign_name"),
+            AdvertisingCampaign.campaign_type.label("campaign_type"),
+            AdvertisingCampaign.state.label("state"),
+            func.sum(AdvertisingMetrics.cost).label("spend"),
+            func.sum(AdvertisingMetrics.attributed_sales_7d).label("sales"),
+            func.sum(AdvertisingMetrics.impressions).label("impressions"),
+            func.sum(AdvertisingMetrics.clicks).label("clicks"),
+        )
+        .select_from(AdvertisingMetrics)
+        .join(AdvertisingCampaign, AdvertisingCampaign.id == AdvertisingMetrics.campaign_id)
+        .where(
+            AdvertisingCampaign.account_id.in_(accounts_query),
+            AdvertisingMetrics.date >= start_date,
+            AdvertisingMetrics.date <= end_date,
+        )
+        .group_by(
+            AdvertisingCampaign.campaign_id,
+            AdvertisingCampaign.campaign_name,
+            AdvertisingCampaign.campaign_type,
+            AdvertisingCampaign.state,
+        )
+    )
+    campaign_rows = (await db.execute(campaign_query)).all()
+
+    campaign_metrics: list[dict[str, object]] = []
+    for row in campaign_rows:
+        spend = Decimal(str(row.spend or 0))
+        sales = Decimal(str(row.sales or 0))
+        impressions = int(row.impressions or 0)
+        clicks = int(row.clicks or 0)
+
+        campaign_metrics.append(
+            {
+                "campaign_id": row.campaign_id,
+                "campaign_name": row.campaign_name,
+                "campaign_type": row.campaign_type,
+                "state": row.state,
+                "spend": spend,
+                "sales": sales,
+                "impressions": impressions,
+                "clicks": clicks,
+                "roas": _decimal_ratio(sales, spend),
+                "acos": _decimal_ratio(spend, sales, Decimal("100")),
+                "ctr": _decimal_ratio(Decimal(clicks), Decimal(impressions), Decimal("100")),
+            }
+        )
+
+    top_campaigns = sorted(
+        campaign_metrics,
+        key=lambda item: (item["sales"], item["roas"], item["clicks"]),
+        reverse=True,
+    )[:5]
+    underperforming_campaigns = [
+        item for item in campaign_metrics
+        if item["spend"] > 0 and (
+            item["sales"] == 0
+            or item["roas"] < Decimal("1")
+            or item["acos"] > Decimal("100")
+        )
+    ][:5]
+
+    recommendations: list[str] = []
+    if total_spend <= 0:
+        recommendations.append("No advertising spend recorded for the selected period.")
+    else:
+        if overall_roas >= Decimal("3"):
+            recommendations.append("High overall ROAS suggests room to scale budgets on winning campaigns.")
+        if overall_acos > Decimal("30"):
+            recommendations.append("Overall ACoS is elevated; review bids and search terms on the highest-spend campaigns.")
+        if overall_ctr < Decimal("0.35"):
+            recommendations.append("CTR is low; refresh targeting or creative on campaigns with high impressions and weak click-through.")
+        if total_clicks > 0 and total_sales <= 0:
+            recommendations.append("Clicks are not converting into attributed sales; inspect landing products and keyword relevance.")
+
+    if not recommendations:
+        recommendations.append("Advertising performance is stable in the selected period.")
 
     return AdvertisingInsights(
         total_spend=total_spend,
         total_sales=total_sales,
+        total_impressions=total_impressions,
+        total_clicks=total_clicks,
         overall_roas=overall_roas,
         overall_acos=overall_acos,
-        top_campaigns=[],
-        underperforming_campaigns=[],
-        recommendations=[
-            "Consider increasing budget for campaigns with ROAS > 3",
-            "Review and optimize keywords with high ACoS",
-            "Test new ad creative for underperforming campaigns",
-        ],
+        overall_ctr=overall_ctr,
+        top_campaigns=top_campaigns,
+        underperforming_campaigns=underperforming_campaigns,
+        recommendations=recommendations,
     )
+
+
+@router.get("/admin/data-health")
+async def get_data_health(
+    _current_user: CurrentSuperuser,
+    db: DbSession,
+):
+    """Return global retention-managed table health metrics."""
+    table_stats: list[dict[str, object]] = []
+
+    for table_name, date_column in DATA_HEALTH_TABLES:
+        safe_table_name = _quoted_identifier(table_name)
+        safe_date_column = _quoted_identifier(date_column)
+        result = await db.execute(
+            text(
+                f"""
+                SELECT
+                    COUNT(*) AS record_count,
+                    MIN({safe_date_column}) AS min_date,
+                    MAX({safe_date_column}) AS max_date
+                FROM {safe_table_name}
+                """
+            )
+        )
+        row = result.mappings().one()
+        table_stats.append(
+            {
+                "table": table_name,
+                "min_date": row["min_date"].isoformat() if row["min_date"] else None,
+                "max_date": row["max_date"].isoformat() if row["max_date"] else None,
+                "record_count": int(row["record_count"] or 0),
+            }
+        )
+
+    return {
+        "retention_months": settings.DATA_RETENTION_MONTHS,
+        "archive_enabled": settings.DATA_ARCHIVE_ENABLED,
+        "tables": table_stats,
+    }

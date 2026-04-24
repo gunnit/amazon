@@ -24,6 +24,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar } from '@/components/ui/calendar'
 import { useToast } from '@/components/ui/use-toast'
 import { accountsApi, exportsApi } from '@/services/api'
+import { GoogleSheetsExportButton } from '@/components/GoogleSheetsExportButton'
 import { downloadBlob } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 import type { AmazonAccount } from '@/types'
@@ -248,6 +249,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
     datePreset === 'custom' && customStartDate && customEndDate
       ? `${format(new Date(customStartDate + 'T00:00:00'), 'MMM d')} - ${format(new Date(customEndDate + 'T00:00:00'), 'MMM d')}`
       : undefined
+  const dateRange = computeDateRange(datePreset, customStartDate, customEndDate)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -417,6 +419,16 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
         </div>
 
         <DialogFooter>
+          <GoogleSheetsExportButton
+            dataTypes={Array.from(reportTypes)}
+            startDate={dateRange.start}
+            endDate={dateRange.end}
+            accountIds={selectedAccountIds.length > 0 ? selectedAccountIds : undefined}
+            language={language}
+            groupBy={reportTypes.has('sales') ? 'day' : 'day'}
+            disabled={reportTypes.size === 0 || isExporting}
+            onSuccess={() => onOpenChange(false)}
+          />
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('common.cancel')}
           </Button>

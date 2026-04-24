@@ -43,3 +43,6 @@ logs/
 frontend/dist/
 .mcp.json
 backend/celerybeat-schedule
+
+# Claude worktrees (session-local)
+.claude/worktrees/

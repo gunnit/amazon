@@ -340,7 +340,40 @@ test.describe('Dashboard Validation', () => {
     await page.screenshot({ path: 'tests/screenshots/09-account-badges.png', fullPage: true });
   });
 
-  test('10 - No console errors on dashboard', async ({ page }) => {
+  test('10 - Invalid account query param falls back to overview', async ({ page }) => {
+    await loginViaUI(page);
+
+    await page.goto(`${BASE_URL}/?account=not-a-uuid`);
+    await page.waitForSelector('[class*="animate-spin"]', { state: 'detached', timeout: 15000 }).catch(() => {});
+    await page.waitForLoadState('networkidle');
+
+    await expect(page).toHaveURL(BASE_URL + '/');
+    await expect(page.getByText(/Account view cleared|Vista account rimossa/i)).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  });
+
+  test('11 - Account drill-down shows contextual scope and exit action', async ({ page }) => {
+    await loginViaUI(page);
+
+    await page.waitForSelector('[class*="animate-spin"]', { state: 'detached', timeout: 15000 }).catch(() => {});
+    await page.waitForLoadState('networkidle');
+
+    const drillLinks = page.getByRole('link', { name: /View account dashboard|Apri dashboard account/i });
+    const drillLinkCount = await drillLinks.count();
+    test.skip(drillLinkCount === 0, 'No account drill-down cards available in this fixture');
+
+    await drillLinks.first().click();
+    await expect(page).toHaveURL(/\/\?account=/);
+    await expect(page.getByText(/Viewing account|Account attivo/i)).toBeVisible();
+
+    const exitButton = page.getByRole('button', { name: /Exit|Esci/i }).first();
+    await expect(exitButton).toBeVisible();
+    await exitButton.click();
+
+    await expect(page).toHaveURL(BASE_URL + '/');
+  });
+
+  test('12 - No console errors on dashboard', async ({ page }) => {
     const errors: string[] = [];
     page.on('console', (msg) => {
       if (msg.type() === 'error') {
@@ -370,7 +403,7 @@ test.describe('Dashboard Validation', () => {
     expect(significantErrors.length).toBe(0);
   });
 
-  test('11 - No failed network requests on dashboard load', async ({ page }) => {
+  test('13 - No failed network requests on dashboard load', async ({ page }) => {
     const failedRequests: { url: string; status: number }[] = [];
 
     page.on('response', (response) => {
@@ -395,7 +428,7 @@ test.describe('Dashboard Validation', () => {
     expect(failedRequests.length).toBe(0);
   });
 
-  test('12 - Dashboard responsive layout at mobile viewport', async ({ page }) => {
+  test('14 - Dashboard responsive layout at mobile viewport', async ({ page }) => {
     // Set mobile viewport
     await page.setViewportSize({ width: 375, height: 812 });
 
@@ -414,7 +447,7 @@ test.describe('Dashboard Validation', () => {
     expect(bodyWidth).toBeLessThanOrEqual(viewportWidth + 10);
   });
 
-  test('13 - Dashboard responsive layout at tablet viewport', async ({ page }) => {
+  test('15 - Dashboard responsive layout at tablet viewport', async ({ page }) => {
     await page.setViewportSize({ width: 768, height: 1024 });
 
     await loginViaUI(page);
@@ -425,7 +458,7 @@ test.describe('Dashboard Validation', () => {
     await page.screenshot({ path: 'tests/screenshots/13-tablet-dashboard.png', fullPage: true });
   });
 
-  test('14 - Verify chart empty states when no data', async ({ page }) => {
+  test('16 - Verify chart empty states when no data', async ({ page }) => {
     await loginViaUI(page);
 
     await page.waitForSelector('[class*="animate-spin"]', { state: 'detached', timeout: 15000 }).catch(() => {});
@@ -444,7 +477,7 @@ test.describe('Dashboard Validation', () => {
     console.log(`Empty state placeholder count: ${emptyCount}`);
   });
 
-  test('15 - Navigation sidebar links work from dashboard', async ({ page }) => {
+  test('17 - Navigation sidebar links work from dashboard', async ({ page }) => {
     await loginViaUI(page);
 
     await page.waitForSelector('[class*="animate-spin"]', { state: 'detached', timeout: 15000 }).catch(() => {});

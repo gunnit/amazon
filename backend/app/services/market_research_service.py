@@ -3,11 +3,23 @@ import asyncio
 import logging
 import time
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Callable, List, Optional
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sp_api.base.exceptions import (
+    SellingApiBadRequestException,
+    SellingApiForbiddenException,
+    SellingApiGatewayTimeoutException,
+    SellingApiNotFoundException,
+    SellingApiRequestThrottledException,
+    SellingApiServerException,
+    SellingApiStateConflictException,
+    SellingApiTemporarilyUnavailableException,
+    SellingApiTooLargeException,
+    SellingApiUnsupportedFormatException,
+)
 
 from app.models.market_research import MarketResearchReport
 from app.models.amazon_account import AmazonAccount
@@ -124,6 +136,156 @@ class MarketResearchService:
 
         result = await self.db.execute(query)
         return list(result.scalars().all())
+
+    def get_comparison_matrix(self, report: MarketResearchReport) -> dict[str, Any]:
+        """Build a dimension-by-dimension comparison matrix for a completed report."""
+        product_snapshot = report.product_snapshot or {}
+        competitor_data = report.competitor_data or []
+
+        if not product_snapshot or not competitor_data:
+            raise ValueError("Comparison matrix requires product and competitor data")
+
+        dimensions_config = [
+            {"name": "price", "field": "price", "weight": 0.3, "lower_is_better": True},
+            {"name": "bsr", "field": "bsr", "weight": 0.3, "lower_is_better": True},
+            {"name": "reviews", "field": "review_count", "weight": 0.2, "lower_is_better": False},
+            {"name": "rating", "field": "rating", "weight": 0.2, "lower_is_better": False},
+        ]
+
+        dimensions: list[dict[str, Any]] = []
+        overall_score = 0.0
+        total_weight = 0.0
+        opportunities: list[str] = []
+
+        for config in dimensions_config:
+            dimension = self._build_comparison_dimension(
+                product_snapshot=product_snapshot,
+                competitor_data=competitor_data,
+                name=config["name"],
+                field=config["field"],
+                lower_is_better=config["lower_is_better"],
+            )
+
+            dimensions.append(dimension)
+
+            if dimension["client_rank"] is not None and dimension["total_competitors"] > 1:
+                normalized_rank = self._normalize_rank(
+                    rank=dimension["client_rank"],
+                    total=dimension["total_competitors"],
+                )
+                overall_score += normalized_rank * config["weight"]
+                total_weight += config["weight"]
+
+            if dimension.pop("is_worse_than_average", False):
+                opportunities.append(config["name"])
+
+        return {
+            "dimensions": dimensions,
+            "overall_score": round(overall_score / total_weight, 1) if total_weight else 0.0,
+            "opportunities": opportunities,
+        }
+
+    @staticmethod
+    def _coerce_numeric(value: Any) -> Optional[float]:
+        """Convert numeric JSON values to float and ignore non-numeric values."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _build_comparison_dimension(
+        cls,
+        product_snapshot: dict[str, Any],
+        competitor_data: list[dict[str, Any]],
+        name: str,
+        field: str,
+        lower_is_better: bool,
+    ) -> dict[str, Any]:
+        """Compute comparison stats for a single metric dimension."""
+        client_value = cls._coerce_numeric(product_snapshot.get(field))
+
+        competitor_values: list[tuple[dict[str, Any], float]] = []
+        for competitor in competitor_data:
+            numeric_value = cls._coerce_numeric(competitor.get(field))
+            if numeric_value is not None:
+                competitor_values.append((competitor, numeric_value))
+
+        raw_competitor_values = [value for _, value in competitor_values]
+        competitor_avg_raw = (
+            sum(raw_competitor_values) / len(raw_competitor_values)
+            if raw_competitor_values
+            else None
+        )
+        competitor_avg = round(competitor_avg_raw, 2) if competitor_avg_raw is not None else None
+        competitor_min = min(raw_competitor_values) if raw_competitor_values else None
+        competitor_max = max(raw_competitor_values) if raw_competitor_values else None
+
+        competitor_best = None
+        competitor_best_name = None
+        if competitor_values:
+            best_competitor, competitor_best = min(
+                competitor_values,
+                key=lambda item: item[1],
+            ) if lower_is_better else max(
+                competitor_values,
+                key=lambda item: item[1],
+            )
+            competitor_best_name = (
+                best_competitor.get("title")
+                or best_competitor.get("asin")
+                or None
+            )
+
+        ranked_values = list(raw_competitor_values)
+        if client_value is not None:
+            ranked_values.append(client_value)
+
+        client_rank = None
+        if client_value is not None and ranked_values:
+            better_count = sum(
+                1
+                for value in raw_competitor_values
+                if ((value < client_value) if lower_is_better else (value > client_value))
+            )
+            client_rank = better_count + 1
+
+        gap_percent = None
+        if client_value is not None and competitor_avg_raw not in (None, 0):
+            gap_percent = round(((client_value - competitor_avg_raw) / competitor_avg_raw) * 100, 1)
+
+        is_worse_than_average = False
+        if client_value is not None and competitor_avg_raw is not None:
+            is_worse_than_average = (
+                client_value > competitor_avg_raw
+                if lower_is_better
+                else client_value < competitor_avg_raw
+            )
+
+        return {
+            "name": name,
+            "client_value": client_value,
+            "competitor_avg": competitor_avg,
+            "competitor_min": competitor_min,
+            "competitor_max": competitor_max,
+            "competitor_best": competitor_best,
+            "competitor_best_name": competitor_best_name,
+            "client_rank": client_rank,
+            "total_competitors": len(ranked_values),
+            "gap_percent": gap_percent,
+            "is_worse_than_average": is_worse_than_average,
+        }
+
+    @staticmethod
+    def _normalize_rank(rank: int, total: int) -> float:
+        """Normalize rank to a 0-100 competitive score."""
+        if total <= 1:
+            return 100.0
+        return ((total - rank) / (total - 1)) * 100
 
 
 def process_report_background(
@@ -507,11 +669,140 @@ def _discover_competitors(
     return [r["asin"] for r in results]
 
 
+def _retry_delay_from_headers(exc: Exception, default_delay: float = 2.0) -> float:
+    """Read Retry-After from SP-API exceptions without assuming headers shape."""
+    headers = getattr(exc, "headers", None) or {}
+    if hasattr(headers, "get"):
+        retry_after = headers.get("Retry-After") or headers.get("retry-after")
+    else:
+        retry_after = None
+
+    try:
+        return max(default_delay, float(retry_after))
+    except (TypeError, ValueError):
+        return default_delay
+
+
+def _classify_fetch_exception(exc: Exception) -> str:
+    """Collapse SP-API and transport failures into stable error labels."""
+    if isinstance(
+        exc,
+        (
+            SellingApiBadRequestException,
+            SellingApiNotFoundException,
+            SellingApiStateConflictException,
+            SellingApiTooLargeException,
+            SellingApiUnsupportedFormatException,
+        ),
+    ):
+        return "invalid"
+
+    if isinstance(
+        exc,
+        (
+            SellingApiGatewayTimeoutException,
+            SellingApiServerException,
+            SellingApiTemporarilyUnavailableException,
+        ),
+    ):
+        return "network"
+
+    if type(exc).__name__ in {
+        "ConnectTimeout",
+        "ConnectionError",
+        "ReadTimeout",
+        "RequestException",
+        "Timeout",
+    }:
+        return "network"
+
+    return "error"
+
+
+def _call_sp_api_with_single_retry(
+    fetcher: Callable[[], Any],
+    asin: str,
+    operation: str,
+) -> tuple[Any, Optional[str]]:
+    """Execute one SP-API request, retrying a throttled response once."""
+    try:
+        return fetcher(), None
+    except SellingApiRequestThrottledException as exc:
+        delay = _retry_delay_from_headers(exc, default_delay=2.0)
+        logger.warning(
+            "SP-API throttled during %s lookup for %s; retrying once in %.1fs",
+            operation,
+            asin,
+            delay,
+        )
+        time.sleep(delay)
+        try:
+            return fetcher(), None
+        except SellingApiRequestThrottledException as retry_exc:
+            logger.warning(
+                "SP-API remained throttled during %s lookup for %s after retry: %s",
+                operation,
+                asin,
+                retry_exc,
+            )
+            return None, "throttled"
+        except SellingApiForbiddenException as retry_exc:
+            logger.warning(
+                "SP-API denied %s lookup for %s after throttle retry: %s",
+                operation,
+                asin,
+                retry_exc,
+            )
+            return None, "forbidden"
+        except Exception as retry_exc:
+            logger.warning(
+                "SP-API %s lookup failed for %s after throttle retry: %s",
+                operation,
+                asin,
+                retry_exc,
+            )
+            return None, _classify_fetch_exception(retry_exc)
+    except SellingApiForbiddenException as exc:
+        logger.warning(
+            "SP-API denied %s lookup for %s: %s",
+            operation,
+            asin,
+            exc,
+        )
+        return None, "forbidden"
+    except Exception as exc:
+        logger.warning(
+            "SP-API %s lookup failed for %s: %s",
+            operation,
+            asin,
+            exc,
+        )
+        return None, _classify_fetch_exception(exc)
+
+
 def _fetch_product_data(client, asin: str) -> dict:
     """Fetch product catalog details and competitive pricing for an ASIN."""
     snapshot = {"asin": asin}
+    fetch_errors: list[str] = []
 
-    catalog = client.get_catalog_item_details(asin)
+    def _fetch_catalog():
+        api = client._catalog_api()
+        response = api.get_catalog_item(
+            asin=asin,
+            marketplaceIds=client.marketplace.marketplace_id,
+            includedData=["summaries", "salesRanks", "classifications", "attributes"],
+        )
+        return response.payload
+
+    catalog, catalog_error = _call_sp_api_with_single_retry(
+        _fetch_catalog,
+        asin=asin,
+        operation="catalog",
+    )
+    if catalog_error:
+        fetch_errors.append(f"catalog:{catalog_error}")
+        if catalog_error == "forbidden":
+            snapshot["catalog_unavailable_reason"] = "forbidden"
     if catalog:
         summaries = catalog.get("summaries", [])
         if summaries:
@@ -521,7 +812,11 @@ def _fetch_product_data(client, asin: str) -> dict:
 
         classifications = catalog.get("classifications", [])
         if classifications:
-            snapshot["category"] = classifications[0].get("displayName")
+            classification = classifications[0]
+            snapshot["category"] = (
+                classification.get("displayName")
+                or classification.get("classification", {}).get("displayName")
+            )
 
         sales_ranks = catalog.get("salesRanks", [])
         if sales_ranks:
@@ -534,8 +829,38 @@ def _fetch_product_data(client, asin: str) -> dict:
                 if "bsr" in snapshot:
                     break
 
-    price = client.get_competitive_pricing(asin)
+    def _fetch_price():
+        if client.is_vendor:
+            logger.debug(
+                "Skipping pricing lookup for %s because Product Pricing API is seller-only",
+                asin,
+            )
+            return None
+
+        api = client._products_api()
+        response = api.get_competitive_pricing_for_asins([asin])
+        price_value = client._extract_price_amount(response.payload)
+        if price_value is not None:
+            return price_value
+
+        offers_response = api.get_item_offers(asin=asin, item_condition="New")
+        return client._extract_price_amount(offers_response.payload)
+
+    price, pricing_error = _call_sp_api_with_single_retry(
+        _fetch_price,
+        asin=asin,
+        operation="pricing",
+    )
+    if pricing_error:
+        fetch_errors.append(f"pricing:{pricing_error}")
+        if pricing_error == "forbidden":
+            snapshot["pricing_unavailable_reason"] = "forbidden"
+    if price is None and catalog:
+        price = client._extract_catalog_price_amount(catalog)
     if price is not None:
         snapshot["price"] = float(price)
+
+    if fetch_errors:
+        snapshot["fetch_errors"] = fetch_errors
 
     return snapshot

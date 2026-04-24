@@ -18,7 +18,11 @@ celery_app = Celery(
         "workers.tasks.forecast_exports",
         "workers.tasks.notifications",
         "workers.tasks.market_research",
+        "workers.tasks.competitor_refresh",
         "workers.tasks.scheduled_reports",
+        "workers.tasks.google_sheets",
+        "workers.tasks.maintenance",
+        "workers.tasks.strategic_recommendations",
     ],
 )
 
@@ -48,6 +52,21 @@ celery_app.conf.beat_schedule = {
         "task": "workers.tasks.forecasting.generate_all_forecasts",
         "schedule": crontab(hour=3, minute=0, day_of_week=0),
     },
+    # Enforce time-series retention weekly on Sunday at 4 AM
+    "weekly-data-retention": {
+        "task": "workers.tasks.maintenance.manage_data_retention",
+        "schedule": crontab(hour=4, minute=0, day_of_week=0),
+    },
+    # Ensure next monthly partitions exist daily at 03:30
+    "daily-partition-management": {
+        "task": "workers.tasks.maintenance.manage_partitions",
+        "schedule": crontab(hour=3, minute=30),
+    },
+    # Refresh stale tracked competitors daily at 5 AM UTC
+    "daily-competitor-refresh": {
+        "task": "workers.tasks.competitor_refresh.refresh_tracked_competitors",
+        "schedule": crontab(hour=5, minute=0),
+    },
     # Send daily digest at 8 AM
     "daily-digest": {
         "task": "workers.tasks.notifications.send_daily_digests",
@@ -62,6 +81,16 @@ celery_app.conf.beat_schedule = {
     "scheduled-report-scan": {
         "task": "workers.tasks.scheduled_reports.scan_scheduled_reports_due",
         "schedule": crontab(minute="*/5"),
+    },
+    # Poll Google Sheets syncs every 5 minutes
+    "google-sheets-sync-scan": {
+        "task": "workers.tasks.google_sheets.scan_google_sheets_syncs_due",
+        "schedule": crontab(minute="*/5"),
+    },
+    # Generate weekly strategic recommendations on Monday at 6 AM
+    "weekly-strategic-recommendations": {
+        "task": "workers.tasks.strategic_recommendations.generate_weekly_recommendations",
+        "schedule": crontab(hour=6, minute=0, day_of_week=1),
     },
 }
 

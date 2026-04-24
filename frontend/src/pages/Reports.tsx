@@ -7,7 +7,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { reportsApi } from '@/services/api'
+import { accountsApi, reportsApi } from '@/services/api'
 import { formatCurrency, formatDate, formatNumber } from '@/lib/utils'
 import {
   FilterBar,
@@ -20,7 +20,7 @@ import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
 import { ExportModal } from '@/components/ExportModal'
 import { ScheduledReportsPanel } from '@/components/ScheduledReportsPanel'
-import type { AdvertisingMetricsItem, InventoryReportItem, SalesAggregated } from '@/types'
+import type { AdvertisingMetricsItem, AmazonAccount, InventoryReportItem, SalesAggregated } from '@/types'
 
 type ReportTab = 'sales' | 'inventory' | 'advertising'
 
@@ -69,6 +69,12 @@ export default function Reports() {
     enabled: activeTab === 'inventory',
   })
 
+  const { data: inventoryAccounts = [], isLoading: inventoryAccountsLoading } = useQuery<AmazonAccount[]>({
+    queryKey: ['accounts', 'inventory'],
+    queryFn: () => accountsApi.list(),
+    enabled: activeTab === 'inventory',
+  })
+
   const { data: advertisingData = [], isLoading: advertisingLoading } = useQuery<AdvertisingMetricsItem[]>({
     queryKey: ['advertising', dateRange, accountIds],
     queryFn: () => reportsApi.getAdvertising({
@@ -96,6 +102,32 @@ export default function Reports() {
       : t('reports.dailySales')
 
   const salesCurrency = salesData?.[0]?.currency || 'EUR'
+  const scopedInventoryAccounts =
+    accountIds.length > 0
+      ? inventoryAccounts.filter((account) => accountIds.includes(account.id))
+      : inventoryAccounts
+  const sellerInventoryAccounts = scopedInventoryAccounts.filter((account) => account.account_type === 'seller')
+  const inventoryErrorAccounts = sellerInventoryAccounts.filter(
+    (account) =>
+      account.sync_error_message &&
+      account.sync_error_message.toLowerCase().includes('inventory'),
+  )
+  const inventoryEmptyMessage =
+    inventoryErrorAccounts.length > 0
+      ? t('reports.inventoryUnavailable')
+      : scopedInventoryAccounts.length > 0 && sellerInventoryAccounts.length === 0
+      ? t('reports.inventorySellerOnly')
+      : reportsLowStockOnly
+      ? t('reports.noLowStock')
+      : sellerInventoryAccounts.length > 0
+      ? t('reports.inventoryUnavailableGeneric')
+      : t('reports.noInventory')
+  const inventoryDetailMessage =
+    inventoryErrorAccounts.length > 0
+      ? inventoryErrorAccounts
+          .map((account) => `${account.account_name}: ${account.sync_error_message}`)
+          .join(' ')
+      : null
 
   return (
     <div className="space-y-6">
@@ -209,7 +241,7 @@ export default function Reports() {
               <CardDescription>{t('reports.inventoryDesc')}</CardDescription>
             </CardHeader>
             <CardContent>
-              {inventoryLoading ? (
+              {inventoryLoading || inventoryAccountsLoading ? (
                 <div className="flex items-center justify-center h-32">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 </div>
@@ -241,10 +273,11 @@ export default function Reports() {
                   </table>
                 </div>
               ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  {reportsLowStockOnly
-                    ? t('reports.noLowStock')
-                    : t('reports.noInventory')}
+                <div className="py-8 text-center text-muted-foreground space-y-2">
+                  <p>{inventoryEmptyMessage}</p>
+                  {inventoryDetailMessage && (
+                    <p className="text-sm text-destructive">{inventoryDetailMessage}</p>
+                  )}
                 </div>
               )}
             </CardContent>

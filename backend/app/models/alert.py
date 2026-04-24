@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, ForeignKey, DateTime, Text
+from sqlalchemy import String, Boolean, ForeignKey, DateTime, Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 
@@ -13,6 +13,9 @@ from app.db.base import Base
 class AlertRule(Base):
     """Alert rule configuration."""
     __tablename__ = "alert_rules"
+    __table_args__ = (
+        Index("ix_alert_rules_org_type_id", "organization_id", "alert_type", "id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -47,20 +50,37 @@ class AlertRule(Base):
 class Alert(Base):
     """Alert instance triggered by a rule."""
     __tablename__ = "alerts"
+    __table_args__ = (
+        Index("ix_alerts_rule_triggered_at", "rule_id", "triggered_at"),
+        Index(
+            "ix_alerts_rule_unread_triggered_at",
+            "rule_id",
+            "triggered_at",
+            postgresql_where=text("is_read = false"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     rule_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("alert_rules.id", ondelete="CASCADE"), index=True
     )
     account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("amazon_accounts.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), ForeignKey("amazon_accounts.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    asin: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    asin: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    event_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="generic", index=True)
+    dedup_key: Mapped[str] = mapped_column(String(255), nullable=False, default="legacy", index=True)
     message: Mapped[str] = mapped_column(Text, nullable=False)
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     severity: Mapped[str] = mapped_column(String(20), default="warning")
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    notification_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    last_notification_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    notification_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    notification_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
     rule: Mapped["AlertRule"] = relationship("AlertRule", back_populates="alerts")

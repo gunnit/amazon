@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import {
   confirm,
   intro,
   isCancel,
+  multiselect,
   note,
   outro,
   password,
@@ -15,11 +19,16 @@ import { startMcpServer } from "@inthezon/mcp-server";
 import {
   BackendClient,
   clearLocalSession,
+  ensureExportsDir,
   getConfigPath,
   HttpError,
   loadLocalState,
   normalizeBackendUrl,
+  resolveExportsDir,
   saveLocalState,
+  setExportsDir,
+  setSelectedAccounts,
+  type BinaryDownload,
   type CreateAmazonAccountInput,
 } from "@inthezon/shared-sdk";
 import pc from "picocolors";
@@ -65,6 +74,9 @@ Usage:
   inthezon setup-amazon
   inthezon connect-account
   inthezon accounts
+  inthezon select-accounts
+  inthezon export
+  inthezon exports-dir [path]
   inthezon doctor
   inthezon mcp start
   inthezon mcp config
@@ -502,6 +514,230 @@ async function commandDoctor(): Promise<void> {
   }
 }
 
+async function commandSelectAccounts(): Promise<void> {
+  intro(pc.bold("Select default accounts"));
+
+  try {
+    const { client } = await resolveClient(true);
+    const accounts = await client.listAccounts();
+
+    if (accounts.length === 0) {
+      outro("No accounts connected yet. Run `inthezon connect-account` first.");
+      return;
+    }
+
+    const state = loadLocalState();
+    const initial = (state.selectedAccountIds || []).filter((id) =>
+      accounts.some((a) => a.id === id),
+    );
+
+    const choice = await multiselect({
+      message: "Pick the accounts MCP tools should default to (none = all)",
+      required: false,
+      initialValues: initial,
+      options: accounts.map((account) => ({
+        value: account.id,
+        label: `${account.account_name} (${account.marketplace_country}, ${account.account_type})`,
+        hint: account.id,
+      })),
+    });
+
+    if (isCancel(choice)) {
+      process.exit(1);
+    }
+
+    const ids = (choice as string[]) || [];
+    setSelectedAccounts(ids);
+    note(
+      ids.length === 0
+        ? "Cleared. MCP tools will see every account by default."
+        : `${ids.length} account(s) saved as default.`,
+      "Selection saved",
+    );
+    outro("Done.");
+  } catch (error) {
+    handleError(error);
+  }
+}
+
+async function commandExportsDir(targetPath?: string): Promise<void> {
+  intro(pc.bold("Exports directory"));
+
+  let chosen = targetPath;
+  if (!chosen) {
+    const current = resolveExportsDir();
+    const answer = await text({
+      message: "Where should generated exports be saved?",
+      initialValue: current,
+      placeholder: current,
+    });
+    if (isCancel(answer)) {
+      process.exit(1);
+    }
+    chosen = String(answer).trim();
+  }
+
+  setExportsDir(chosen || undefined);
+  const final = ensureExportsDir();
+  note(final, "Exports dir");
+  outro("Done.");
+}
+
+interface ExportFlowResult {
+  download: BinaryDownload;
+  fallbackName: string;
+}
+
+async function runExportFlow(client: BackendClient): Promise<ExportFlowResult | undefined> {
+  const kind = await select({
+    message: "Which export?",
+    options: [
+      { value: "csv", label: "CSV (single report type, ZIP)" },
+      { value: "bundle", label: "CSV bundle (multiple report types, ZIP)" },
+      { value: "excel-bundle", label: "Excel bundle (XLSX)" },
+      { value: "excel", label: "Excel (sales/advertising, XLSX)" },
+      { value: "powerpoint", label: "PowerPoint deck (PPTX)" },
+      { value: "forecast-excel", label: "Forecast Excel (XLSX)" },
+      { value: "market-research-pdf", label: "Market research PDF" },
+    ],
+  });
+
+  if (isCancel(kind)) {
+    return undefined;
+  }
+
+  const state = loadLocalState();
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  if (kind === "csv" || kind === "bundle" || kind === "excel-bundle" || kind === "excel" || kind === "powerpoint") {
+    const startDate = await promptText("Start date (YYYY-MM-DD)", monthAgo);
+    const endDate = await promptText("End date (YYYY-MM-DD)", today);
+    const accountIds = state.selectedAccountIds && state.selectedAccountIds.length > 0
+      ? state.selectedAccountIds
+      : undefined;
+
+    if (kind === "csv") {
+      const reportType = await select({
+        message: "Report type",
+        options: [
+          { value: "sales", label: "Sales" },
+          { value: "inventory", label: "Inventory" },
+          { value: "advertising", label: "Advertising" },
+        ],
+      });
+      if (isCancel(reportType)) return undefined;
+      const download = await client.exportCsv({
+        reportType: reportType as "sales" | "inventory" | "advertising",
+        startDate,
+        endDate,
+        accountIds,
+      });
+      return { download, fallbackName: `csv_${reportType}.zip` };
+    }
+
+    if (kind === "bundle") {
+      const reportTypes = await multiselect({
+        message: "Report types",
+        required: true,
+        initialValues: ["sales", "advertising"],
+        options: [
+          { value: "sales", label: "Sales" },
+          { value: "inventory", label: "Inventory" },
+          { value: "advertising", label: "Advertising" },
+        ],
+      });
+      if (isCancel(reportTypes)) return undefined;
+      const download = await client.exportBundle({
+        reportTypes: reportTypes as Array<"sales" | "inventory" | "advertising">,
+        startDate,
+        endDate,
+        accountIds,
+      });
+      return { download, fallbackName: "bundle.zip" };
+    }
+
+    if (kind === "excel-bundle") {
+      const reportTypes = await multiselect({
+        message: "Report types",
+        required: true,
+        initialValues: ["sales", "advertising"],
+        options: [
+          { value: "sales", label: "Sales" },
+          { value: "inventory", label: "Inventory" },
+          { value: "advertising", label: "Advertising" },
+        ],
+      });
+      if (isCancel(reportTypes)) return undefined;
+      const template = await select({
+        message: "Template",
+        options: [
+          { value: "clean", label: "Clean" },
+          { value: "corporate", label: "Corporate" },
+          { value: "executive", label: "Executive" },
+        ],
+      });
+      if (isCancel(template)) return undefined;
+      const download = await client.exportExcelBundle({
+        reportTypes: reportTypes as Array<"sales" | "inventory" | "advertising">,
+        startDate,
+        endDate,
+        accountIds,
+        template: template as "clean" | "corporate" | "executive",
+      });
+      return { download, fallbackName: "excel-bundle.xlsx" };
+    }
+
+    if (kind === "excel") {
+      const download = await client.exportExcel({ startDate, endDate, accountIds });
+      return { download, fallbackName: "report.xlsx" };
+    }
+
+    if (kind === "powerpoint") {
+      const download = await client.exportPowerPoint({ startDate, endDate, accountIds });
+      return { download, fallbackName: "deck.pptx" };
+    }
+  }
+
+  if (kind === "forecast-excel") {
+    const forecastId = await promptText("Forecast UUID");
+    const download = await client.exportForecastExcel({ forecastId });
+    return { download, fallbackName: "forecast.xlsx" };
+  }
+
+  if (kind === "market-research-pdf") {
+    const reportId = await promptText("Market research UUID");
+    const download = await client.exportMarketResearchPdf({ reportId });
+    return { download, fallbackName: "market-research.pdf" };
+  }
+
+  return undefined;
+}
+
+async function commandExport(): Promise<void> {
+  intro(pc.bold("Generate export"));
+
+  try {
+    const { client } = await resolveClient(true);
+    const result = await runExportFlow(client);
+    if (!result) {
+      outro("Cancelled.");
+      return;
+    }
+
+    const dir = ensureExportsDir();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const baseName = result.download.filename || result.fallbackName;
+    const fullPath = join(dir, `${stamp}_${baseName}`);
+    writeFileSync(fullPath, result.download.bytes);
+
+    note(`Saved ${result.download.bytes.length} bytes to:\n${fullPath}`, "Export ready");
+    outro("Done.");
+  } catch (error) {
+    handleError(error);
+  }
+}
+
 async function commandMcpConfig(): Promise<void> {
   intro(pc.bold("MCP config"));
   const snippet = {
@@ -541,6 +777,9 @@ async function launchMenu(): Promise<void> {
         { value: "setup-amazon", label: "Setup Amazon", hint: "Save SP-API and AWS credentials" },
         { value: "connect-account", label: "Connect Account", hint: "Attach a seller/vendor account" },
         { value: "accounts", label: "Accounts", hint: "List connected Amazon accounts" },
+        { value: "select-accounts", label: "Select Accounts", hint: "Pick default accounts for MCP tools" },
+        { value: "export", label: "Export", hint: "Generate a report and save it locally" },
+        { value: "exports-dir", label: "Exports Dir", hint: "Configure where exports are saved" },
         { value: "status", label: "Status", hint: "Check session and backend health" },
         { value: "mcp-config", label: "MCP Config", hint: "Show config for Codex and Claude Code" },
         { value: "doctor", label: "Doctor", hint: "Run local diagnostics" },
@@ -564,6 +803,12 @@ async function launchMenu(): Promise<void> {
       await commandConnectAccount();
     } else if (choice === "accounts") {
       await commandAccounts();
+    } else if (choice === "select-accounts") {
+      await commandSelectAccounts();
+    } else if (choice === "export") {
+      await commandExport();
+    } else if (choice === "exports-dir") {
+      await commandExportsDir();
     } else if (choice === "status") {
       await commandStatus();
     } else if (choice === "mcp-config") {
@@ -636,6 +881,21 @@ async function main(): Promise<void> {
 
   if (command === "accounts") {
     await commandAccounts();
+    return;
+  }
+
+  if (command === "select-accounts") {
+    await commandSelectAccounts();
+    return;
+  }
+
+  if (command === "export") {
+    await commandExport();
+    return;
+  }
+
+  if (command === "exports-dir") {
+    await commandExportsDir(subcommand);
     return;
   }
 

@@ -10,28 +10,42 @@ from workers.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-def run_async(coro):
-    """Run async code inside sync Celery tasks."""
+def run_async(coro_factory):
+    """Run async code inside sync Celery tasks.
+
+    Installs a fresh engine/session factory so asyncpg futures created
+    inside the coroutine are bound to this loop, then disposes the
+    engine afterwards to prevent "Future attached to a different loop"
+    errors on later invocations within the same worker process.
+    """
+    from app.db.session import reset_engine_for_worker
+
+    reset_engine_for_worker()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(coro)
+        return loop.run_until_complete(coro_factory())
     finally:
+        try:
+            from app.db.session import engine
+            loop.run_until_complete(engine.dispose())
+        except Exception:
+            pass
         loop.close()
 
 
 @celery_app.task
 def scan_scheduled_reports_due():
     """Find due schedules and enqueue report generation."""
-    from app.db.session import AsyncSessionLocal
     from app.models.scheduled_report import ScheduledReport
     from app.services.scheduled_report_service import ScheduledReportService, enqueue_scheduled_run_processing
     from datetime import datetime
 
     async def _scan():
+        from app.db import session as db_session
         now = datetime.now(timezone.utc)
         queued = 0
-        async with AsyncSessionLocal() as db:
+        async with db_session.AsyncSessionLocal() as db:
             result = await db.execute(
                 select(ScheduledReport).where(
                     ScheduledReport.is_enabled == True,
@@ -48,7 +62,7 @@ def scan_scheduled_reports_due():
             await db.commit()
         return {"queued": queued}
 
-    return run_async(_scan())
+    return run_async(_scan)
 
 
 @celery_app.task(bind=True, max_retries=2)

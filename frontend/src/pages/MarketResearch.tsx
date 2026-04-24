@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -24,7 +25,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
 import { marketResearchApi, accountsApi, catalogApi } from '@/services/api'
-import { formatDate } from '@/lib/utils'
+import { cn, formatDate, formatNumber, formatPercent } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 import AsinInput from '@/components/market-research/AsinInput'
 import CompetitorTable from '@/components/market-research/CompetitorTable'
@@ -44,6 +45,8 @@ import type {
   Product,
   MarketResearchReport,
   MarketResearchListItem,
+  ComparisonMatrixResponse,
+  ComparisonDimension,
 } from '@/types'
 
 const statusVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -63,6 +66,79 @@ function reportTypeLabelKey(report: { title?: string | null } | null | undefined
     : 'marketResearch.productAnalysisTab'
 }
 
+type ComparisonResult = 'better' | 'worse' | 'neutral'
+
+function isLowerBetterDimension(name: ComparisonDimension['name']): boolean {
+  return name === 'price' || name === 'bsr'
+}
+
+function dimensionLabel(name: ComparisonDimension['name'], t: (key: string) => string): string {
+  switch (name) {
+    case 'price':
+      return t('marketResearch.price')
+    case 'bsr':
+      return t('marketResearch.bsr')
+    case 'reviews':
+      return t('marketResearch.reviews')
+    case 'rating':
+      return t('marketResearch.rating')
+  }
+}
+
+function formatDimensionValue(
+  name: ComparisonDimension['name'],
+  value: number | null,
+  t: (key: string) => string,
+): string {
+  if (value == null) return t('marketResearch.noData')
+
+  switch (name) {
+    case 'price':
+      return `$${value.toFixed(2)}`
+    case 'rating':
+      return value.toFixed(1)
+    case 'bsr':
+    case 'reviews':
+      return formatNumber(Math.round(value))
+  }
+}
+
+function getDimensionResult(dimension: ComparisonDimension): ComparisonResult {
+  if (dimension.client_value == null || dimension.competitor_avg == null) return 'neutral'
+  if (dimension.client_value === dimension.competitor_avg) return 'neutral'
+
+  const clientIsBetter = isLowerBetterDimension(dimension.name)
+    ? dimension.client_value < dimension.competitor_avg
+    : dimension.client_value > dimension.competitor_avg
+
+  return clientIsBetter ? 'better' : 'worse'
+}
+
+function formatDimensionRank(
+  dimension: ComparisonDimension,
+  t: (key: string) => string,
+): string {
+  if (dimension.client_rank == null || dimension.total_competitors === 0) {
+    return t('marketResearch.noData')
+  }
+  return `${dimension.client_rank}/${dimension.total_competitors}`
+}
+
+function opportunityMessage(
+  dimension: ComparisonDimension,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): string {
+  const gap = Math.abs(dimension.gap_percent ?? 0).toFixed(1)
+  const key = isLowerBetterDimension(dimension.name)
+    ? 'marketResearch.opportunityAboveAvg'
+    : 'marketResearch.opportunityBelowAvg'
+
+  return t(key, {
+    dimension: dimensionLabel(dimension.name, t),
+    gap,
+  })
+}
+
 export default function MarketResearch() {
   // ── Shared state ──
   const [selectedAccount, setSelectedAccount] = useState('')
@@ -80,6 +156,7 @@ export default function MarketResearch() {
   const [selectedProductAsin, setSelectedProductAsin] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [extraAsins, setExtraAsins] = useState<string[]>([])
+  const [selectedCompetitorAsins, setSelectedCompetitorAsins] = useState<string[]>([])
   const [historicalMarketProduct, setHistoricalMarketProduct] = useState<MarketSearchResult | null>(null)
   const [historicalMarketDialogOpen, setHistoricalMarketDialogOpen] = useState(false)
 
@@ -126,6 +203,18 @@ export default function MarketResearch() {
     },
   })
   const selectedReport = selectedReportQuery.data
+
+  const comparisonMatrixQuery = useQuery<ComparisonMatrixResponse>({
+    queryKey: ['market-research', selectedReportId, 'comparison-matrix'],
+    queryFn: () => marketResearchApi.getComparisonMatrix(selectedReportId!),
+    enabled:
+      !!selectedReportId &&
+      selectedReport?.id === selectedReportId &&
+      selectedReport?.status === 'completed' &&
+      !!selectedReport?.product_snapshot &&
+      !!selectedReport?.competitor_data?.length,
+  })
+  const comparisonMatrix = comparisonMatrixQuery.data
 
   // ── Mutations ──
 
@@ -243,6 +332,12 @@ export default function MarketResearch() {
   const historicalAvgBsr = historicalBsrs.length > 0
     ? historicalBsrs.reduce((sum, bsr) => sum + bsr, 0) / historicalBsrs.length
     : null
+  const selectedCompetitors = selectedReport?.competitor_data?.filter((competitor) =>
+    selectedCompetitorAsins.includes(competitor.asin)
+  ) || []
+  const opportunityDimensions = comparisonMatrix?.dimensions.filter((dimension) =>
+    comparisonMatrix.opportunities.includes(dimension.name)
+  ) || []
 
   // When a report finishes (completed/failed), refresh the list so the badge updates
   useEffect(() => {
@@ -255,6 +350,37 @@ export default function MarketResearch() {
     if (!selectedReportId) return
     scrollToReport()
   }, [selectedReportId])
+
+  useEffect(() => {
+    if (!selectedReport?.id) {
+      setSelectedCompetitorAsins([])
+      return
+    }
+
+    const availableAsins = Array.from(
+      new Set(
+        (selectedReport.competitor_data || [])
+          .map((competitor) => competitor.asin)
+          .filter((asin): asin is string => Boolean(asin)),
+      ),
+    )
+
+    setSelectedCompetitorAsins((current) => {
+      if (current.length === 0) return availableAsins
+
+      const nextSelection = current.filter((asin) => availableAsins.includes(asin))
+      return nextSelection.length > 0 ? nextSelection : availableAsins
+    })
+  }, [selectedReport?.id, selectedReport?.competitor_data])
+
+  const toggleCompetitorSelection = (asin: string, checked: boolean | 'indeterminate') => {
+    setSelectedCompetitorAsins((current) => {
+      if (checked === true) {
+        return current.includes(asin) ? current : [...current, asin]
+      }
+      return current.filter((currentAsin) => currentAsin !== asin)
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -591,13 +717,78 @@ export default function MarketResearch() {
                   <Card>
                     <CardHeader>
                       <CardTitle>{t('marketResearch.radarTitle')}</CardTitle>
+                      <CardDescription>{t('marketResearch.radarDesc')}</CardDescription>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className="space-y-4">
+                      <div className="rounded-lg border p-4 space-y-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium">
+                              {t('marketResearch.selectedCompetitors')}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {t('marketResearch.selectedCompetitorsHint', {
+                                selected: selectedCompetitors.length,
+                                total: selectedReport.competitor_data.length,
+                              })}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedCompetitorAsins(
+                                selectedReport.competitor_data?.map((competitor) => competitor.asin) || [],
+                              )
+                            }}
+                          >
+                            {t('marketResearch.selectAllCompetitors')}
+                          </Button>
+                        </div>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          {selectedReport.competitor_data.map((competitor) => (
+                            <label
+                              key={competitor.asin}
+                              className={cn(
+                                'flex items-start gap-3 rounded-lg border p-3 transition-colors cursor-pointer',
+                                selectedCompetitorAsins.includes(competitor.asin)
+                                  ? 'border-primary/40 bg-primary/5'
+                                  : 'hover:bg-muted/50',
+                              )}
+                            >
+                              <Checkbox
+                                checked={selectedCompetitorAsins.includes(competitor.asin)}
+                                onCheckedChange={(checked) =>
+                                  toggleCompetitorSelection(competitor.asin, checked)
+                                }
+                                className="mt-0.5"
+                              />
+                              <div className="min-w-0">
+                                <p className="font-mono text-xs">{competitor.asin}</p>
+                                <p
+                                  className="text-sm text-muted-foreground truncate"
+                                  title={competitor.title || competitor.asin}
+                                >
+                                  {competitor.title || competitor.asin}
+                                </p>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
                       <div ref={radarChartRef}>
-                        <RadarComparison
-                          product={selectedReport.product_snapshot}
-                          competitors={selectedReport.competitor_data}
-                        />
+                        {selectedCompetitors.length > 0 ? (
+                          <RadarComparison
+                            product={selectedReport.product_snapshot}
+                            competitors={selectedCompetitors}
+                          />
+                        ) : (
+                          <div className="flex min-h-[300px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+                            {t('marketResearch.noCompetitorsSelected')}
+                          </div>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
@@ -610,6 +801,182 @@ export default function MarketResearch() {
                   />
                 )}
               </div>
+
+              {selectedReport.product_snapshot && selectedReport.competitor_data?.length ? (
+                comparisonMatrixQuery.isLoading ? (
+                  <Card>
+                    <CardContent className="py-8 flex items-center gap-3">
+                      <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">
+                          {t('marketResearch.detailedComparisonTitle')}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {t('marketResearch.comparisonMatrixLoading')}
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : comparisonMatrix ? (
+                  <Card>
+                    <CardHeader className="gap-4 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <CardTitle>{t('marketResearch.detailedComparisonTitle')}</CardTitle>
+                        <CardDescription>{t('marketResearch.detailedComparisonDesc')}</CardDescription>
+                      </div>
+                      <div className="rounded-lg border px-4 py-3 md:w-[240px]">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            {t('marketResearch.overallScore')}
+                          </p>
+                          <Badge variant="secondary">
+                            {comparisonMatrix.overall_score.toFixed(1)}/100
+                          </Badge>
+                        </div>
+                        <Progress value={comparisonMatrix.overall_score} className="mt-3 h-2" />
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {t('marketResearch.overallScoreHelper')}
+                        </p>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-5">
+                      <div className="overflow-x-auto rounded-lg border">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b bg-muted/50">
+                              <th className="px-3 py-2 text-left font-medium">
+                                {t('marketResearch.dimension')}
+                              </th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                {t('marketResearch.yourProduct')}
+                              </th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                {t('marketResearch.competitorAvg')}
+                              </th>
+                              <th className="px-3 py-2 text-left font-medium">
+                                {t('marketResearch.bestCompetitor')}
+                              </th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                {t('marketResearch.yourRank')}
+                              </th>
+                              <th className="px-3 py-2 text-right font-medium">
+                                {t('marketResearch.gap')}
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {comparisonMatrix.dimensions.map((dimension) => {
+                              const dimensionResult = getDimensionResult(dimension)
+
+                              return (
+                                <tr
+                                  key={dimension.name}
+                                  className={cn(
+                                    'border-b last:border-0',
+                                    dimensionResult === 'better' && 'bg-emerald-50/60',
+                                    dimensionResult === 'worse' && 'bg-red-50/60',
+                                  )}
+                                >
+                                  <td className="px-3 py-3 font-medium">
+                                    {dimensionLabel(dimension.name, t)}
+                                  </td>
+                                  <td className="px-3 py-3 text-right font-mono text-xs">
+                                    {formatDimensionValue(dimension.name, dimension.client_value, t)}
+                                  </td>
+                                  <td className="px-3 py-3 text-right font-mono text-xs">
+                                    {formatDimensionValue(dimension.name, dimension.competitor_avg, t)}
+                                  </td>
+                                  <td className="px-3 py-3">
+                                    {dimension.competitor_best_name ? (
+                                      <div>
+                                        <p className="text-sm">{dimension.competitor_best_name}</p>
+                                        <p className="text-xs text-muted-foreground font-mono">
+                                          {formatDimensionValue(dimension.name, dimension.competitor_best, t)}
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      <span className="text-muted-foreground">
+                                        {t('marketResearch.noData')}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-3 text-right font-mono text-xs">
+                                    {formatDimensionRank(dimension, t)}
+                                  </td>
+                                  <td
+                                    className={cn(
+                                      'px-3 py-3 text-right font-mono text-xs',
+                                      dimensionResult === 'better' && 'text-emerald-700',
+                                      dimensionResult === 'worse' && 'text-red-700',
+                                    )}
+                                  >
+                                    {dimension.gap_percent == null
+                                      ? t('marketResearch.noData')
+                                      : formatPercent(dimension.gap_percent)}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-sm font-medium">
+                            {t('marketResearch.opportunitiesTitle')}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {t('marketResearch.opportunitiesDesc')}
+                          </p>
+                        </div>
+
+                        {opportunityDimensions.length > 0 ? (
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {opportunityDimensions.map((dimension) => (
+                              <div
+                                key={dimension.name}
+                                className="rounded-lg border border-red-200 bg-red-50/60 p-4"
+                              >
+                                <div className="flex items-start gap-3">
+                                  <AlertCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                                  <div className="space-y-1">
+                                    <p className="text-sm font-medium text-red-900">
+                                      {dimensionLabel(dimension.name, t)}
+                                    </p>
+                                    <p className="text-sm text-red-800">
+                                      {opportunityMessage(dimension, t)}
+                                    </p>
+                                    {dimension.competitor_best_name ? (
+                                      <p className="text-xs text-red-700">
+                                        {t('marketResearch.bestCompetitorLabel', {
+                                          competitor: dimension.competitor_best_name,
+                                        })}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-sm text-emerald-800">
+                            {t('marketResearch.noOpportunities')}
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : comparisonMatrixQuery.isError ? (
+                  <Card>
+                    <CardContent className="py-6">
+                      <p className="text-sm text-muted-foreground">
+                        {t('marketResearch.comparisonMatrixFailed')}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : null
+              ) : null}
 
               <div className="grid gap-4 md:grid-cols-2">
                 {/* Summary card */}

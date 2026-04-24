@@ -6,6 +6,9 @@ import {
   BarChart3,
   TrendingUp,
   Search,
+  Bell,
+  Package,
+  Lightbulb,
   Settings,
   LogOut,
   Menu,
@@ -19,6 +22,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useAuthStore } from '@/store/authStore'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { NotificationBell } from '@/components/NotificationBell'
 import { useTranslation } from '@/i18n'
 
 const navItems = [
@@ -27,6 +31,9 @@ const navItems = [
   { key: 'nav.analytics', href: '/analytics', icon: BarChart3 },
   { key: 'nav.forecasts', href: '/forecasts', icon: TrendingUp },
   { key: 'nav.marketResearch', href: '/market-research', icon: Search },
+  { key: 'nav.catalog', href: '/catalog', icon: Package },
+  { key: 'nav.recommendations', href: '/recommendations', icon: Lightbulb },
+  { key: 'nav.alerts', href: '/alerts', icon: Bell },
   { key: 'nav.settings', href: '/settings', icon: Settings },
 ]
 
@@ -189,6 +196,7 @@ export default function Layout() {
           </Button>
           <div className="flex-1" />
           <div className="flex items-center gap-4">
+            <NotificationBell />
             <ThemeToggle />
             <Popover>
               <PopoverTrigger asChild>

@@ -65,10 +65,11 @@ class NotificationService:
     ) -> Dict[str, bool]:
         """Send alert through specified channels."""
         results = {}
+        alert_label = details.get("incident_label") or details.get("incident_type") or alert_type
 
         if "email" in channels and emails:
-            subject = f"Inthezon Alert: {alert_type}"
-            html_content = self._format_alert_email(alert_type, message, details)
+            subject = f"Inthezon Alert: {alert_label}"
+            html_content = self._format_alert_email(alert_label, message, details)
             results["email"] = await self.send_email(emails, subject, html_content)
 
         if "webhook" in channels and webhook_url:
@@ -87,10 +88,7 @@ class NotificationService:
         details: Dict[str, Any],
     ) -> str:
         """Format alert as HTML email."""
-        details_html = "".join(
-            f"<li><strong>{k}:</strong> {v}</li>"
-            for k, v in details.items()
-        )
+        details_html = self._format_detail_items(details)
 
         return f"""
         <html>
@@ -107,6 +105,24 @@ class NotificationService:
         </body>
         </html>
         """
+
+    def _format_detail_items(self, value: Any) -> str:
+        """Render nested detail data into a small HTML list."""
+        if isinstance(value, dict):
+            return "".join(
+                f"<li><strong>{k.replace('_', ' ').title()}:</strong> {self._format_detail_value(v)}</li>"
+                for k, v in value.items()
+                if v not in (None, "", [])
+            )
+        return self._format_detail_value(value)
+
+    def _format_detail_value(self, value: Any) -> str:
+        if isinstance(value, dict):
+            return f"<ul>{self._format_detail_items(value)}</ul>"
+        if isinstance(value, list):
+            items = "".join(f"<li>{self._format_detail_value(item)}</li>" for item in value)
+            return f"<ul>{items}</ul>"
+        return str(value)
 
     async def _send_webhook(
         self,

@@ -242,7 +242,7 @@ def build_forecast_workbook_bytes(
     forecast_type = forecast.forecast_type or "sales"
     model_used = forecast.model_used or "prophet"
     horizon = forecast.forecast_horizon_days or 30
-    ci = float(forecast.confidence_interval or 0.95)
+    confidence_level = (forecast.confidence_level or "n/a").replace("_", " ").title()
     mape = float(forecast.mape) if forecast.mape is not None else None
     rmse = float(forecast.rmse) if forecast.rmse is not None else None
 
@@ -281,7 +281,7 @@ def build_forecast_workbook_bytes(
             (t["generated_at"], generated_str),
             (t["forecast_model"], _label(t["model_labels"], model_used)),
             (t["forecast_horizon"], f"{horizon} {t['days_suffix']}"),
-            (t["confidence_level"], f"{int(ci * 100)}%"),
+            (t["confidence_level"], confidence_level),
             (t["currency"], "EUR"),
         ],
     )
@@ -368,10 +368,12 @@ def _build_ai_payload(context: ForecastExportContext) -> Dict[str, Any]:
         "model_used": forecast.model_used or "prophet",
         "horizon_days": forecast.forecast_horizon_days or 30,
         "confidence_interval": float(forecast.confidence_interval or 0.95),
+        "confidence_level": forecast.confidence_level,
         "generated_at": forecast.generated_at.isoformat() if forecast.generated_at else None,
         "metrics": _build_metrics(forecast),
         "historical_data": historical,
         "predictions": predictions,
+        "data_quality_notes": forecast.data_quality_notes or [],
     }
 
 

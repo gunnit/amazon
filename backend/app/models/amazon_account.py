@@ -40,7 +40,8 @@ class AmazonAccount(Base):
 
     # SP-API Credentials (encrypted)
     sp_api_refresh_token_encrypted: Mapped[str] = mapped_column(Text, nullable=True)
-    ads_api_refresh_token_encrypted: Mapped[str] = mapped_column(Text, nullable=True)
+    advertising_profile_id: Mapped[str] = mapped_column(String(50), nullable=True)
+    advertising_refresh_token_encrypted: Mapped[str] = mapped_column(Text, nullable=True)
 
     # Login credentials for web scraping (encrypted)
     login_email_encrypted: Mapped[str] = mapped_column(Text, nullable=True)
@@ -51,6 +52,13 @@ class AmazonAccount(Base):
     last_sync_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.PENDING)
     sync_error_message: Mapped[str] = mapped_column(Text, nullable=True)
+    last_sync_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_succeeded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    sync_error_code: Mapped[str] = mapped_column(String(100), nullable=True)
+    sync_error_kind: Mapped[str] = mapped_column(String(20), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -65,6 +73,12 @@ class AmazonAccount(Base):
     )
     advertising_campaigns: Mapped[list["AdvertisingCampaign"]] = relationship(
         "AdvertisingCampaign", back_populates="account", cascade="all, delete-orphan"
+    )
+    orders: Mapped[list["Order"]] = relationship(
+        "Order", back_populates="account", cascade="all, delete-orphan"
+    )
+    returns_data: Mapped[list["ReturnData"]] = relationship(
+        "ReturnData", back_populates="account", cascade="all, delete-orphan"
     )
     products: Mapped[list["Product"]] = relationship(
         "Product", back_populates="account", cascade="all, delete-orphan"
@@ -82,6 +96,8 @@ from app.models.user import Organization
 from app.models.sales_data import SalesData
 from app.models.inventory import InventoryData
 from app.models.advertising import AdvertisingCampaign
+from app.models.order import Order
+from app.models.returns_data import ReturnData
 from app.models.product import Product
 from app.models.forecast import Forecast
 from app.models.sync_job import SyncJob

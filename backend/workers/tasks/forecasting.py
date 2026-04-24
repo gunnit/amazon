@@ -8,24 +8,37 @@ from workers.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-def run_async(coro):
-    """Run async function in sync context."""
+def run_async(coro_factory):
+    """Run async function in sync context.
+
+    Installs a fresh engine/session factory before the loop starts so
+    asyncpg futures are bound to this loop, and disposes afterwards to
+    prevent cross-loop leakage within the Celery worker process.
+    """
+    from app.db.session import reset_engine_for_worker
+
+    reset_engine_for_worker()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(coro)
+        return loop.run_until_complete(coro_factory())
     finally:
+        try:
+            from app.db.session import engine
+            loop.run_until_complete(engine.dispose())
+        except Exception:
+            pass
         loop.close()
 
 
 @celery_app.task
 def generate_forecast(account_id: str, asin: str = None, horizon_days: int = 30):
     """Generate forecast for an account/product."""
-    from app.db.session import AsyncSessionLocal
     from app.services.forecast_service import ForecastService
 
     async def _generate():
-        async with AsyncSessionLocal() as db:
+        from app.db import session as db_session
+        async with db_session.AsyncSessionLocal() as db:
             service = ForecastService(db)
             forecast = await service.generate_forecast(
                 UUID(account_id),
@@ -37,7 +50,7 @@ def generate_forecast(account_id: str, asin: str = None, horizon_days: int = 30)
 
     try:
         logger.info(f"Generating forecast for account {account_id}, asin={asin}")
-        result = run_async(_generate())
+        result = run_async(_generate)
         logger.info(f"Forecast generated: {result}")
         return result
 
@@ -49,19 +62,19 @@ def generate_forecast(account_id: str, asin: str = None, horizon_days: int = 30)
 @celery_app.task
 def generate_all_forecasts():
     """Generate forecasts for all active accounts."""
-    from app.db.session import AsyncSessionLocal
     from app.models.amazon_account import AmazonAccount
     from sqlalchemy import select
 
     async def _get_account_ids():
-        async with AsyncSessionLocal() as db:
+        from app.db import session as db_session
+        async with db_session.AsyncSessionLocal() as db:
             result = await db.execute(
                 select(AmazonAccount.id)
                 .where(AmazonAccount.is_active == True)
             )
             return [str(row[0]) for row in result.all()]
 
-    account_ids = run_async(_get_account_ids())
+    account_ids = run_async(_get_account_ids)
     logger.info(f"Scheduling forecast generation for {len(account_ids)} accounts")
 
     for account_id in account_ids:
@@ -73,13 +86,13 @@ def generate_all_forecasts():
 @celery_app.task
 def calculate_trend_scores(account_id: str):
     """Calculate trend scores for all products in an account."""
-    from app.db.session import AsyncSessionLocal
     from app.services.forecast_service import ForecastService
     from app.models.product import Product
     from sqlalchemy import select
 
     async def _calculate():
-        async with AsyncSessionLocal() as db:
+        from app.db import session as db_session
+        async with db_session.AsyncSessionLocal() as db:
             # Get all products for account
             result = await db.execute(
                 select(Product.asin)
@@ -102,4 +115,4 @@ def calculate_trend_scores(account_id: str):
 
             return {"trends": trends}
 
-    return run_async(_calculate())
+    return run_async(_calculate)

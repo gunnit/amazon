@@ -12,10 +12,22 @@ import {
   ComposedChart,
   ReferenceLine,
 } from 'recharts'
-import { TrendingUp, RefreshCw, Loader2, Calendar, Target, Download } from 'lucide-react'
+import {
+  TrendingUp,
+  RefreshCw,
+  Loader2,
+  Calendar,
+  Target,
+  Download,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Info,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -33,12 +45,19 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Progress } from '@/components/ui/progress'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
 import { forecastsApi, accountsApi, exportsApi } from '@/services/api'
 import { formatCurrency, formatDate, downloadBlob } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 import { useLanguageStore } from '@/store/languageStore'
-import type { Forecast, AmazonAccount, ForecastExportJob, ForecastProductOption } from '@/types'
+import type {
+  Forecast,
+  ForecastConfidenceLevel,
+  AmazonAccount,
+  ForecastExportJob,
+  ForecastProductOption,
+} from '@/types'
 
 const ALL_ASINS_VALUE = '__all_asins__'
 
@@ -77,6 +96,31 @@ const TEMPLATE_CONFIGS: {
     accentColor: '#F39C12',
   },
 ]
+
+const DATA_QUALITY_NOTE_KEYS: Record<string, string> = {
+  'Less than 28 days of data': 'forecasts.note.lessThan28Days',
+  'Less than 90 days of data': 'forecasts.note.lessThan90Days',
+  'High variance detected': 'forecasts.note.highVariance',
+  'Using simplified model due to limited history': 'forecasts.note.simpleModel',
+  'Historical validation error is high': 'forecasts.note.highValidationError',
+}
+
+const CONFIDENCE_BADGE_VARIANTS: Record<ForecastConfidenceLevel, 'success' | 'warning' | 'destructive'> = {
+  high: 'success',
+  medium: 'warning',
+  low: 'destructive',
+}
+
+function getForecastConfidenceLevel(forecast?: Forecast | null): ForecastConfidenceLevel | null {
+  if (!forecast) return null
+  if (forecast.confidence_level === 'high' || forecast.confidence_level === 'medium' || forecast.confidence_level === 'low') {
+    return forecast.confidence_level
+  }
+  if (forecast.mape == null) return null
+  if (forecast.mape < 15) return 'high'
+  if (forecast.mape < 30) return 'medium'
+  return 'low'
+}
 
 function TemplatePreview({ config }: { config: (typeof TEMPLATE_CONFIGS)[number] }) {
   const isLight = (hex: string) => {
@@ -399,6 +443,8 @@ export default function Forecasts() {
   const { t } = useTranslation()
   const { language: appLang } = useLanguageStore()
   const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [predictionTableOpen, setPredictionTableOpen] = useState(false)
+  const [showAllPredictions, setShowAllPredictions] = useState(false)
 
   const { data: accounts } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -454,6 +500,32 @@ export default function Forecasts() {
   // Get the latest forecast for display
   const latestForecast = forecasts?.[0]
   const availableProducts = products ?? []
+  const confidenceLevel = useMemo(
+    () => getForecastConfidenceLevel(latestForecast),
+    [latestForecast]
+  )
+  const confidenceBadgeVariant = confidenceLevel
+    ? CONFIDENCE_BADGE_VARIANTS[confidenceLevel]
+    : 'outline'
+  const dataQualityNotes = useMemo(
+    () =>
+      (latestForecast?.data_quality_notes ?? []).map(
+        (note) => DATA_QUALITY_NOTE_KEYS[note] ? t(DATA_QUALITY_NOTE_KEYS[note]) : note
+      ),
+    [latestForecast?.data_quality_notes, t]
+  )
+  const visiblePredictions = useMemo(
+    () =>
+      latestForecast
+        ? (showAllPredictions ? latestForecast.predictions : latestForecast.predictions.slice(0, 30))
+        : [],
+    [latestForecast, showAllPredictions]
+  )
+
+  useEffect(() => {
+    setPredictionTableOpen(false)
+    setShowAllPredictions(false)
+  }, [latestForecast?.id])
 
   // Combine historical + prediction data for the chart
   const chartData = useMemo(() => {
@@ -541,6 +613,15 @@ export default function Forecasts() {
     if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
     if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`
     return `${value}`
+  }
+
+  const formatPredictionDate = (value: string) => {
+    const locale = appLang === 'it' ? 'it-IT' : 'en-US'
+    return new Date(`${value}T00:00:00`).toLocaleDateString(locale, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
   }
 
   return (
@@ -662,124 +743,216 @@ export default function Forecasts() {
         </div>
       ) : latestForecast ? (
         <div className="grid gap-4 md:grid-cols-3">
-          {/* Forecast Chart */}
-          <Card className="col-span-2">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>{t('forecasts.salesForecast')}</CardTitle>
-                  <CardDescription>
-                    {t('forecasts.predictionDesc', {
-                      days: latestForecast.horizon_days,
-                      model: latestForecast.model_used,
-                    })}
-                  </CardDescription>
+          <div className="space-y-4 md:col-span-2">
+            {/* Forecast Chart */}
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <CardTitle>{t('forecasts.salesForecast')}</CardTitle>
+                      {confidenceLevel && (
+                        <Badge variant={confidenceBadgeVariant}>
+                          {t(`forecasts.confidence.${confidenceLevel}`)}
+                        </Badge>
+                      )}
+                    </div>
+                    <CardDescription>
+                      {t('forecasts.predictionDesc', {
+                        days: latestForecast.horizon_days,
+                        model: latestForecast.model_used,
+                      })}
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setExportModalOpen(true)}
+                    >
+                      <Download className="mr-1 h-4 w-4" />
+                      {t('forecasts.exportCsv')}
+                    </Button>
+                    <Badge variant="secondary">
+                      {(latestForecast.confidence_interval * 100).toFixed(0)}% CI
+                    </Badge>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+              </CardHeader>
+              <CardContent>
+                {confidenceLevel === 'low' && (
+                  <Alert variant="warning" className="mb-4">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>{t('forecasts.lowConfidenceTitle')}</AlertTitle>
+                    <AlertDescription>{t('forecasts.lowConfidenceWarning')}</AlertDescription>
+                  </Alert>
+                )}
+                <div className="h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(value) => {
+                          const locale = appLang === 'it' ? 'it-IT' : 'en-US'
+                          return new Date(value + 'T00:00:00').toLocaleDateString(locale, {
+                            month: 'short',
+                            day: 'numeric',
+                          })
+                        }}
+                        tick={{ fontSize: 12 }}
+                      />
+                      <YAxis
+                        tickFormatter={yAxisFormatter}
+                        tick={{ fontSize: 12 }}
+                        width={50}
+                      />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Area
+                        type="monotone"
+                        dataKey="ci_base"
+                        stackId="ci"
+                        stroke="none"
+                        fill="transparent"
+                        connectNulls={false}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="ci_range"
+                        stackId="ci"
+                        stroke="none"
+                        fill="hsl(var(--primary))"
+                        fillOpacity={0.12}
+                        connectNulls={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="historical_value"
+                        stroke="hsl(var(--muted-foreground))"
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="predicted_value"
+                        stroke="hsl(var(--primary))"
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls={false}
+                      />
+                      {transitionDate && (
+                        <ReferenceLine
+                          x={transitionDate}
+                          stroke="hsl(var(--muted-foreground))"
+                          strokeDasharray="4 4"
+                          strokeOpacity={0.6}
+                          label={{
+                            value: t('forecasts.today'),
+                            position: 'top',
+                            fill: 'hsl(var(--muted-foreground))',
+                            fontSize: 12,
+                          }}
+                        />
+                      )}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-3 flex items-center justify-center gap-6 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block h-0.5 w-5 rounded bg-muted-foreground" />
+                    <span>{t('forecasts.historical')}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block h-0.5 w-5 rounded bg-primary" />
+                    <span>{t('forecasts.forecast')}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block h-3 w-5 rounded-sm bg-primary/15" />
+                    <span>{t('forecasts.confidenceInterval')}</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle>{t('forecasts.predictionTable')}</CardTitle>
+                    <CardDescription>{t('forecasts.predictionTableDesc')}</CardDescription>
+                  </div>
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setExportModalOpen(true)}
+                    onClick={() => setPredictionTableOpen((open) => !open)}
                   >
-                    <Download className="mr-1 h-4 w-4" />
-                    {t('forecasts.exportCsv')}
-                  </Button>
-                  <Badge variant="secondary">
-                    {(latestForecast.confidence_interval * 100).toFixed(0)}% CI
-                  </Badge>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[400px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.3} />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(value) => {
-                        const locale = appLang === 'it' ? 'it-IT' : 'en-US'
-                        return new Date(value + 'T00:00:00').toLocaleDateString(locale, { month: 'short', day: 'numeric' })
-                      }}
-                      tick={{ fontSize: 12 }}
-                    />
-                    <YAxis
-                      tickFormatter={yAxisFormatter}
-                      tick={{ fontSize: 12 }}
-                      width={50}
-                    />
-                    <Tooltip content={<CustomTooltip />} />
-                    {/* Confidence interval band (stacked: invisible base + visible range) */}
-                    <Area
-                      type="monotone"
-                      dataKey="ci_base"
-                      stackId="ci"
-                      stroke="none"
-                      fill="transparent"
-                      connectNulls={false}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="ci_range"
-                      stackId="ci"
-                      stroke="none"
-                      fill="hsl(var(--primary))"
-                      fillOpacity={0.12}
-                      connectNulls={false}
-                    />
-                    {/* Historical sales line */}
-                    <Line
-                      type="monotone"
-                      dataKey="historical_value"
-                      stroke="hsl(var(--muted-foreground))"
-                      strokeWidth={2}
-                      dot={false}
-                      connectNulls={false}
-                    />
-                    {/* Forecast prediction line */}
-                    <Line
-                      type="monotone"
-                      dataKey="predicted_value"
-                      stroke="hsl(var(--primary))"
-                      strokeWidth={2}
-                      dot={false}
-                      connectNulls={false}
-                    />
-                    {/* Today reference line */}
-                    {transitionDate && (
-                      <ReferenceLine
-                        x={transitionDate}
-                        stroke="hsl(var(--muted-foreground))"
-                        strokeDasharray="4 4"
-                        strokeOpacity={0.6}
-                        label={{
-                          value: t('forecasts.today'),
-                          position: 'top',
-                          fill: 'hsl(var(--muted-foreground))',
-                          fontSize: 12,
-                        }}
-                      />
+                    {predictionTableOpen ? (
+                      <ChevronUp className="mr-1 h-4 w-4" />
+                    ) : (
+                      <ChevronDown className="mr-1 h-4 w-4" />
                     )}
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-              {/* Custom Legend */}
-              <div className="flex items-center justify-center gap-6 mt-3 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1.5">
-                  <span className="inline-block w-5 h-0.5 rounded bg-muted-foreground" />
-                  <span>{t('forecasts.historical')}</span>
+                    {predictionTableOpen
+                      ? t('forecasts.hidePredictions')
+                      : t('forecasts.showPredictions')}
+                  </Button>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="inline-block w-5 h-0.5 rounded bg-primary" />
-                  <span>{t('forecasts.forecast')}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="inline-block w-5 h-3 rounded-sm bg-primary/15" />
-                  <span>{t('forecasts.confidenceInterval')}</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardHeader>
+              {predictionTableOpen && (
+                <CardContent className="space-y-3">
+                  {latestForecast.predictions.length > 30 && (
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      {!showAllPredictions ? (
+                        <p className="text-xs text-muted-foreground">
+                          {t('forecasts.showingFirstRows', {
+                            count: visiblePredictions.length,
+                            total: latestForecast.predictions.length,
+                          })}
+                        </p>
+                      ) : (
+                        <span />
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowAllPredictions((value) => !value)}
+                      >
+                        {showAllPredictions
+                          ? t('forecasts.showLessPredictions')
+                          : t('forecasts.showAllPredictions')}
+                      </Button>
+                    </div>
+                  )}
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t('forecasts.date')}</TableHead>
+                        <TableHead className="text-right">{t('forecasts.predictedValue')}</TableHead>
+                        <TableHead className="text-right">{t('forecasts.lowerBound')}</TableHead>
+                        <TableHead className="text-right">{t('forecasts.upperBound')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {visiblePredictions.map((prediction) => (
+                        <TableRow key={prediction.date}>
+                          <TableCell>{formatPredictionDate(prediction.date)}</TableCell>
+                          <TableCell className="text-right font-medium">
+                            {formatCurrency(prediction.predicted_value)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(prediction.lower_bound)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(prediction.upper_bound)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              )}
+            </Card>
+          </div>
 
           {/* Forecast Stats */}
           <div className="space-y-4">
@@ -791,9 +964,26 @@ export default function Forecasts() {
                 <div className="space-y-4">
                   <div>
                     <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">{t('forecasts.confidenceLabel')}</span>
+                      {confidenceLevel ? (
+                        <Badge variant={confidenceBadgeVariant}>
+                          {t(`forecasts.confidence.${confidenceLevel}`)}
+                        </Badge>
+                      ) : (
+                        <span className="font-medium">N/A</span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {latestForecast.mape != null
+                        ? t('forecasts.confidenceDesc', { mape: latestForecast.mape.toFixed(2) })
+                        : t('forecasts.mapeDesc')}
+                    </p>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">{t('forecasts.mape')}</span>
                       <span className="font-medium">
-                        {latestForecast.mape?.toFixed(2) || 'N/A'}%
+                        {latestForecast.mape != null ? `${latestForecast.mape.toFixed(2)}%` : 'N/A'}
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
@@ -804,13 +994,32 @@ export default function Forecasts() {
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">{t('forecasts.rmse')}</span>
                       <span className="font-medium">
-                        {formatCurrency(latestForecast.rmse || 0)}
+                        {latestForecast.rmse != null ? formatCurrency(latestForecast.rmse) : 'N/A'}
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
                       {t('forecasts.rmseDesc')}
                     </p>
                   </div>
+                  {dataQualityNotes.length > 0 && (
+                    <div className="space-y-2 border-t pt-4">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        {t('forecasts.dataQuality')}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {dataQualityNotes.map((note) => (
+                          <Badge
+                            key={note}
+                            variant="outline"
+                            className="gap-1.5 rounded-md px-2 py-1 text-xs font-normal"
+                          >
+                            <Info className="h-3 w-3" />
+                            {note}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

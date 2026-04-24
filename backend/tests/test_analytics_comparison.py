@@ -29,6 +29,7 @@ _ensure_package("app.services", ROOT / "app" / "services")
 deps_stub = types.ModuleType("app.api.deps")
 deps_stub.CurrentUser = object
 deps_stub.CurrentOrganization = object
+deps_stub.CurrentSuperuser = object
 deps_stub.DbSession = object
 sys.modules["app.api.deps"] = deps_stub
 
@@ -51,6 +52,10 @@ product_trends_stub.ProductTrendsService = type("ProductTrendsService", (), {})
 product_trends_stub.build_rule_based_insights = lambda *args, **kwargs: []
 sys.modules["app.services.product_trends_service"] = product_trends_stub
 
+analytics_service_stub = types.ModuleType("app.services.analytics_service")
+analytics_service_stub.AnalyticsService = type("AnalyticsService", (), {})
+sys.modules["app.services.analytics_service"] = analytics_service_stub
+
 
 def _stub_model_module(module_name: str, class_name: str) -> None:
     module = types.ModuleType(module_name)
@@ -61,6 +66,11 @@ def _stub_model_module(module_name: str, class_name: str) -> None:
 
 _stub_model_module("app.models.amazon_account", "AmazonAccount")
 _stub_model_module("app.models.sales_data", "SalesData")
+order_module = types.ModuleType("app.models.order")
+order_module.Order = type("Order", (), {})
+order_module.OrderItem = type("OrderItem", (), {})
+sys.modules["app.models.order"] = order_module
+_stub_model_module("app.models.returns_data", "ReturnData")
 
 product_module = types.ModuleType("app.models.product")
 product_module.Product = type("Product", (), {})
@@ -92,7 +102,7 @@ def test_previous_period_uses_same_inclusive_length():
 
 
 @pytest.mark.asyncio
-async def test_comparison_marks_returns_and_category_limited_metrics_unavailable(monkeypatch):
+async def test_comparison_includes_returns_metric_and_daily_series_with_category(monkeypatch):
     async def fake_sales(*args, **kwargs):
         return {
             "revenue": 2500.0,
@@ -101,8 +111,24 @@ async def test_comparison_marks_returns_and_category_limited_metrics_unavailable
             "average_order_value": 31.25,
         }
 
+    async def fake_returns(_db, _accounts, start_date, _end_date, _category=None):
+        return 12 if start_date.month == 3 else 9
+
+    async def fake_daily_revenue(_db, _accounts, start_date, _end_date, _category=None):
+        if start_date.month == 3:
+            return {
+                date(2026, 3, 1): 1000.0,
+                date(2026, 3, 2): 900.0,
+            }
+        return {
+            date(2026, 2, 1): 700.0,
+            date(2026, 2, 2): 850.0,
+        }
+
     monkeypatch.setattr(analytics, "_accounts_query", lambda *args, **kwargs: None)
     monkeypatch.setattr(analytics, "_get_sales_period_metrics", fake_sales)
+    monkeypatch.setattr(analytics, "_get_returns_period_count", fake_returns)
+    monkeypatch.setattr(analytics, "_get_sales_daily_revenue", fake_daily_revenue)
 
     comparison = await analytics._build_period_comparison(
         db=None,
@@ -116,12 +142,24 @@ async def test_comparison_marks_returns_and_category_limited_metrics_unavailable
 
     metrics = {metric.metric_name: metric for metric in comparison.metrics}
 
-    assert metrics["returns"].is_available is False
-    assert metrics["returns"].unavailable_reason == analytics.MISSING_DATA_SOURCE
+    assert metrics["returns"].is_available is True
+    assert metrics["returns"].current_value == 12
+    assert metrics["returns"].previous_value == 9
     assert metrics["roas"].is_available is False
     assert metrics["roas"].unavailable_reason == analytics.CATEGORY_FILTER_NOT_SUPPORTED
     assert metrics["ctr"].is_available is False
     assert metrics["ctr"].unavailable_reason == analytics.CATEGORY_FILTER_NOT_SUPPORTED
+    assert comparison.daily_series is not None
+    assert comparison.daily_series[0].day_offset == 0
+    assert len(comparison.daily_series) == 31
+    assert comparison.daily_series[0].period_1_date == date(2026, 3, 1)
+    assert comparison.daily_series[0].period_1_revenue == 1000.0
+    assert comparison.daily_series[0].period_2_date == date(2026, 2, 1)
+    assert comparison.daily_series[0].period_2_revenue == 700.0
+    assert comparison.daily_series[-1].period_1_date == date(2026, 3, 31)
+    assert comparison.daily_series[-1].period_1_revenue == 0.0
+    assert comparison.daily_series[-1].period_2_date is None
+    assert comparison.daily_series[-1].period_2_revenue is None
 
 
 @pytest.mark.asyncio
@@ -151,9 +189,25 @@ async def test_comparison_includes_ad_metrics_without_category(monkeypatch):
             return {"roas": 4.2, "acos": 23.8, "ctr": 1.9}
         return {"roas": 3.6, "acos": 27.8, "ctr": 1.4}
 
+    async def fake_returns(_db, _accounts, start_date, _end_date, _category=None):
+        return 18 if start_date.month == 3 else 10
+
+    async def fake_daily_revenue(_db, _accounts, start_date, _end_date, _category=None):
+        if start_date.month == 3:
+            return {
+                date(2026, 3, 1): 100.0,
+                date(2026, 3, 2): 110.0,
+            }
+        return {
+            date(2026, 2, 1): 80.0,
+            date(2026, 2, 2): 95.0,
+        }
+
     monkeypatch.setattr(analytics, "_accounts_query", lambda *args, **kwargs: None)
     monkeypatch.setattr(analytics, "_get_sales_period_metrics", fake_sales)
     monkeypatch.setattr(analytics, "_get_advertising_period_metrics", fake_ads)
+    monkeypatch.setattr(analytics, "_get_returns_period_count", fake_returns)
+    monkeypatch.setattr(analytics, "_get_sales_daily_revenue", fake_daily_revenue)
 
     comparison = await analytics._build_period_comparison(
         db=None,
@@ -175,3 +229,13 @@ async def test_comparison_includes_ad_metrics_without_category(monkeypatch):
     assert metrics["ctr"].is_available is True
     assert metrics["ctr"].current_value == 1.9
     assert metrics["ctr"].previous_value == 1.4
+    assert metrics["returns"].current_value == 18
+    assert metrics["returns"].previous_value == 10
+    assert comparison.daily_series is not None
+    assert len(comparison.daily_series) == 31
+    assert comparison.daily_series[1].period_1_revenue == 110.0
+    assert comparison.daily_series[1].period_2_revenue == 95.0
+    assert comparison.daily_series[-1].period_1_date == date(2026, 3, 31)
+    assert comparison.daily_series[-1].period_1_revenue == 0.0
+    assert comparison.daily_series[-1].period_2_date is None
+    assert comparison.daily_series[-1].period_2_revenue is None

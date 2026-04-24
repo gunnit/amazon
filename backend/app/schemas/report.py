@@ -60,10 +60,55 @@ class InventoryDataResponse(BaseModel):
         from_attributes = True
 
 
+class OrderItemResponse(BaseModel):
+    """Schema for order item response."""
+
+    id: int
+    asin: Optional[str]
+    sku: Optional[str]
+    title: Optional[str]
+    quantity: int
+    item_price: Optional[Decimal]
+    item_tax: Optional[Decimal]
+
+    class Config:
+        from_attributes = True
+
+
+class OrderResponse(BaseModel):
+    """Schema for order response."""
+
+    id: int
+    account_id: UUID
+    amazon_order_id: str
+    purchase_date: datetime
+    order_status: str
+    fulfillment_channel: Optional[str]
+    order_total: Optional[Decimal]
+    currency: Optional[str]
+    marketplace_id: Optional[str]
+    number_of_items: int
+    created_at: datetime
+    items: List[OrderItemResponse] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
+class OrderListResponse(BaseModel):
+    """Paginated order response."""
+
+    items: List[OrderResponse]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+
 class AdvertisingMetricsResponse(BaseModel):
     """Schema for advertising metrics response."""
     id: int
-    campaign_id: UUID
+    campaign_id: str
     campaign_name: str
     campaign_type: str
     date: date

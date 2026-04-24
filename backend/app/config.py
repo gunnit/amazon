@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     AMAZON_ADS_CLIENT_ID: Optional[str] = None
     AMAZON_ADS_CLIENT_SECRET: Optional[str] = None
     AMAZON_ADS_PROFILE_ID: Optional[str] = None
+    AMAZON_ADS_API_BASE_URL: Optional[str] = None
+    AMAZON_ADS_REPORT_POLL_INTERVAL_SECONDS: int = 15
+    AMAZON_ADS_REPORT_POLL_MAX_ATTEMPTS: int = 40
 
     # AWS S3
     AWS_S3_BUCKET: str = "inthezon-reports"
@@ -65,8 +68,29 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     MARKET_RESEARCH_MAX_COMPETITORS: int = 5
 
+    # Google OAuth (Sheets integration)
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_REDIRECT_URI: Optional[str] = None
+
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
+
+    # Data Retention
+    DATA_RETENTION_MONTHS: int = 24
+    DATA_ARCHIVE_ENABLED: bool = False
+    PARTITION_FUTURE_MONTHS: int = 3
+    PARTITION_MANAGED_TABLES: List[str] = [
+        "sales_data",
+        "inventory_data",
+        "advertising_metrics",
+        "orders",
+    ]
+
+    # In-process scheduler (replaces Celery beat on free tier / no-Redis deploys)
+    ENABLE_INPROCESS_SCHEDULER: bool = False
+    INPROCESS_SYNC_HOUR_UTC: int = 2
+    INPROCESS_SYNC_MINUTE_UTC: int = 0
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]

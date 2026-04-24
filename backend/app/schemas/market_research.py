@@ -1,5 +1,5 @@
 """Market research schemas."""
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -30,6 +30,7 @@ class ProductSnapshot(BaseModel):
     bsr: Optional[int] = None
     review_count: Optional[int] = None
     rating: Optional[float] = None
+    fetch_errors: Optional[List[str]] = None
 
 
 class CompetitorSnapshot(ProductSnapshot):
@@ -72,6 +73,7 @@ class MarketResearchResponse(BaseModel):
     ai_analysis: Optional[AIAnalysis] = None
     created_at: str
     completed_at: Optional[str] = None
+    last_refreshed_at: Optional[str] = None
 
 
 class MarketResearchListItem(BaseModel):
@@ -83,6 +85,27 @@ class MarketResearchListItem(BaseModel):
     language: str
     created_at: str
     competitor_count: int = 0
+
+
+class ComparisonDimension(BaseModel):
+    """Competitive comparison metrics for a single dimension."""
+    name: Literal["price", "bsr", "reviews", "rating"]
+    client_value: Optional[float] = None
+    competitor_avg: Optional[float] = None
+    competitor_min: Optional[float] = None
+    competitor_max: Optional[float] = None
+    competitor_best: Optional[float] = None
+    competitor_best_name: Optional[str] = None
+    client_rank: Optional[int] = None
+    total_competitors: int = 0
+    gap_percent: Optional[float] = None
+
+
+class ComparisonMatrixResponse(BaseModel):
+    """Detailed client-vs-competitor comparison matrix."""
+    dimensions: List[ComparisonDimension]
+    overall_score: float = Field(ge=0, le=100)
+    opportunities: List[Literal["price", "bsr", "reviews", "rating"]]
 
 
 # ── Market Tracker 360 schemas ──

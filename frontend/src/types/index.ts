@@ -37,6 +37,13 @@ export interface AmazonAccount {
   last_sync_at: string | null
   sync_status: SyncStatus
   sync_error_message: string | null
+  last_sync_started_at?: string | null
+  last_sync_succeeded_at?: string | null
+  last_sync_failed_at?: string | null
+  last_sync_attempt_at?: string | null
+  last_sync_heartbeat_at?: string | null
+  sync_error_code?: string | null
+  sync_error_kind?: string | null
   has_refresh_token: boolean
   created_at: string
   updated_at: string
@@ -57,6 +64,13 @@ export interface AccountStatus {
   sync_status: SyncStatus
   last_sync_at: string | null
   sync_error_message: string | null
+  last_sync_started_at?: string | null
+  last_sync_succeeded_at?: string | null
+  last_sync_failed_at?: string | null
+  last_sync_attempt_at?: string | null
+  last_sync_heartbeat_at?: string | null
+  sync_error_code?: string | null
+  sync_error_kind?: string | null
   total_sales_30d: number
   total_units_30d: number
   active_asins: number
@@ -118,12 +132,58 @@ export interface ComparisonMetric {
   unavailable_reason: string | null
 }
 
+export interface ComparisonDailyPoint {
+  day_offset: number
+  period_1_date: string | null
+  period_1_revenue: number | null
+  period_2_date: string | null
+  period_2_revenue: number | null
+}
+
 export interface ComparisonResponse {
   preset: 'mom' | 'qoq' | 'yoy' | null
   category: string | null
   period_1: ComparisonPeriod
   period_2: ComparisonPeriod
   metrics: ComparisonMetric[]
+  daily_series: ComparisonDailyPoint[] | null
+}
+
+export interface AdsVsOrganicTimeSeriesPoint {
+  date: string
+  total_sales: number
+  ad_sales: number
+  organic_sales: number
+  ad_share_pct: number
+  organic_share_pct: number
+}
+
+export interface AdsVsOrganicSummary {
+  total_sales: MetricValue
+  ad_sales: MetricValue
+  organic_sales: MetricValue
+  ad_share_pct: MetricValue
+  organic_share_pct: MetricValue
+  period_start: string
+  period_end: string
+  previous_period_start: string | null
+  previous_period_end: string | null
+}
+
+export interface AdsVsOrganicAsinBreakdownItem {
+  asin: string
+  title: string | null
+  total_sales: number
+  sales_share_pct: number
+}
+
+export interface AdsVsOrganicResponse {
+  summary: AdsVsOrganicSummary
+  time_series: AdsVsOrganicTimeSeriesPoint[]
+  asin_breakdown: AdsVsOrganicAsinBreakdownItem[] | null
+  group_by: 'day' | 'week' | 'month'
+  asin: string | null
+  attribution_notes: string[]
 }
 
 export interface CategorySalesData {
@@ -151,9 +211,50 @@ export interface HourlyOrdersData {
   orders: number
 }
 
+export interface ReturnsSummary {
+  total_returns: number
+  total_ordered_units: number
+  return_rate: number | null
+  return_rate_available: boolean
+  top_reason: string | null
+  unique_asins: number
+}
+
+export interface ReturnsTrendPoint {
+  date: string
+  returned_units: number
+  ordered_units: number | null
+  return_rate: number | null
+}
+
+export interface ReturnReasonBreakdown {
+  reason: string
+  quantity: number
+  share_percent: number
+}
+
+export interface ReturnAsinMetric {
+  asin: string
+  sku: string | null
+  quantity_returned: number
+  primary_reason: string | null
+  disposition: string | null
+  ordered_units: number | null
+  return_rate: number | null
+}
+
+export interface ReturnsAnalyticsResponse {
+  summary: ReturnsSummary
+  return_rate_over_time: ReturnsTrendPoint[]
+  reason_breakdown: ReturnReasonBreakdown[]
+  top_asins_by_returns: ReturnAsinMetric[]
+  top_asins_by_return_rate: ReturnAsinMetric[]
+}
+
 export type TrendDirection = 'up' | 'down' | 'stable'
 export type TrendStrength = 'weak' | 'moderate' | 'strong'
 export type TrendDataQuality = 'high' | 'medium' | 'low'
+export type ProductTrendClass = 'rising_fast' | 'rising' | 'stable' | 'declining' | 'declining_fast'
 
 export interface ProductTrendRecommendation {
   priority: 'high' | 'medium' | 'low'
@@ -170,13 +271,22 @@ export interface ProductTrendInsights {
   recommendations: ProductTrendRecommendation[]
 }
 
+export interface ProductTrendTimeseriesPoint {
+  date: string
+  revenue: number
+  units: number
+}
+
 export interface ProductTrendItem {
   asin: string
+  account_id: string | null
   title: string | null
   category: string | null
+  trend_class: ProductTrendClass
   trend_score: number
   direction: TrendDirection
   strength: TrendStrength
+  sales_delta_percent: number
   current_revenue: number
   previous_revenue: number
   current_units: number
@@ -186,8 +296,23 @@ export interface ProductTrendItem {
   current_bsr: number | null
   previous_bsr: number | null
   bsr_change_percent: number | null
+  bsr_position_change: number | null
+  current_inventory: number | null
+  previous_inventory: number | null
+  inventory_days_of_cover: number | null
+  review_velocity_change_percent: number | null
+  supporting_signals: string[]
+  recent_sales: ProductTrendTimeseriesPoint[]
   data_quality: TrendDataQuality
   reason_tags: string[]
+}
+
+export interface ProductTrendClassCounts {
+  rising_fast: number
+  rising: number
+  stable: number
+  declining: number
+  declining_fast: number
 }
 
 export interface ProductTrendSummary {
@@ -196,6 +321,7 @@ export interface ProductTrendSummary {
   declining_count: number
   stable_count: number
   average_trend_score: number
+  trend_class_counts: ProductTrendClassCounts
   strongest_riser: ProductTrendItem | null
   strongest_decliner: ProductTrendItem | null
 }
@@ -204,6 +330,7 @@ export interface ProductTrendsResponse {
   summary: ProductTrendSummary
   rising_products: ProductTrendItem[]
   declining_products: ProductTrendItem[]
+  products: ProductTrendItem[]
   insights: ProductTrendInsights
   generated_with_ai: boolean
   ai_available: boolean
@@ -312,6 +439,52 @@ export interface ScheduledReportRun {
   recipients: string[]
 }
 
+export type GoogleSheetsDataType = 'sales' | 'inventory' | 'advertising' | 'forecasts' | 'analytics'
+export type GoogleSheetsFrequency = 'daily' | 'weekly'
+export type GoogleSheetsSyncMode = 'overwrite' | 'append'
+export type GoogleSheetsSyncStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+export interface GoogleSheetsConnection {
+  id: string
+  google_email: string
+  is_active: boolean
+  connected_at: string
+  scopes: string[]
+}
+
+export interface GoogleSheetsSync {
+  id: string
+  name: string
+  spreadsheet_id: string | null
+  spreadsheet_url: string | null
+  frequency: GoogleSheetsFrequency
+  sync_mode: GoogleSheetsSyncMode
+  data_types: GoogleSheetsDataType[]
+  account_ids: string[]
+  parameters: Record<string, unknown>
+  schedule_config: Record<string, unknown>
+  timezone: string
+  is_enabled: boolean
+  last_run_at: string | null
+  last_run_status: string | null
+  next_run_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface GoogleSheetsSyncRun {
+  id: string
+  sync_id: string
+  status: GoogleSheetsSyncStatus
+  progress_step: string | null
+  error_message: string | null
+  triggered_at: string
+  completed_at: string | null
+  rows_written: number | null
+  spreadsheet_url: string | null
+  data_types_snapshot: GoogleSheetsDataType[]
+}
+
 // Product types
 export interface Product {
   id: string
@@ -329,6 +502,8 @@ export interface Product {
 }
 
 // Forecast types
+export type ForecastConfidenceLevel = 'high' | 'medium' | 'low'
+
 export interface ForecastPrediction {
   date: string
   predicted_value: number
@@ -361,6 +536,8 @@ export interface Forecast {
   historical_data: ForecastHistoricalPoint[]
   mape: number | null
   rmse: number | null
+  confidence_level?: ForecastConfidenceLevel | null
+  data_quality_notes?: string[] | null
 }
 
 export interface ForecastExportJob {
@@ -436,6 +613,25 @@ export interface MarketResearchListItem {
   competitor_count: number
 }
 
+export interface ComparisonDimension {
+  name: 'price' | 'bsr' | 'reviews' | 'rating'
+  client_value: number | null
+  competitor_avg: number | null
+  competitor_min: number | null
+  competitor_max: number | null
+  competitor_best: number | null
+  competitor_best_name: string | null
+  client_rank: number | null
+  total_competitors: number
+  gap_percent: number | null
+}
+
+export interface ComparisonMatrixResponse {
+  dimensions: ComparisonDimension[]
+  overall_score: number
+  opportunities: Array<'price' | 'bsr' | 'reviews' | 'rating'>
+}
+
 // Market Tracker 360 types
 export interface MarketSearchResult {
   asin: string
@@ -469,11 +665,15 @@ export interface CompetitorSuggestion {
 }
 
 // Alert types
+export type AlertType = 'low_stock' | 'bsr_drop' | 'price_change' | 'sync_failure' | 'product_trend'
+export type AlertSeverity = 'info' | 'warning' | 'critical'
+export type AlertStatus = 'all' | 'read' | 'unread'
+
 export interface AlertRule {
   id: string
   organization_id: string
   name: string
-  alert_type: string
+  alert_type: AlertType
   conditions: Record<string, unknown>
   applies_to_accounts: string[] | null
   applies_to_asins: string[] | null
@@ -481,6 +681,55 @@ export interface AlertRule {
   notification_emails: string[] | null
   webhook_url: string | null
   is_enabled: boolean
+  last_triggered_at: string | null
+  alert_count: number
+}
+
+export interface Alert {
+  id: string
+  rule_id: string
+  account_id: string | null
+  asin: string | null
+  event_kind: string
+  dedup_key: string
+  message: string
+  details: Record<string, unknown>
+  severity: AlertSeverity
+  is_read: boolean
+  triggered_at: string
+  last_seen_at: string
+  resolved_at: string | null
+  notification_status: string
+  last_notification_attempt_at: string | null
+  notification_sent_at: string | null
+  notification_error: string | null
+  rule_name: string | null
+  alert_type: AlertType | null
+}
+
+export interface AlertListResponse {
+  items: Alert[]
+  total: number
+  limit: number
+  offset: number
+  has_more: boolean
+}
+
+export interface AlertMutationResponse {
+  item: Alert
+  unread_count: number
+}
+
+export interface AlertBulkMutationResponse {
+  updated: number
+  unread_count: number
+}
+
+export interface AlertSummary {
+  unread_count: number
+  critical_count: number
+  active_rule_count: number
+  total_rule_count: number
 }
 
 // Organization API Keys

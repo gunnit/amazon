@@ -7,11 +7,8 @@ import logging
 
 from app.config import settings
 from app.api.v1.router import api_router
-from sqlalchemy import text as sa_text
 from app.db.session import engine
-from app.db.base import Base
 
-# Configure logging
 logging.basicConfig(
     level=logging.DEBUG if settings.APP_DEBUG else logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -21,30 +18,47 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan events."""
-    # Startup
-    logger.info("Starting Inthezon Platform API")
-    logger.info(f"Environment: {settings.APP_ENV}")
+    logger.info("Starting Inthezon Platform API (env=%s)", settings.APP_ENV)
 
-    # Run migrations and ensure schema is up to date
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        # Add columns that create_all can't add to existing tables
-        for statement in [
-            "ALTER TABLE market_research_reports ADD COLUMN IF NOT EXISTS progress_step VARCHAR(100)",
-            "ALTER TABLE market_research_reports ADD COLUMN IF NOT EXISTS progress_pct INTEGER DEFAULT 0",
-        ]:
+    scheduler = None
+    if settings.ENABLE_INPROCESS_SCHEDULER:
+        try:
+            from apscheduler.schedulers.background import BackgroundScheduler
+            from apscheduler.triggers.cron import CronTrigger
+            from app.services.extraction_runner import run_daily_sync_all
+
+            scheduler = BackgroundScheduler(timezone="UTC")
+            scheduler.add_job(
+                run_daily_sync_all,
+                CronTrigger(
+                    hour=settings.INPROCESS_SYNC_HOUR_UTC,
+                    minute=settings.INPROCESS_SYNC_MINUTE_UTC,
+                ),
+                id="daily-account-sync",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            scheduler.start()
+            logger.info(
+                "In-process scheduler started (daily sync at %02d:%02d UTC)",
+                settings.INPROCESS_SYNC_HOUR_UTC,
+                settings.INPROCESS_SYNC_MINUTE_UTC,
+            )
+        except Exception:
+            logger.exception("Failed to start in-process scheduler")
+            scheduler = None
+
+    try:
+        yield
+    finally:
+        logger.info("Shutting down Inthezon Platform API")
+        if scheduler is not None:
             try:
-                await conn.execute(sa_text(statement))
+                scheduler.shutdown(wait=False)
             except Exception:
-                pass  # Column already exists or table doesn't exist yet
-    logger.info("Database tables created/verified")
-
-    yield
-
-    # Shutdown
-    logger.info("Shutting down Inthezon Platform API")
-    await engine.dispose()
+                logger.exception("Error shutting down scheduler")
+        await engine.dispose()
 
 
 # Create FastAPI app

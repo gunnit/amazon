@@ -38,6 +38,7 @@ class Product(Base):
 
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="true")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

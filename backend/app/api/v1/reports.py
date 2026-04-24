@@ -1,13 +1,15 @@
 """Reports and data endpoints."""
 from typing import List, Optional
-from datetime import date, timedelta
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, Date, cast
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 from app.models.amazon_account import AmazonAccount
+from app.models.order import Order, OrderItem
 from app.models.scheduled_report import ScheduledReport
 from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
@@ -15,6 +17,7 @@ from app.models.inventory import InventoryData
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
 from app.schemas.report import (
     SalesDataResponse, SalesDataAggregated,
+    OrderListResponse, OrderResponse,
     InventoryDataResponse, AdvertisingMetricsResponse,
     ScheduledReportCreate, ScheduledReportResponse,
     ScheduledReportRunResponse, ScheduledReportUpdate,
@@ -77,7 +80,7 @@ async def get_sales_aggregated(
     start_date: date = Query(default=date.today() - timedelta(days=30)),
     end_date: date = Query(default=date.today()),
     account_ids: Optional[List[UUID]] = Query(default=None),
-    group_by: str = Query(default="day", regex="^(day|week|month)$"),
+    group_by: str = Query(default="day", pattern="^(day|week|month)$"),
 ):
     """Get aggregated sales data."""
     accounts_query = select(AmazonAccount.id).where(
@@ -126,46 +129,141 @@ async def get_sales_aggregated(
     ]
 
 
+@router.get("/orders", response_model=OrderListResponse)
+async def get_orders_report(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    start_date: date = Query(default=date.today() - timedelta(days=30)),
+    end_date: date = Query(default=date.today()),
+    account_id: Optional[UUID] = Query(default=None),
+    order_status: Optional[str] = Query(default=None),
+    asin: Optional[str] = Query(default=None, min_length=1, max_length=20),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Get persisted order-level data with filters and pagination."""
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="start_date must be on or before end_date",
+        )
+
+    accounts_query = select(AmazonAccount.id).where(
+        AmazonAccount.organization_id == organization.id
+    )
+    if account_id:
+        accounts_query = accounts_query.where(AmazonAccount.id == account_id)
+
+    start_datetime = datetime.combine(start_date, dt_time.min).replace(tzinfo=timezone.utc)
+    end_datetime = datetime.combine(end_date + timedelta(days=1), dt_time.min).replace(tzinfo=timezone.utc)
+
+    filters = [
+        Order.account_id.in_(accounts_query),
+        Order.purchase_date >= start_datetime,
+        Order.purchase_date < end_datetime,
+    ]
+    if order_status:
+        filters.append(Order.order_status == order_status)
+
+    items_query = select(Order).options(selectinload(Order.items)).where(*filters)
+    count_query = select(func.count(Order.id)).where(*filters)
+
+    if asin:
+        items_query = items_query.join(OrderItem).where(OrderItem.asin == asin).distinct()
+        count_query = (
+            select(func.count(func.distinct(Order.id)))
+            .select_from(Order)
+            .join(OrderItem)
+            .where(*filters, OrderItem.asin == asin)
+        )
+
+    items_query = (
+        items_query
+        .order_by(Order.purchase_date.desc(), Order.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+
+    result = await db.execute(items_query)
+    total = (await db.execute(count_query)).scalar_one()
+    orders = result.scalars().unique().all()
+
+    return OrderListResponse(
+        items=[OrderResponse.model_validate(order) for order in orders],
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=offset + len(orders) < total,
+    )
+
+
 @router.get("/inventory", response_model=List[InventoryDataResponse])
 async def get_inventory_data(
     current_user: CurrentUser,
     organization: CurrentOrganization,
     db: DbSession,
     snapshot_date: Optional[date] = Query(default=None),
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
+    account_id: Optional[UUID] = Query(default=None),
     account_ids: Optional[List[UUID]] = Query(default=None),
+    asin: Optional[str] = Query(default=None),
     asins: Optional[List[str]] = Query(default=None),
     low_stock_only: bool = Query(default=False),
     limit: int = Query(default=1000, le=10000),
 ):
     """Get inventory data."""
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="start_date cannot be after end_date",
+        )
+
+    selected_account_ids = []
+    if account_id:
+        selected_account_ids.append(account_id)
+    if account_ids:
+        selected_account_ids.extend(account_ids)
+
+    selected_asins = []
+    if asin:
+        selected_asins.append(asin)
+    if asins:
+        selected_asins.extend(asins)
+
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
-    if account_ids:
-        accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
+    if selected_account_ids:
+        accounts_query = accounts_query.where(
+            AmazonAccount.id.in_(list(dict.fromkeys(selected_account_ids)))
+        )
 
-    # Default to latest snapshot
-    if not snapshot_date:
+    query = select(InventoryData).where(InventoryData.account_id.in_(accounts_query))
+
+    if snapshot_date:
+        query = query.where(InventoryData.snapshot_date == snapshot_date)
+    elif start_date or end_date:
+        if start_date:
+            query = query.where(InventoryData.snapshot_date >= start_date)
+        if end_date:
+            query = query.where(InventoryData.snapshot_date <= end_date)
+    else:
         max_date_query = select(func.max(InventoryData.snapshot_date)).where(
             InventoryData.account_id.in_(accounts_query)
         )
         result = await db.execute(max_date_query)
-        snapshot_date = result.scalar() or date.today()
+        latest_snapshot = result.scalar() or date.today()
+        query = query.where(InventoryData.snapshot_date == latest_snapshot)
 
-    query = (
-        select(InventoryData)
-        .where(
-            InventoryData.account_id.in_(accounts_query),
-            InventoryData.snapshot_date == snapshot_date,
-        )
-        .limit(limit)
-    )
-
-    if asins:
-        query = query.where(InventoryData.asin.in_(asins))
+    if selected_asins:
+        query = query.where(InventoryData.asin.in_(list(dict.fromkeys(selected_asins))))
 
     if low_stock_only:
         query = query.where(InventoryData.afn_fulfillable_quantity < 10)
+
+    query = query.order_by(InventoryData.snapshot_date.desc(), InventoryData.asin).limit(limit)
 
     result = await db.execute(query)
     return result.scalars().all()
@@ -181,37 +279,42 @@ async def get_advertising_data(
     account_ids: Optional[List[UUID]] = Query(default=None),
     campaign_types: Optional[List[str]] = Query(default=None),
     limit: int = Query(default=1000, le=10000),
+    offset: int = Query(default=0, ge=0),
 ):
     """Get advertising performance data."""
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="start_date must be on or before end_date",
+        )
+
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
     if account_ids:
         accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
 
-    campaigns_query = select(AdvertisingCampaign.id).where(
-        AdvertisingCampaign.account_id.in_(accounts_query)
-    )
-    if campaign_types:
-        campaigns_query = campaigns_query.where(
-            AdvertisingCampaign.campaign_type.in_(campaign_types)
-        )
-
     query = (
         select(
             AdvertisingMetrics,
+            AdvertisingCampaign.campaign_id.label("external_campaign_id"),
             AdvertisingCampaign.campaign_name,
             AdvertisingCampaign.campaign_type,
         )
-        .join(AdvertisingCampaign)
+        .join(AdvertisingCampaign, AdvertisingCampaign.id == AdvertisingMetrics.campaign_id)
         .where(
-            AdvertisingMetrics.campaign_id.in_(campaigns_query),
+            AdvertisingCampaign.account_id.in_(accounts_query),
             AdvertisingMetrics.date >= start_date,
             AdvertisingMetrics.date <= end_date,
         )
-        .order_by(AdvertisingMetrics.date.desc())
+        .order_by(AdvertisingMetrics.date.desc(), AdvertisingMetrics.id.desc())
+        .offset(offset)
         .limit(limit)
     )
+    if campaign_types:
+        query = query.where(
+            AdvertisingCampaign.campaign_type.in_(list(dict.fromkeys(campaign_types)))
+        )
 
     result = await db.execute(query)
     rows = result.all()
@@ -219,7 +322,7 @@ async def get_advertising_data(
     return [
         AdvertisingMetricsResponse(
             id=row.AdvertisingMetrics.id,
-            campaign_id=row.AdvertisingMetrics.campaign_id,
+            campaign_id=row.external_campaign_id,
             campaign_name=row.campaign_name or "",
             campaign_type=row.campaign_type or "",
             date=row.AdvertisingMetrics.date,
