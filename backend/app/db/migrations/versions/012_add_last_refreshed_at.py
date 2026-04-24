@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 
 revision = "012_add_last_refreshed_at"
-down_revision = "011_add_brin_indexes_for_retention"
+down_revision = "011_brin_retention_indexes"
 branch_labels = None
 depends_on = None
 

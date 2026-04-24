@@ -7,7 +7,7 @@ Create Date: 2026-04-14
 from alembic import op
 
 
-revision = "011_add_brin_indexes_for_retention"
+revision = "011_brin_retention_indexes"
 down_revision = "010_add_returns_data"
 branch_labels = None
 depends_on = None

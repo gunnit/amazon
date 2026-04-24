@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = "016_add_strategic_recommendations"
+revision = "016_strategic_recs"
 down_revision = "015_add_partition_helpers"
 branch_labels = None
 depends_on = None
