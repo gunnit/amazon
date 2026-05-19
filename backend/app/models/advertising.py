@@ -74,4 +74,38 @@ class AdvertisingMetrics(Base):
     campaign: Mapped["AdvertisingCampaign"] = relationship("AdvertisingCampaign", back_populates="metrics")
 
 
+class AdvertisingMetricsByAsin(Base):
+    """ASIN-level advertising metrics from Sponsored Products advertised product reports."""
+    __tablename__ = "advertising_metrics_by_asin"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "asin", "date", name="uq_ad_asin_metrics_campaign_asin_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("amazon_accounts.id", ondelete="CASCADE"), index=True
+    )
+    campaign_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("advertising_campaigns.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    asin: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+
+    impressions: Mapped[int] = mapped_column(Integer, default=0)
+    clicks: Mapped[int] = mapped_column(Integer, default=0)
+    cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    attributed_sales_7d: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    attributed_units_ordered_7d: Mapped[int] = mapped_column(Integer, default=0)
+
+    ctr: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=True)
+    cpc: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=True)
+    acos: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=True)
+    roas: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    account: Mapped["AmazonAccount"] = relationship("AmazonAccount")
+    campaign: Mapped["AdvertisingCampaign"] = relationship("AdvertisingCampaign")
+
+
 from app.models.amazon_account import AmazonAccount

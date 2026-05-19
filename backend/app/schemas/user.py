@@ -74,6 +74,8 @@ class OrganizationApiKeysUpdate(BaseModel):
     sp_api_aws_access_key: Optional[str] = None
     sp_api_aws_secret_key: Optional[str] = None
     sp_api_role_arn: Optional[str] = None
+    advertising_client_id: Optional[str] = None
+    advertising_client_secret: Optional[str] = None
 
 
 class OrganizationApiKeysResponse(BaseModel):
@@ -81,8 +83,10 @@ class OrganizationApiKeysResponse(BaseModel):
     sp_api_client_id: Optional[str] = None
     sp_api_aws_access_key: Optional[str] = None
     sp_api_role_arn: Optional[str] = None
+    advertising_client_id: Optional[str] = None
     has_client_secret: bool = False
     has_aws_secret_key: bool = False
+    has_advertising_client_secret: bool = False
 
 
 class PasswordChange(BaseModel):

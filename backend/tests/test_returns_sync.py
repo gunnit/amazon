@@ -54,7 +54,12 @@ def _stub_model_module(module_name: str, *class_names: str) -> None:
     sys.modules[module_name] = module
 
 
-_stub_model_module("app.models.advertising", "AdvertisingCampaign", "AdvertisingMetrics")
+_stub_model_module(
+    "app.models.advertising",
+    "AdvertisingCampaign",
+    "AdvertisingMetrics",
+    "AdvertisingMetricsByAsin",
+)
 _stub_model_module("app.models.order", "Order", "OrderItem")
 _stub_model_module("app.models.returns_data", "ReturnData")
 _stub_model_module("app.models.sales_data", "SalesData")
@@ -188,8 +193,8 @@ async def test_sync_returns_dedupes_rows_and_skips_invalid_quantities(monkeypatc
 
 def test_resolve_orders_sync_window_uses_previous_started_at_when_available():
     service = DATA_EXTRACTION_MODULE.DataExtractionService(FakeDb())
-    previous_started_at = datetime(2026, 4, 13, 8, 0, 0)
-    previous_succeeded_at = datetime(2026, 4, 13, 8, 20, 0)
+    previous_started_at = datetime.utcnow() - timedelta(hours=2)
+    previous_succeeded_at = previous_started_at + timedelta(minutes=20)
 
     created_after, created_before = service._resolve_orders_sync_window(
         SimpleNamespace(
@@ -323,3 +328,68 @@ async def test_sync_account_continues_when_inventory_step_fails(monkeypatch):
     assert "Inventory sync warning" in account.sync_error_message
     assert account.last_sync_at is not None
     assert account.last_sync_succeeded_at is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_account_allows_ads_only_accounts(monkeypatch):
+    account = SimpleNamespace(
+        id=uuid4(),
+        account_name="Ads only",
+        account_type=AccountType.SELLER,
+        sp_api_refresh_token_encrypted=None,
+        advertising_refresh_token_encrypted="encrypted-ads-token",
+        last_sync_started_at=None,
+        last_sync_succeeded_at=None,
+        last_sync_at=None,
+        sync_status=SyncStatus.PENDING,
+        sync_error_message=None,
+        sync_error_code=None,
+        sync_error_kind=None,
+    )
+    db = FakeSyncDb(account)
+    service = DATA_EXTRACTION_MODULE.DataExtractionService(db)
+    call_order = []
+
+    class _FakeSelect:
+        def where(self, *_args, **_kwargs):
+            return self
+
+    async def fake_touch(_account):
+        return None
+
+    async def fake_load_organization(_account):
+        return SimpleNamespace(id=uuid4())
+
+    class MissingCredentialsError(DATA_EXTRACTION_MODULE.AmazonAPIError):
+        def __init__(self):
+            self.message = "No SP-API refresh token available"
+            self.error_code = "MISSING_CREDENTIALS"
+            super().__init__(self.message)
+
+    def fake_sp_client(*_args, **_kwargs):
+        raise MissingCredentialsError()
+
+    async def fake_advertising(_account, _organization):
+        call_order.append("advertising")
+        return 17
+
+    monkeypatch.setattr(DATA_EXTRACTION_MODULE, "select", lambda *_args, **_kwargs: _FakeSelect())
+    monkeypatch.setattr(DATA_EXTRACTION_MODULE, "AmazonAccount", SimpleNamespace(id=object()))
+    monkeypatch.setattr(service, "_load_organization", fake_load_organization)
+    monkeypatch.setattr(service, "_create_sp_api_client", fake_sp_client)
+    monkeypatch.setattr(service, "_touch_sync", fake_touch)
+    monkeypatch.setattr(service, "sync_advertising", fake_advertising)
+
+    result = await service.sync_account(account.id)
+
+    assert result["status"] == "success"
+    assert result["sales_records"] == 0
+    assert result["inventory_records"] == 0
+    assert result["order_records"] == 0
+    assert result["return_records"] == 0
+    assert result["products"] == 0
+    assert result["advertising_records"] == 17
+    assert call_order == ["advertising"]
+    assert account.sync_status == SyncStatus.SUCCESS
+    assert account.sync_error_kind == "warning"
+    assert account.sync_error_code == "MISSING_CREDENTIALS"

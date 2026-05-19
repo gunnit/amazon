@@ -6,6 +6,7 @@ from app.api.v1 import (
     alerts,
     analytics,
     auth,
+    brand_analysis,
     catalog,
     exports,
     forecasts,
@@ -27,4 +28,5 @@ api_router.include_router(exports.router, prefix="/exports", tags=["Exports"])
 api_router.include_router(google_sheets.router, prefix="/google-sheets", tags=["Google Sheets"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["Alerts"])
 api_router.include_router(market_research.router, prefix="/market-research", tags=["Market Research"])
+api_router.include_router(brand_analysis.router, prefix="/brand-analysis", tags=["Brand Analysis"])
 api_router.include_router(recommendations.router, prefix="/recommendations", tags=["Strategic Recommendations"])

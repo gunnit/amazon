@@ -58,11 +58,29 @@ advertising_module.AdvertisingMetrics = _TableProxy(
     "date",
     "attributed_sales_7d",
 )
+advertising_module.AdvertisingMetricsByAsin = _TableProxy(
+    "advertising_metrics_by_asin",
+    "account_id",
+    "asin",
+    "date",
+    "cost",
+    "attributed_sales_7d",
+)
 sys.modules["app.models.advertising"] = advertising_module
 
 product_module = types.ModuleType("app.models.product")
-product_module.Product = _TableProxy("products", "account_id", "asin", "title")
-product_module.BSRHistory = type("BSRHistory", (), {})
+product_module.Product = _TableProxy(
+    "products",
+    "account_id",
+    "asin",
+    "title",
+    "category",
+    "current_bsr",
+    "review_count",
+    "updated_at",
+    "id",
+)
+product_module.BSRHistory = _TableProxy("bsr_history", "product_id", "date", "bsr")
 sys.modules["app.models.product"] = product_module
 
 data_extraction_module = types.ModuleType("app.services.data_extraction")
@@ -74,6 +92,14 @@ service_module = module_from_spec(service_spec)
 assert service_spec is not None and service_spec.loader is not None
 service_spec.loader.exec_module(service_module)
 AnalyticsService = service_module.AnalyticsService
+
+for module_name in (
+    "app.models.sales_data",
+    "app.models.advertising",
+    "app.models.product",
+    "app.services.data_extraction",
+):
+    sys.modules.pop(module_name, None)
 
 
 class FakeResult:

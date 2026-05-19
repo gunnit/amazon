@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { User, Bell, Shield, Database, Loader2, CheckCircle2, Globe, AlertTriangle, Trash2, Store, Key } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -18,7 +18,6 @@ import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/store/authStore'
 import { authApi, exportsApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
-import { AccountsSection } from '@/components/settings/AccountsSection'
 import { GoogleSheetsIntegration } from '@/components/settings/GoogleSheetsIntegration'
 import type { Language } from '@/store/languageStore'
 import type { ApiKeysResponse } from '@/types'
@@ -87,6 +86,8 @@ export default function Settings() {
     sp_api_aws_access_key: '',
     sp_api_aws_secret_key: '',
     sp_api_role_arn: '',
+    advertising_client_id: '',
+    advertising_client_secret: '',
   })
 
   const { data: savedApiKeys } = useQuery<ApiKeysResponse>({
@@ -102,6 +103,8 @@ export default function Settings() {
       if (data.sp_api_aws_access_key) payload.sp_api_aws_access_key = data.sp_api_aws_access_key
       if (data.sp_api_aws_secret_key) payload.sp_api_aws_secret_key = data.sp_api_aws_secret_key
       if (data.sp_api_role_arn) payload.sp_api_role_arn = data.sp_api_role_arn
+      if (data.advertising_client_id) payload.advertising_client_id = data.advertising_client_id
+      if (data.advertising_client_secret) payload.advertising_client_secret = data.advertising_client_secret
       return authApi.updateApiKeys(payload)
     },
     onSuccess: () => {
@@ -112,6 +115,8 @@ export default function Settings() {
         sp_api_aws_access_key: '',
         sp_api_aws_secret_key: '',
         sp_api_role_arn: '',
+        advertising_client_id: '',
+        advertising_client_secret: '',
       })
       toast({ title: t('settings.apiKeysSaved') })
     },
@@ -286,7 +291,20 @@ export default function Settings() {
         </TabsList>
 
         <TabsContent value="accounts" className="space-y-4">
-          <AccountsSection embedded />
+          <Card>
+            <CardHeader>
+              <CardTitle>{t('accounts.title')}</CardTitle>
+              <CardDescription>{t('settings.accountsMovedDesc')}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild>
+                <Link to="/accounts">
+                  <Store className="mr-2 h-4 w-4" />
+                  {t('settings.openAccounts')}
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="profile" className="space-y-4">
@@ -386,6 +404,8 @@ export default function Settings() {
                     { label: t('settings.awsAccessKey'), set: !!savedApiKeys.sp_api_aws_access_key, value: savedApiKeys.sp_api_aws_access_key },
                     { label: t('settings.awsSecretKey'), set: savedApiKeys.has_aws_secret_key },
                     { label: t('settings.roleArn'), set: !!savedApiKeys.sp_api_role_arn, value: savedApiKeys.sp_api_role_arn },
+                    { label: t('accounts.adsClientId'), set: !!savedApiKeys.advertising_client_id, value: savedApiKeys.advertising_client_id },
+                    { label: t('accounts.adsClientSecret'), set: savedApiKeys.has_advertising_client_secret },
                   ]
                   const setCount = fields.filter(f => f.set).length
                   const allSet = setCount === fields.length
@@ -485,12 +505,39 @@ export default function Settings() {
                   </p>
                 </div>
 
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="advertisingClientId">{t('accounts.adsClientId')}</Label>
+                    <Input
+                      id="advertisingClientId"
+                      value={apiKeys.advertising_client_id}
+                      onChange={(e) => setApiKeys({ ...apiKeys, advertising_client_id: e.target.value })}
+                      placeholder={savedApiKeys?.advertising_client_id || 'amzn1.application-oa2-client.xxx'}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="advertisingClientSecret">{t('accounts.adsClientSecret')}</Label>
+                    <Input
+                      id="advertisingClientSecret"
+                      type="password"
+                      value={apiKeys.advertising_client_secret}
+                      onChange={(e) => setApiKeys({ ...apiKeys, advertising_client_secret: e.target.value })}
+                      placeholder={savedApiKeys?.has_advertising_client_secret ? '••••••••' : 'Your Ads client secret'}
+                    />
+                  </div>
+                </div>
+
                 <div className="flex gap-3">
                   <Button type="submit" disabled={apiKeysMutation.isPending}>
                     {apiKeysMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     {t('settings.saveApiKeys')}
                   </Button>
-                  {savedApiKeys && (savedApiKeys.sp_api_client_id || savedApiKeys.has_client_secret) && (
+                  {savedApiKeys && (
+                    savedApiKeys.sp_api_client_id ||
+                    savedApiKeys.has_client_secret ||
+                    savedApiKeys.advertising_client_id ||
+                    savedApiKeys.has_advertising_client_secret
+                  ) && (
                     <Button
                       type="button"
                       variant="destructive"

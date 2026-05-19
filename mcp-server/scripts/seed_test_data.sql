@@ -72,15 +72,90 @@ BEGIN
     END LOOP;
   END LOOP;
 
-  -- Inventory: latest snapshot only
-  FOR j IN 1..array_length(asin_list, 1) LOOP
+  -- Inventory: 60 days of snapshots per ASIN, with distinct profiles per product:
+  --   B0SEED0001 Speaker Pro  — restock arrived 24d ago (280 units), now ~248
+  --   B0SEED0002 Cable Bundle — critical low: 80 → 3 over 60d, no restock (drives alert)
+  --   B0SEED0003 Yoga Mat     — big restock arrived 4d ago (240 units), now ~220
+  --   B0SEED0004 Coffee Press — stable mid-stock, slow burn, some reserved
+  --   B0SEED0005 Desk Lamp    — MFN-dominated (FBA tiny, MFN ~320)
+  FOR i IN 0..59 LOOP
+    d := v_today - i;
+
+    -- B0SEED0001 Speaker Pro (FBA, with restock event 24d ago)
     INSERT INTO inventory_data (
       account_id, snapshot_date, asin, sku, fnsku,
       afn_fulfillable_quantity, afn_inbound_working_quantity, afn_inbound_shipped_quantity,
       afn_reserved_quantity, afn_total_quantity, mfn_fulfillable_quantity
     ) VALUES (
-      v_acc_id, v_today, asin_list[j], 'SKU-' || asin_list[j], 'FNSKU' || j,
-      (CASE WHEN j = 2 THEN 3 ELSE 50 + j*10 END), 5, 0, 2, 50 + j*10 + 7, 0
+      v_acc_id, d, 'B0SEED0001', 'SKU-B0SEED0001', 'FNSKU1',
+      (CASE WHEN i < 24 THEN GREATEST(5, (280 - 1.33*(24-i))::int)
+            ELSE GREATEST(5, (5 + 1.3*(i-24))::int) END),
+      (CASE WHEN i BETWEEN 28 AND 32 THEN 280 ELSE 0 END),
+      (CASE WHEN i BETWEEN 25 AND 27 THEN 280 ELSE 0 END),
+      (8 + (i % 5))::int,
+      (CASE WHEN i < 24 THEN GREATEST(5, (280 - 1.33*(24-i))::int)
+            ELSE GREATEST(5, (5 + 1.3*(i-24))::int) END)
+        + (CASE WHEN i BETWEEN 25 AND 32 THEN 280 ELSE 0 END)
+        + (8 + (i % 5))::int,
+      0
+    );
+
+    -- B0SEED0002 Cable Bundle (critical low, 3 units today)
+    INSERT INTO inventory_data (
+      account_id, snapshot_date, asin, sku, fnsku,
+      afn_fulfillable_quantity, afn_inbound_working_quantity, afn_inbound_shipped_quantity,
+      afn_reserved_quantity, afn_total_quantity, mfn_fulfillable_quantity
+    ) VALUES (
+      v_acc_id, d, 'B0SEED0002', 'SKU-B0SEED0002', 'FNSKU2',
+      (CASE WHEN i = 0 THEN 3 ELSE GREATEST(3, (3 + (i*77.0/59.0))::int) END),
+      0, 0, (CASE WHEN i = 0 THEN 0 ELSE 2 END)::int,
+      (CASE WHEN i = 0 THEN 3 ELSE GREATEST(3, (3 + (i*77.0/59.0))::int) + 2 END)::int,
+      0
+    );
+
+    -- B0SEED0003 Yoga Mat (FBA, big restock event 4d ago)
+    INSERT INTO inventory_data (
+      account_id, snapshot_date, asin, sku, fnsku,
+      afn_fulfillable_quantity, afn_inbound_working_quantity, afn_inbound_shipped_quantity,
+      afn_reserved_quantity, afn_total_quantity, mfn_fulfillable_quantity
+    ) VALUES (
+      v_acc_id, d, 'B0SEED0003', 'SKU-B0SEED0003', 'FNSKU3',
+      (CASE WHEN i < 4 THEN GREATEST(30, (240 - 5*(4-i))::int)
+            ELSE GREATEST(30, (30 + 0.8*(i-4))::int) END),
+      (CASE WHEN i BETWEEN 8 AND 11 THEN 240 ELSE 0 END),
+      (CASE WHEN i BETWEEN 5 AND 7 THEN 240 ELSE 0 END),
+      (5 + (i % 4))::int,
+      (CASE WHEN i < 4 THEN GREATEST(30, (240 - 5*(4-i))::int)
+            ELSE GREATEST(30, (30 + 0.8*(i-4))::int) END)
+        + (CASE WHEN i BETWEEN 5 AND 11 THEN 240 ELSE 0 END)
+        + (5 + (i % 4))::int,
+      0
+    );
+
+    -- B0SEED0004 Coffee Press (stable mid-stock, no restock window)
+    INSERT INTO inventory_data (
+      account_id, snapshot_date, asin, sku, fnsku,
+      afn_fulfillable_quantity, afn_inbound_working_quantity, afn_inbound_shipped_quantity,
+      afn_reserved_quantity, afn_total_quantity, mfn_fulfillable_quantity
+    ) VALUES (
+      v_acc_id, d, 'B0SEED0004', 'SKU-B0SEED0004', 'FNSKU4',
+      GREATEST(40, (95 + 1.0*i)::int),
+      0, 0, (10 + (i % 4))::int,
+      GREATEST(40, (95 + 1.0*i)::int) + (10 + (i % 4))::int,
+      0
+    );
+
+    -- B0SEED0005 Desk Lamp (MFN-dominated)
+    INSERT INTO inventory_data (
+      account_id, snapshot_date, asin, sku, fnsku,
+      afn_fulfillable_quantity, afn_inbound_working_quantity, afn_inbound_shipped_quantity,
+      afn_reserved_quantity, afn_total_quantity, mfn_fulfillable_quantity
+    ) VALUES (
+      v_acc_id, d, 'B0SEED0005', 'SKU-B0SEED0005', 'FNSKU5',
+      (15 + (i % 6))::int,
+      0, 0, (1 + (i % 3))::int,
+      (15 + (i % 6))::int + (1 + (i % 3))::int,
+      GREATEST(150, (320 + 3*i)::int)
     );
   END LOOP;
 

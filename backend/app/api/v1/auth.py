@@ -273,37 +273,51 @@ def _mask_value(value: str | None) -> str | None:
     return value[:8] + "***" + value[-3:]
 
 
-def _build_api_keys_response(sp_api: dict | None) -> OrganizationApiKeysResponse:
-    """Build a masked response from stored sp_api settings."""
-    if not sp_api:
+def _build_api_keys_response(
+    sp_api: dict | None,
+    advertising_api: dict | None = None,
+) -> OrganizationApiKeysResponse:
+    """Build a masked response from stored Amazon API settings."""
+    if not sp_api and not advertising_api:
         return OrganizationApiKeysResponse()
 
     client_id = None
     aws_access_key = None
     try:
-        if sp_api.get("client_id_enc"):
+        if sp_api and sp_api.get("client_id_enc"):
             client_id = _mask_value(decrypt_value(sp_api["client_id_enc"]))
     except Exception:
         client_id = "(decryption error)"
     try:
-        if sp_api.get("aws_access_key_enc"):
+        if sp_api and sp_api.get("aws_access_key_enc"):
             aws_access_key = _mask_value(decrypt_value(sp_api["aws_access_key_enc"]))
     except Exception:
         aws_access_key = "(decryption error)"
 
     role_arn = None
     try:
-        if sp_api.get("role_arn_enc"):
+        if sp_api and sp_api.get("role_arn_enc"):
             role_arn = decrypt_value(sp_api["role_arn_enc"])
     except Exception:
         role_arn = "(decryption error)"
+
+    advertising_client_id = None
+    try:
+        if advertising_api and advertising_api.get("client_id_enc"):
+            advertising_client_id = _mask_value(decrypt_value(advertising_api["client_id_enc"]))
+    except Exception:
+        advertising_client_id = "(decryption error)"
 
     return OrganizationApiKeysResponse(
         sp_api_client_id=client_id,
         sp_api_aws_access_key=aws_access_key,
         sp_api_role_arn=role_arn,
-        has_client_secret=bool(sp_api.get("client_secret_enc")),
-        has_aws_secret_key=bool(sp_api.get("aws_secret_key_enc")),
+        advertising_client_id=advertising_client_id,
+        has_client_secret=bool(sp_api and sp_api.get("client_secret_enc")),
+        has_aws_secret_key=bool(sp_api and sp_api.get("aws_secret_key_enc")),
+        has_advertising_client_secret=bool(
+            advertising_api and advertising_api.get("client_secret_enc")
+        ),
     )
 
 
@@ -313,8 +327,10 @@ async def get_organization_api_keys(
     organization: CurrentOrganization,
 ):
     """Get masked SP-API credentials for the organization."""
-    sp_api = (organization.settings or {}).get("sp_api")
-    return _build_api_keys_response(sp_api)
+    settings = organization.settings or {}
+    sp_api = settings.get("sp_api")
+    advertising_api = settings.get("advertising_api")
+    return _build_api_keys_response(sp_api, advertising_api)
 
 
 @router.put("/organization/api-keys", response_model=OrganizationApiKeysResponse)
@@ -327,6 +343,7 @@ async def update_organization_api_keys(
     """Save SP-API credentials for the organization (encrypted)."""
     current_settings = dict(organization.settings or {})
     sp_api = dict(current_settings.get("sp_api", {}))
+    advertising_api = dict(current_settings.get("advertising_api", {}))
 
     if keys_in.sp_api_client_id is not None:
         sp_api["client_id_enc"] = encrypt_value(keys_in.sp_api_client_id)
@@ -338,13 +355,18 @@ async def update_organization_api_keys(
         sp_api["aws_secret_key_enc"] = encrypt_value(keys_in.sp_api_aws_secret_key)
     if keys_in.sp_api_role_arn is not None:
         sp_api["role_arn_enc"] = encrypt_value(keys_in.sp_api_role_arn)
+    if keys_in.advertising_client_id is not None:
+        advertising_api["client_id_enc"] = encrypt_value(keys_in.advertising_client_id)
+    if keys_in.advertising_client_secret is not None:
+        advertising_api["client_secret_enc"] = encrypt_value(keys_in.advertising_client_secret)
 
     current_settings["sp_api"] = sp_api
+    current_settings["advertising_api"] = advertising_api
     organization.settings = current_settings
     await db.flush()
     await db.refresh(organization)
 
-    return _build_api_keys_response(sp_api)
+    return _build_api_keys_response(sp_api, advertising_api)
 
 
 @router.delete("/organization/api-keys", response_model=OrganizationApiKeysResponse)
@@ -356,8 +378,9 @@ async def delete_organization_api_keys(
     """Remove all saved SP-API credentials for the organization."""
     current_settings = dict(organization.settings or {})
     current_settings.pop("sp_api", None)
+    current_settings.pop("advertising_api", None)
     organization.settings = current_settings
     await db.flush()
     await db.refresh(organization)
 
-    return _build_api_keys_response(None)
+    return _build_api_keys_response(None, None)

@@ -780,6 +780,120 @@ def _call_sp_api_with_single_retry(
         return None, _classify_fetch_exception(exc)
 
 
+def _extract_rating_and_reviews(attributes: dict) -> tuple[Optional[float], Optional[int]]:
+    """Pull average rating and review count from a catalog attributes payload.
+
+    SP-API exposes these under shapes that vary by marketplace. We probe a
+    few well-known paths and return ``(None, None)`` if nothing is found.
+    Never invent or default a value.
+    """
+    rating: Optional[float] = None
+    reviews: Optional[int] = None
+
+    def _read_number(value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, dict):
+            for key in ("value", "average", "Value"):
+                if key in value:
+                    return _read_number(value[key])
+        if isinstance(value, list) and value:
+            return _read_number(value[0])
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    customer_reviews = attributes.get("customer_reviews") or attributes.get("customerReviews") or {}
+    if isinstance(customer_reviews, dict):
+        rating_value = _read_number(customer_reviews.get("average_rating") or customer_reviews.get("averageRating"))
+        reviews_value = _read_number(customer_reviews.get("review_count") or customer_reviews.get("reviewCount"))
+        if rating_value is not None:
+            rating = float(rating_value)
+        if reviews_value is not None:
+            reviews = int(reviews_value)
+
+    return rating, reviews
+
+
+def _extract_text_attribute_values(attributes: dict, *keys: str) -> list[str]:
+    """Extract text values from SP-API catalog attribute shapes.
+
+    Attribute payloads vary by marketplace and may be a scalar, a dict with a
+    ``value`` field, or a list of marketplace-specific dicts. Missing values
+    return an empty list so downstream code can report N/A instead of guessing.
+    """
+    values: list[str] = []
+
+    def walk(node: Any) -> None:
+        if node is None:
+            return
+        if isinstance(node, str):
+            text = node.strip()
+            if text:
+                values.append(text)
+            return
+        if isinstance(node, (int, float)):
+            values.append(str(node))
+            return
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+            return
+        if isinstance(node, dict):
+            if "value" in node:
+                walk(node.get("value"))
+                return
+            for nested_key in ("display_value", "displayValue", "name"):
+                if nested_key in node:
+                    walk(node.get(nested_key))
+                    return
+
+    for key in keys:
+        walk(attributes.get(key))
+    # Preserve order while deduping repeated marketplace values.
+    return list(dict.fromkeys(values))
+
+
+def _extract_offers_metadata(payload: Any) -> tuple[Optional[int], Optional[str]]:
+    """Best-effort extraction of (sellers_count, buy_box_owner) from offers payloads.
+
+    Returns ``(None, None)`` when the payload doesn't expose this data.
+    """
+    if not payload:
+        return None, None
+
+    offers = None
+    if isinstance(payload, dict):
+        offers = payload.get("Offers") or payload.get("offers")
+        if offers is None:
+            summary = payload.get("Summary") or payload.get("summary") or {}
+            total_offer = summary.get("TotalOfferCount") or summary.get("totalOfferCount")
+            if total_offer is not None:
+                return int(total_offer), None
+    if not offers:
+        return None, None
+
+    sellers_count = len(offers)
+    buy_box_owner = None
+    for offer in offers:
+        if not isinstance(offer, dict):
+            continue
+        is_buy_box = offer.get("IsBuyBoxWinner") or offer.get("isBuyBoxWinner")
+        if is_buy_box:
+            buy_box_owner = (
+                offer.get("SellerId")
+                or offer.get("sellerId")
+                or offer.get("seller_name")
+                or offer.get("sellerName")
+            )
+            if buy_box_owner:
+                break
+    return sellers_count, buy_box_owner
+
+
 def _fetch_product_data(client, asin: str) -> dict:
     """Fetch product catalog details and competitive pricing for an ASIN."""
     snapshot = {"asin": asin}
@@ -790,7 +904,7 @@ def _fetch_product_data(client, asin: str) -> dict:
         response = api.get_catalog_item(
             asin=asin,
             marketplaceIds=client.marketplace.marketplace_id,
-            includedData=["summaries", "salesRanks", "classifications", "attributes"],
+            includedData=["summaries", "salesRanks", "classifications", "attributes", "images"],
         )
         return response.payload
 
@@ -817,6 +931,12 @@ def _fetch_product_data(client, asin: str) -> dict:
                 classification.get("displayName")
                 or classification.get("classification", {}).get("displayName")
             )
+            # Subcategory = last (most specific) node in the classification path.
+            display_name = (
+                classification.get("classification", {}).get("displayName")
+                or classification.get("displayName")
+            )
+            snapshot["subcategory"] = display_name or snapshot.get("category")
 
         sales_ranks = catalog.get("salesRanks", [])
         if sales_ranks:
@@ -829,28 +949,85 @@ def _fetch_product_data(client, asin: str) -> dict:
                 if "bsr" in snapshot:
                     break
 
+        # Customer reviews (rating + review_count) live under attributes when
+        # SP-API exposes them. Failure to find them must not invent a value.
+        attributes = catalog.get("attributes") or {}
+        rating, review_count = _extract_rating_and_reviews(attributes)
+        if rating is not None:
+            snapshot["rating"] = rating
+        if review_count is not None:
+            snapshot["review_count"] = review_count
+
+        bullet_values = _extract_text_attribute_values(
+            attributes,
+            "bullet_point",
+            "bulletPoints",
+            "feature_bullets",
+        )
+        if bullet_values:
+            snapshot["bullets"] = bullet_values
+            snapshot["bullet_count"] = len(bullet_values)
+
+        description_values = _extract_text_attribute_values(
+            attributes,
+            "product_description",
+            "productDescription",
+            "description",
+        )
+        if description_values:
+            snapshot["description"] = "\n".join(description_values)
+
+        generic_keywords = _extract_text_attribute_values(
+            attributes,
+            "generic_keyword",
+            "genericKeywords",
+            "search_terms",
+        )
+        if generic_keywords:
+            snapshot["generic_keywords"] = generic_keywords
+
+        # Image count from the images array (catalog may return marketplace-
+        # specific image lists). Count distinct image entries across all
+        # variants. ``images`` key shape: list of {"marketplaceId": ..., "images": [{"link": ...}, ...]}.
+        images_payload = catalog.get("images") or []
+        image_count = 0
+        for entry in images_payload:
+            if isinstance(entry, dict):
+                items = entry.get("images") or []
+                image_count = max(image_count, len(items))
+        if image_count:
+            snapshot["images_count"] = image_count
+
     def _fetch_price():
         if client.is_vendor:
             logger.debug(
                 "Skipping pricing lookup for %s because Product Pricing API is seller-only",
                 asin,
             )
-            return None
+            return None, None
 
         api = client._products_api()
         response = api.get_competitive_pricing_for_asins([asin])
         price_value = client._extract_price_amount(response.payload)
-        if price_value is not None:
-            return price_value
 
         offers_response = api.get_item_offers(asin=asin, item_condition="New")
-        return client._extract_price_amount(offers_response.payload)
+        offers_payload = getattr(offers_response, "payload", None)
+        sellers_count, buy_box_owner = _extract_offers_metadata(offers_payload)
+        offer_snapshot = client._extract_offer_snapshot(offers_payload)
+        if price_value is None:
+            price_value = client._extract_price_amount(offers_payload)
+        return price_value, {
+            "sellers_count": sellers_count,
+            "buy_box_owner": buy_box_owner,
+            "offer_snapshot": offer_snapshot,
+        }
 
-    price, pricing_error = _call_sp_api_with_single_retry(
+    price_result, pricing_error = _call_sp_api_with_single_retry(
         _fetch_price,
         asin=asin,
         operation="pricing",
     )
+    price, offers_meta = (price_result if isinstance(price_result, tuple) else (price_result, None))
     if pricing_error:
         fetch_errors.append(f"pricing:{pricing_error}")
         if pricing_error == "forbidden":
@@ -859,6 +1036,23 @@ def _fetch_product_data(client, asin: str) -> dict:
         price = client._extract_catalog_price_amount(catalog)
     if price is not None:
         snapshot["price"] = float(price)
+    if offers_meta:
+        if offers_meta.get("sellers_count") is not None:
+            snapshot["sellers_count"] = int(offers_meta["sellers_count"])
+            snapshot["offer_count"] = int(offers_meta["sellers_count"])
+        if offers_meta.get("buy_box_owner"):
+            snapshot["buy_box_owner"] = str(offers_meta["buy_box_owner"])
+        if offers_meta.get("offer_snapshot"):
+            snapshot["offer_snapshot"] = offers_meta["offer_snapshot"]
+
+    # Status: prefer "active" if a price/offer was found, "inactive" if the
+    # catalog returned data with no offers, otherwise "unknown".
+    if snapshot.get("price") is not None or snapshot.get("sellers_count"):
+        snapshot["status"] = "active"
+    elif catalog and not snapshot.get("price"):
+        snapshot["status"] = "inactive"
+    else:
+        snapshot["status"] = "unknown"
 
     if fetch_errors:
         snapshot["fetch_errors"] = fetch_errors

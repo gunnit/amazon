@@ -912,6 +912,7 @@ export default function Analytics() {
                                     <ArrowUpDown className="h-3.5 w-3.5" />
                                   </button>
                                 </th>
+                                <th className="px-4 py-3 font-semibold">{t('analytics.tableAdSpend')}</th>
                                 <th className="px-4 py-3 font-semibold">{t('analytics.tableSignal')}</th>
                                 <th className="px-4 py-3 font-semibold">{t('analytics.tableSparkline')}</th>
                               </tr>
@@ -938,6 +939,20 @@ export default function Analytics() {
                                   <td className="px-4 py-3">
                                     {product.trend_score > 0 ? '+' : ''}
                                     {product.trend_score.toFixed(1)}
+                                  </td>
+                                  <td className="px-4 py-3 tabular-nums text-right">
+                                    {product.ad_spend > 0 ? (
+                                      <div>
+                                        <span className="text-sm">{formatCurrency(product.ad_spend)}</span>
+                                        {product.acos != null && (
+                                          <p className="text-xs text-muted-foreground mt-0.5">
+                                            ACoS {product.acos.toFixed(1)}%
+                                          </p>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-muted-foreground">-</span>
+                                    )}
                                   </td>
                                   <td className="px-4 py-3 text-muted-foreground">
                                     <div className="max-w-[260px]">

@@ -137,6 +137,7 @@ async def test_get_product_trends_classifies_rising_declining_and_stable_product
                 _inventory_row("B0DOWN", date(2026, 3, 31), 40),
                 _inventory_row("B0DOWN", date(2026, 3, 24), 60),
             ],
+            [],
         ]
     )
 
@@ -173,6 +174,7 @@ async def test_get_product_trends_handles_missing_bsr_and_review_data():
             [
                 _metadata_row(account_id, "B0NOBSR", "No BSR", "Kitchen", current_bsr=None, review_count=None),
             ],
+            [],
             [],
             [],
         ]
@@ -220,6 +222,7 @@ async def test_declining_fast_creates_warning_alert():
             [
                 _metadata_row(account_id, "B0ALERT", "Alerted Product", "Home", current_bsr=1800),
             ],
+            [],
             [],
             [],
             [],

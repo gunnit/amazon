@@ -1,9 +1,9 @@
 import axios from 'axios'
 import type {
   User, AuthTokens, Organization,
-  AmazonAccount, AccountSummary,
+  AmazonAccount, AccountSummary, AdvertisingProfile, AdvertisingProfilesRequest,
   DashboardKPIs, TrendData, SalesAggregated, ComparisonResponse,
-  AdsVsOrganicResponse,
+  AdsVsOrganicResponse, AdvertisingInsights,
   CategorySalesData, HourlyOrdersData, ProductTrendsResponse, ReturnsAnalyticsResponse, TopPerformersResponse,
   Forecast, Product,
   ForecastExportJob,
@@ -13,6 +13,7 @@ import type {
   GoogleSheetsConnection, GoogleSheetsSync, GoogleSheetsSyncRun,
   ApiKeysUpdate, ApiKeysResponse,
   MarketResearchReport, MarketResearchListItem, ComparisonMatrixResponse, MarketSearchResponse, CompetitorSuggestion,
+  BrandAnalysisJob, BrandAnalysisListItem,
   AlertRule, AlertBulkMutationResponse, AlertListResponse, AlertMutationResponse, AlertStatus, AlertSummary, AlertType,
 } from '@/types'
 
@@ -181,6 +182,11 @@ export const accountsApi = {
 
   update: async (id: string, data: Partial<AmazonAccount>): Promise<AmazonAccount> => {
     const response = await api.put(`/accounts/${id}`, data)
+    return response.data
+  },
+
+  listAdvertisingProfiles: async (data: AdvertisingProfilesRequest): Promise<AdvertisingProfile[]> => {
+    const response = await api.post('/accounts/advertising/profiles', data)
     return response.data
   },
 
@@ -484,6 +490,15 @@ export const analyticsApi = {
     limit?: number
   }): Promise<ProductTrendsResponse> => {
     const response = await api.get('/analytics/product-trends', { params })
+    return response.data
+  },
+
+  getAdvertisingInsights: async (params: {
+    start_date: string
+    end_date: string
+    account_ids?: string[]
+  }): Promise<AdvertisingInsights> => {
+    const response = await api.get('/analytics/advertising', { params })
     return response.data
   },
 
@@ -911,6 +926,56 @@ export const marketResearchApi = {
   }): Promise<MarketSearchResponse> => {
     const response = await api.post('/market-research/market-search', params)
     return response.data
+  },
+}
+
+export const brandAnalysisApi = {
+  create: async (params: {
+    brand_name: string
+    account_id?: string
+    language?: 'en' | 'it'
+    mode?: 'internal' | 'manual'
+    market_type?: 'brand' | 'asin'
+    market_query?: string
+    asin_list?: string[]
+  }): Promise<BrandAnalysisJob> => {
+    const response = await api.post('/brand-analysis', params)
+    return response.data
+  },
+
+  list: async (params?: { limit?: number; offset?: number }): Promise<BrandAnalysisListItem[]> => {
+    const response = await api.get('/brand-analysis', { params })
+    return response.data
+  },
+
+  get: async (id: string): Promise<BrandAnalysisJob> => {
+    const response = await api.get(`/brand-analysis/${id}`)
+    return response.data
+  },
+
+  upload: async (id: string, year: 2024 | 2025, file: File): Promise<BrandAnalysisJob> => {
+    const form = new FormData()
+    form.append('file', file)
+    const response = await api.post(`/brand-analysis/${id}/upload/${year}`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return response.data
+  },
+
+  start: async (id: string): Promise<BrandAnalysisJob> => {
+    const response = await api.post(`/brand-analysis/${id}/start`)
+    return response.data
+  },
+
+  download: async (id: string): Promise<Blob> => {
+    const response = await api.get(`/brand-analysis/${id}/download`, {
+      responseType: 'blob',
+    })
+    return response.data
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await api.delete(`/brand-analysis/${id}`)
   },
 }
 

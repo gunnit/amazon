@@ -33,6 +33,7 @@ export interface AmazonAccount {
   account_type: AccountType
   marketplace_id: string
   marketplace_country: string
+  advertising_profile_id: string | null
   is_active: boolean
   last_sync_at: string | null
   sync_status: SyncStatus
@@ -45,8 +46,27 @@ export interface AmazonAccount {
   sync_error_code?: string | null
   sync_error_kind?: string | null
   has_refresh_token: boolean
+  has_advertising_refresh_token: boolean
   created_at: string
   updated_at: string
+}
+
+export interface AdvertisingProfilesRequest {
+  refresh_token?: string
+  account_id?: string
+  marketplace_country?: string
+  client_id?: string
+  client_secret?: string
+}
+
+export interface AdvertisingProfile {
+  profile_id: string
+  account_name: string | null
+  country_code: string | null
+  marketplace_id: string | null
+  account_type: string | null
+  currency: string | null
+  timezone: string | null
 }
 
 export interface AccountSummary {
@@ -92,6 +112,7 @@ export interface DashboardKPIs {
   total_orders: MetricValue
   average_order_value: MetricValue
   return_rate: MetricValue
+  total_ad_spend: MetricValue
   roas: MetricValue
   acos: MetricValue
   ctr: MetricValue
@@ -199,11 +220,16 @@ export interface TopPerformerData {
   total_revenue: number
   total_units: number
   total_orders: number
+  ad_spend: number
+  ad_sales: number
+  acos: number | null
+  roas: number | null
 }
 
 export interface TopPerformersResponse {
   by_revenue: TopPerformerData[]
   by_units: TopPerformerData[]
+  by_growth: TopPerformerData[]
 }
 
 export interface HourlyOrdersData {
@@ -301,6 +327,10 @@ export interface ProductTrendItem {
   previous_inventory: number | null
   inventory_days_of_cover: number | null
   review_velocity_change_percent: number | null
+  ad_spend: number
+  ad_sales: number
+  acos: number | null
+  roas: number | null
   supporting_signals: string[]
   recent_sales: ProductTrendTimeseriesPoint[]
   data_quality: TrendDataQuality
@@ -389,6 +419,33 @@ export interface AdvertisingMetricsItem {
   cpc: number | string | null
   acos: number | string | null
   roas: number | string | null
+}
+
+export interface CampaignInsight {
+  campaign_id: string
+  campaign_name: string
+  campaign_type: string
+  state: string
+  spend: number
+  sales: number
+  impressions: number
+  clicks: number
+  roas: number
+  acos: number
+  ctr: number
+}
+
+export interface AdvertisingInsights {
+  total_spend: number
+  total_sales: number
+  total_impressions: number
+  total_clicks: number
+  overall_roas: number
+  overall_acos: number
+  overall_ctr: number
+  top_campaigns: CampaignInsight[]
+  underperforming_campaigns: CampaignInsight[]
+  recommendations: string[]
 }
 
 export type ScheduledReportType = 'sales' | 'inventory' | 'advertising'
@@ -664,6 +721,124 @@ export interface CompetitorSuggestion {
   rating: number | null
 }
 
+// Brand Analysis Automation types
+export type BrandAnalysisStatus =
+  | 'pending'
+  | 'capability_checking'
+  | 'preflight_checking'
+  | 'internal_sync_requested'
+  | 'syncing_internal_data'
+  | 'internal_sync_completed'
+  | 'internal_sync_failed'
+  | 'collecting_source_data'
+  | 'enriching_catalog'
+  | 'generating_metrics'
+  | 'generating_narrative'
+  | 'analyzing'
+  | 'generating_pptx'
+  | 'completed'
+  | 'completed_with_limitations'
+  | 'failed'
+  | 'waiting_for_user_action'
+  // Legacy statuses kept for older jobs in the DB:
+  | 'configuring_market'
+  | 'waiting_for_ready'
+  | 'exporting_2025'
+  | 'exporting_2024'
+
+// `internal` is the canonical mode (Inthezon SP-API + Market Research).
+// The remaining values are kept only for backwards-compatibility with
+// older DB rows; the UI no longer exposes them as choices.
+export type BrandAnalysisMode =
+  | 'internal'
+  | 'manual'
+  | 'amazon_sp_api'
+  | 'helium10_api'
+  | 'helium10'
+
+export type BrandAnalysisErrorCode =
+  | 'internal_data_missing'
+  | 'missing_2024_data'
+  | 'missing_2025_data'
+  | 'insufficient_yearly_data'
+  | 'catalog_enrichment_partial'
+  | 'analysis_completed_with_missing_optional_fields'
+  | 'connected_account_required'
+  | 'manual_upload_required'
+  | 'internal_sync_failed'
+  | 'capability_missing_permission'
+
+export interface BrandAnalysisColumnValidationReport {
+  required_found: string[]
+  required_missing: string[]
+  optional_found: string[]
+  optional_missing: string[]
+  detected_mapping: Record<string, string>
+  available_columns: string[]
+}
+
+export interface BrandAnalysisSourceFile {
+  id: string
+  year: number
+  filename: string
+  content_type: string | null
+  file_size: number
+  row_count: number | null
+  columns: string[]
+  column_validation?: BrandAnalysisColumnValidationReport | null
+  created_at: string
+}
+
+export interface BrandAnalysisJob {
+  id: string
+  organization_id: string
+  created_by_id: string | null
+  account_id: string | null
+  brand_name: string
+  language: 'en' | 'it'
+  mode: BrandAnalysisMode
+  market_type: 'brand' | 'asin'
+  market_query: string | null
+  asin_list: string[] | null
+  status: BrandAnalysisStatus
+  progress_step: string | null
+  progress_pct: number
+  error_message: string | null
+  error_code?: BrandAnalysisErrorCode | string | null
+  data_source_name?: string | null
+  metrics: Record<string, unknown> | null
+  metric_provenance?: Record<string, unknown> | null
+  capability_matrix?: Record<string, unknown> | null
+  data_coverage?: Record<string, unknown> | null
+  limitations?: Record<string, unknown> | null
+  sync_attempt_count?: number
+  last_sync_error?: string | null
+  next_retry_at?: string | null
+  narrative: Record<string, unknown> | null
+  source_files: BrandAnalysisSourceFile[]
+  download_ready: boolean
+  artifact_filename: string | null
+  created_at: string
+  updated_at: string | null
+  completed_at: string | null
+}
+
+export interface BrandAnalysisListItem {
+  id: string
+  brand_name: string
+  language: 'en' | 'it'
+  mode: BrandAnalysisMode
+  market_type: 'brand' | 'asin'
+  status: BrandAnalysisStatus
+  progress_pct: number
+  error_message: string | null
+  error_code?: BrandAnalysisErrorCode | string | null
+  source_years: number[]
+  download_ready: boolean
+  created_at: string
+  completed_at: string | null
+}
+
 // Alert types
 export type AlertType = 'low_stock' | 'bsr_drop' | 'price_change' | 'sync_failure' | 'product_trend'
 export type AlertSeverity = 'info' | 'warning' | 'critical'
@@ -739,12 +914,16 @@ export interface ApiKeysUpdate {
   sp_api_aws_access_key?: string
   sp_api_aws_secret_key?: string
   sp_api_role_arn?: string
+  advertising_client_id?: string
+  advertising_client_secret?: string
 }
 
 export interface ApiKeysResponse {
   sp_api_client_id: string | null
   sp_api_aws_access_key: string | null
   sp_api_role_arn: string | null
+  advertising_client_id: string | null
   has_client_secret: boolean
   has_aws_secret_key: boolean
+  has_advertising_client_secret: boolean
 }

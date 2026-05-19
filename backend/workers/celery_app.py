@@ -23,6 +23,7 @@ celery_app = Celery(
         "workers.tasks.google_sheets",
         "workers.tasks.maintenance",
         "workers.tasks.strategic_recommendations",
+        "workers.tasks.brand_analysis",
     ],
 )
 

@@ -48,6 +48,29 @@ ADS_REGION_BY_COUNTRY: dict[str, str] = {
     "AE": "FE",
 }
 
+ADS_MARKETPLACE_BY_COUNTRY: dict[str, str] = {
+    "US": "ATVPDKIKX0DER",
+    "CA": "A2EUQ1WTGCTBG2",
+    "MX": "A1AM78C64UM0Y8",
+    "BR": "A2Q3Y263D00KWC",
+    "IT": "APJ6JRA9NG5V4",
+    "DE": "A1PA6795UKMFR9",
+    "FR": "A13V1IB3VIYZZH",
+    "ES": "A1RKKUPIHCS9HS",
+    "UK": "A1F83G8C2ARO7P",
+    "GB": "A1F83G8C2ARO7P",
+    "NL": "A1805IZSGTT6HS",
+    "SE": "A2NODRKZP88ZB9",
+    "PL": "A1C3SOZRARQ6R3",
+    "BE": "AMEN7PMS3EDWL",
+    "TR": "A33AVAJ2PDY3EV",
+    "JP": "A1VC38T7YXB528",
+    "AU": "A39IBJ37TRP1C6",
+    "IN": "A21TJRUUN4KGV",
+    "SG": "A19VAU5U5O7RUS",
+    "AE": "A2VIGQ35RCS4UG",
+}
+
 
 def resolve_ads_base_url(country_code: str) -> str:
     """Resolve the Ads API endpoint for a marketplace country."""
@@ -178,6 +201,65 @@ DEFAULT_REPORT_CONFIGS: dict[str, AdvertisingReportConfig] = {
             "orders7d",
             "orders14d",
             "orders30d",
+        ],
+    ),
+    "sb_campaigns": AdvertisingReportConfig(
+        report_type_id="sbCampaigns",
+        ad_product="SPONSORED_BRANDS",
+        group_by=["campaign"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "campaignStatus",
+            "impressions",
+            "clicks",
+            "cost",
+            "sales1d",
+            "sales7d",
+            "sales14d",
+            "sales30d",
+            "orders1d",
+            "orders7d",
+            "orders14d",
+            "orders30d",
+        ],
+    ),
+    "sd_campaigns": AdvertisingReportConfig(
+        report_type_id="sdCampaigns",
+        ad_product="SPONSORED_DISPLAY",
+        group_by=["campaign"],
+        columns=[
+            "date",
+            "campaignId",
+            "campaignName",
+            "campaignStatus",
+            "impressions",
+            "clicks",
+            "cost",
+            "sales1d",
+            "sales7d",
+            "sales14d",
+            "sales30d",
+            "orders1d",
+            "orders7d",
+            "orders14d",
+            "orders30d",
+        ],
+    ),
+    "sp_advertised_product": AdvertisingReportConfig(
+        report_type_id="spAdvertisedProduct",
+        ad_product="SPONSORED_PRODUCTS",
+        group_by=["advertiserProduct"],
+        columns=[
+            "date",
+            "campaignId",
+            "advertisedAsin",
+            "impressions",
+            "clicks",
+            "cost",
+            "sales7d",
+            "unitsSold7d",
         ],
     ),
 }
@@ -326,6 +408,15 @@ class AdvertisingAPIClient:
         if next_token:
             payload["nextToken"] = next_token
         return payload
+
+    @with_throttle_retry(max_retries=2, base_delay=1.0)
+    def list_profiles(self) -> list[dict[str, Any]]:
+        """Return Advertising profiles available to the refresh token in this API region."""
+        response = self._request("GET", "/v2/profiles")
+        payload = response.json()
+        if isinstance(payload, list):
+            return payload
+        return payload.get("profiles") or payload.get("items") or []
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def list_campaigns(self, profile_id: str) -> list[dict[str, Any]]:

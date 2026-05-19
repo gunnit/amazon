@@ -21,8 +21,15 @@ from sp_api.api import (
     Products,
     Orders,
     VendorOrders,
-    ListingsItems,
 )
+try:
+    from sp_api.api import AplusContent, DataKiosk, Finances, ListingsItems, ProductFees
+except ImportError:  # pragma: no cover - supports tests with a minimal sp_api stub
+    AplusContent = None
+    DataKiosk = None
+    Finances = None
+    ListingsItems = None
+    ProductFees = None
 
 from app.config import settings
 from app.core.exceptions import AmazonAPIError
@@ -171,7 +178,29 @@ class SPAPIClient:
         return VendorOrders(**self._api_kwargs)
 
     def _listings_api(self) -> ListingsItems:
+        if ListingsItems is None:
+            raise AmazonAPIError("Listings Items API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
         return ListingsItems(**self._api_kwargs)
+
+    def _product_fees_api(self) -> ProductFees:
+        if ProductFees is None:
+            raise AmazonAPIError("Product Fees API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
+        return ProductFees(**self._api_kwargs)
+
+    def _aplus_content_api(self) -> AplusContent:
+        if AplusContent is None:
+            raise AmazonAPIError("A+ Content API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
+        return AplusContent(**self._api_kwargs)
+
+    def _finances_api(self) -> Finances:
+        if Finances is None:
+            raise AmazonAPIError("Finances API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
+        return Finances(**self._api_kwargs)
+
+    def _data_kiosk_api(self) -> DataKiosk:
+        if DataKiosk is None:
+            raise AmazonAPIError("Data Kiosk API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
+        return DataKiosk(**self._api_kwargs)
 
     @staticmethod
     def _format_datetime(value: date | datetime | str) -> str:
@@ -1058,6 +1087,231 @@ class SPAPIClient:
 
         walk(payload)
         return candidates[0] if candidates else None
+
+    @staticmethod
+    def _extract_offer_snapshot(payload: Any) -> Dict[str, Any]:
+        """Extract current offer and Buy Box metadata from Product Pricing."""
+        offers = None
+        if isinstance(payload, dict):
+            offers = payload.get("Offers") or payload.get("offers")
+            if offers is None:
+                payload_node = payload.get("payload")
+                if isinstance(payload_node, dict):
+                    offers = payload_node.get("Offers") or payload_node.get("offers")
+        if not isinstance(offers, list):
+            offers = []
+
+        snapshot: Dict[str, Any] = {
+            "seller_count": len(offers) if offers else None,
+            "offer_count": len(offers) if offers else None,
+            "buy_box_owner_name": None,
+            "buy_box_seller_id": None,
+            "buy_box_price": None,
+            "fulfillment_channel": None,
+            "is_fba": None,
+            "raw_payload": payload if isinstance(payload, dict) else {"payload": payload},
+        }
+
+        buy_box_offer = None
+        for offer in offers:
+            if not isinstance(offer, dict):
+                continue
+            if offer.get("IsBuyBoxWinner") or offer.get("isBuyBoxWinner"):
+                buy_box_offer = offer
+                break
+        if buy_box_offer is None and offers:
+            buy_box_offer = offers[0] if isinstance(offers[0], dict) else None
+
+        if buy_box_offer:
+            seller = (
+                buy_box_offer.get("SellerId")
+                or buy_box_offer.get("sellerId")
+                or buy_box_offer.get("SellerSKU")
+                or buy_box_offer.get("sellerSku")
+            )
+            ships_from = buy_box_offer.get("ShipsFrom") if isinstance(buy_box_offer.get("ShipsFrom"), dict) else {}
+            seller_name = (
+                buy_box_offer.get("SellerName")
+                or buy_box_offer.get("sellerName")
+                or ships_from.get("Country")
+            )
+            fulfillment_channel = (
+                buy_box_offer.get("FulfillmentChannel")
+                or buy_box_offer.get("fulfillmentChannel")
+                or buy_box_offer.get("SubCondition")
+                or buy_box_offer.get("subCondition")
+            )
+            is_fba = None
+            if fulfillment_channel:
+                normalized = str(fulfillment_channel).upper()
+                is_fba = "AMAZON" in normalized or normalized == "AFN"
+            price = None
+            price_candidates: List[Decimal] = []
+            for key in ("LandedPrice", "ListingPrice", "BuyingPrice"):
+                node = buy_box_offer.get(key)
+                if isinstance(node, dict) and node.get("Amount") is not None:
+                    try:
+                        price_candidates.append(Decimal(str(node.get("Amount"))))
+                    except Exception:
+                        pass
+            if price_candidates:
+                price = price_candidates[0]
+
+            snapshot.update(
+                {
+                    "buy_box_owner_name": seller_name or seller,
+                    "buy_box_seller_id": str(seller) if seller else None,
+                    "buy_box_price": float(price) if price is not None else None,
+                    "fulfillment_channel": str(fulfillment_channel) if fulfillment_channel else None,
+                    "is_fba": is_fba,
+                }
+            )
+
+        return snapshot
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_item_offer_snapshot(self, asin: str) -> Dict[str, Any]:
+        """Fetch current offer and Buy Box snapshot for an ASIN."""
+        if self.is_vendor:
+            raise AmazonAPIError(
+                "Product Pricing offers are only available for seller accounts",
+                error_code="UNSUPPORTED_ACCOUNT_TYPE",
+            )
+        api = self._products_api()
+        response = api.get_item_offers(asin=asin, item_condition="New")
+        return self._extract_offer_snapshot(response.payload)
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def estimate_fba_fee_for_asin(
+        self,
+        asin: str,
+        price: float,
+        currency: str = "EUR",
+    ) -> Optional[Decimal]:
+        """Estimate FBA fees with Product Fees API.
+
+        The returned value is an estimate, not an actual settlement/finance
+        fee. Actual fee reports should override it when available.
+        """
+        if self.is_vendor:
+            return None
+        response = self._product_fees_api().get_product_fees_estimate_for_asin(
+            asin,
+            price=float(price),
+            currency=currency,
+            marketplace_id=self.marketplace.marketplace_id,
+            is_fba=True,
+        )
+        payload = response.payload
+        candidates: List[Decimal] = []
+
+        def walk(node: Any) -> None:
+            if isinstance(node, list):
+                for item in node:
+                    walk(item)
+                return
+            if not isinstance(node, dict):
+                return
+            for key in ("FinalFee", "TotalFeesEstimate", "FeeAmount", "Amount"):
+                value = node.get(key)
+                if isinstance(value, dict):
+                    amount = value.get("Amount") or value.get("amount")
+                    if amount is not None:
+                        try:
+                            candidates.append(Decimal(str(amount)))
+                        except Exception:
+                            pass
+                elif key == "Amount" and value is not None:
+                    try:
+                        candidates.append(Decimal(str(value)))
+                    except Exception:
+                        pass
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    walk(value)
+
+        walk(payload)
+        return candidates[0] if candidates else None
+
+    @staticmethod
+    def _summarize_aplus_payload(payload: Any) -> Dict[str, Any]:
+        """Count A+ content modules from a best-effort payload shape."""
+        module_count = 0
+        text_module_count = 0
+        image_module_count = 0
+
+        def walk(node: Any) -> None:
+            nonlocal module_count, text_module_count, image_module_count
+            if isinstance(node, list):
+                for item in node:
+                    walk(item)
+                return
+            if not isinstance(node, dict):
+                return
+
+            module_type = (
+                node.get("contentModuleType")
+                or node.get("moduleType")
+                or node.get("type")
+            )
+            if module_type and "module" in str(module_type).lower():
+                module_count += 1
+
+            keys = {str(key).lower() for key in node.keys()}
+            if any("text" in key for key in keys):
+                text_module_count += 1
+            if any("image" in key or "media" in key for key in keys):
+                image_module_count += 1
+
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    walk(value)
+
+        walk(payload)
+        return {
+            "has_aplus_content": bool(payload),
+            "aplus_module_count": module_count or None,
+            "text_module_count": text_module_count or None,
+            "image_module_count": image_module_count or None,
+            "aplus_source": "aplus_content_api",
+            "raw_payload": payload if isinstance(payload, dict) else {"payload": payload},
+        }
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_aplus_content_for_asin(self, asin: str) -> Dict[str, Any]:
+        """Best-effort A+ Content API lookup for one ASIN."""
+        api = self._aplus_content_api()
+        marketplace_id = self.marketplace.marketplace_id
+        payloads: List[Any] = []
+
+        # Amazon account/API versions expose slightly different search
+        # parameters. Try the ASIN publish-record path first, then content
+        # documents; callers catch failures and surface the exact limitation.
+        for operation, kwargs in (
+            (api.search_content_publish_records, {"marketplaceId": marketplace_id, "asin": asin, "pageSize": 10}),
+            (api.search_content_documents, {"marketplaceId": marketplace_id, "asin": asin, "pageSize": 10}),
+        ):
+            try:
+                response = operation(**kwargs)
+                payload = response.payload
+                if payload:
+                    payloads.append(payload)
+            except TypeError:
+                continue
+
+        if not payloads:
+            return {
+                "has_aplus_content": False,
+                "aplus_module_count": None,
+                "text_module_count": None,
+                "image_module_count": None,
+                "aplus_source": "aplus_content_api",
+                "aplus_limitation": "No A+ content document or publish record was found for this ASIN.",
+            }
+
+        summary = self._summarize_aplus_payload({"payloads": payloads})
+        summary["aplus_limitation"] = None
+        return summary
 
     def _extract_catalog_price_amount(self, payload: Any) -> Optional[Decimal]:
         """Extract a representative price from Catalog Items attributes."""

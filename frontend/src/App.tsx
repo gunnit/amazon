@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { Toaster } from '@/components/ui/toaster'
 import Layout from '@/components/Layout'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
 import Dashboard from '@/pages/Dashboard'
@@ -10,10 +11,13 @@ import Reports from '@/pages/Reports'
 import Analytics from '@/pages/Analytics'
 import Forecasts from '@/pages/Forecasts'
 import MarketResearch from '@/pages/MarketResearch'
+import BrandAnalysis from '@/pages/BrandAnalysis'
 import Catalog from '@/pages/Catalog'
 import Recommendations from '@/pages/Recommendations'
 import Settings from '@/pages/Settings'
+import Advertising from '@/pages/Advertising'
 import Alerts from '@/pages/Alerts'
+import Accounts from '@/pages/Accounts'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -85,11 +89,20 @@ function App() {
           </ProtectedRoute>
         }>
           <Route index element={<Dashboard />} />
-          <Route path="accounts" element={<Navigate to="/settings?tab=accounts" replace />} />
+          <Route path="accounts" element={<Accounts />} />
           <Route path="reports" element={<Reports />} />
           <Route path="analytics" element={<Analytics />} />
+          <Route path="advertising" element={<Advertising />} />
           <Route path="forecasts" element={<Forecasts />} />
           <Route path="market-research" element={<MarketResearch />} />
+          <Route
+            path="brand-analysis"
+            element={
+              <ErrorBoundary title="Brand Analysis crashed">
+                <BrandAnalysis />
+              </ErrorBoundary>
+            }
+          />
           <Route path="catalog" element={<Catalog />} />
           <Route path="recommendations" element={<Recommendations />} />
           <Route path="alerts" element={<Alerts />} />

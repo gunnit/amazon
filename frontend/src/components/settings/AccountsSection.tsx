@@ -1,21 +1,35 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  Clock,
+  Edit,
+  Eye,
+  KeyRound,
+  Link2,
+  Loader2,
+  Megaphone,
   Plus,
   RefreshCw,
-  Check,
-  AlertCircle,
-  Clock,
-  Loader2,
+  Search,
+  Store,
   Trash2,
-  CheckCircle2,
-  AlertTriangle,
-  KeyRound,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -25,11 +39,39 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
+import { cn, formatDate } from '@/lib/utils'
 import { accountsApi, authApi } from '@/services/api'
-import { formatDate } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
-import type { AmazonAccount, AccountSummary, SyncStatus, ApiKeysResponse } from '@/types'
+import type {
+  AccountSummary,
+  AccountType,
+  AdvertisingProfile,
+  AmazonAccount,
+  ApiKeysResponse,
+  SyncStatus,
+} from '@/types'
+
+type ConnectionMode = 'manual' | 'sp' | 'ads'
+type StatusFilter = 'all' | 'connected' | 'partial' | 'missing' | 'error'
+
+type AccountPayload = {
+  account_name: string
+  account_type: AccountType
+  marketplace_id: string
+  marketplace_country: string
+  refresh_token?: string
+  advertising_refresh_token?: string
+  advertising_profile_id?: string
+}
 
 const marketplaces = [
   { id: 'A1PA6795UKMFR9', country: 'DE', nameKey: 'marketplace.DE' },
@@ -39,203 +81,372 @@ const marketplaces = [
   { id: 'A1RKKUPIHCS9HS', country: 'ES', nameKey: 'marketplace.ES' },
 ]
 
-function StatusBadge({ status }: { status: SyncStatus }) {
-  const { t } = useTranslation()
-
-  switch (status) {
-    case 'success':
-      return (
-        <Badge variant="success" className="gap-1">
-          <Check className="h-3 w-3" /> {t('accounts.status.synced')}
-        </Badge>
-      )
-    case 'syncing':
-      return (
-        <Badge variant="secondary" className="gap-1">
-          <Loader2 className="h-3 w-3 animate-spin" /> {t('accounts.status.syncing')}
-        </Badge>
-      )
-    case 'error':
-      return (
-        <Badge variant="destructive" className="gap-1">
-          <AlertCircle className="h-3 w-3" /> {t('accounts.status.error')}
-        </Badge>
-      )
-    default:
-      return (
-        <Badge variant="outline" className="gap-1">
-          <Clock className="h-3 w-3" /> {t('accounts.status.pending')}
-        </Badge>
-      )
+function connectionState(account: AmazonAccount): StatusFilter {
+  if (account.sync_status === 'error') return 'error'
+  if (account.has_refresh_token && account.has_advertising_refresh_token && account.advertising_profile_id) {
+    return 'connected'
   }
+  if (account.has_refresh_token || account.has_advertising_refresh_token || account.advertising_profile_id) {
+    return 'partial'
+  }
+  return 'missing'
 }
 
-function AddAccountDialog({
+function StatusBadge({ status }: { status: SyncStatus }) {
+  const { t } = useTranslation()
+  const config = {
+    success: { label: t('accounts.status.synced'), icon: Check, className: 'bg-emerald-500 text-white' },
+    syncing: { label: t('accounts.status.syncing'), icon: Loader2, className: 'bg-blue-500 text-white' },
+    error: { label: t('accounts.status.error'), icon: AlertCircle, className: '' },
+    pending: { label: t('accounts.status.pending'), icon: Clock, className: '' },
+  }[status]
+  const Icon = config.icon
+
+  return (
+    <Badge
+      variant={status === 'error' ? 'destructive' : status === 'pending' ? 'outline' : 'secondary'}
+      className={cn('gap-1 whitespace-nowrap', config.className)}
+    >
+      <Icon className={cn('h-3 w-3', status === 'syncing' && 'animate-spin')} />
+      {config.label}
+    </Badge>
+  )
+}
+
+function CredentialBadge({
+  connected,
+  label,
+}: {
+  connected: boolean
+  label: string
+}) {
+  return connected ? (
+    <Badge className="gap-1 whitespace-nowrap bg-emerald-500 text-white">
+      <Check className="h-3 w-3" />
+      {label}
+    </Badge>
+  ) : (
+    <Badge variant="outline" className="gap-1 whitespace-nowrap border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400">
+      <AlertTriangle className="h-3 w-3" />
+      {label}
+    </Badge>
+  )
+}
+
+function AccountDialog({
   open,
+  mode,
+  account,
+  accounts,
   onOpenChange,
 }: {
   open: boolean
+  mode: ConnectionMode
+  account: AmazonAccount | null
+  accounts: AmazonAccount[]
   onOpenChange: (open: boolean) => void
 }) {
   const { t } = useTranslation()
-  const [accountName, setAccountName] = useState('')
-  const [accountType, setAccountType] = useState<'seller' | 'vendor'>('seller')
-  const [marketplace, setMarketplace] = useState('')
-  const [refreshToken, setRefreshToken] = useState('')
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const [accountName, setAccountName] = useState(account?.account_name || '')
+  const [accountType, setAccountType] = useState<AccountType>(account?.account_type || 'seller')
+  const [marketplace, setMarketplace] = useState(account?.marketplace_id || '')
+  const [spToken, setSpToken] = useState('')
+  const [adsToken, setAdsToken] = useState('')
+  const [adsClientId, setAdsClientId] = useState('')
+  const [adsClientSecret, setAdsClientSecret] = useState('')
+  const [selectedAccountId, setSelectedAccountId] = useState(account?.id || 'new')
+  const [selectedProfileId, setSelectedProfileId] = useState('')
+  const [profiles, setProfiles] = useState<AdvertisingProfile[]>([])
+
+  const selectedMarketplace = marketplaces.find((item) => item.id === marketplace)
+  const targetAccount = accounts.find((item) => item.id === selectedAccountId) || account
 
   const { data: savedApiKeys } = useQuery<ApiKeysResponse>({
     queryKey: ['api-keys'],
     queryFn: () => authApi.getApiKeys(),
   })
 
-  const hasOrgApiKeys = !!(savedApiKeys?.sp_api_client_id || savedApiKeys?.has_client_secret)
-
   const createMutation = useMutation({
-    mutationFn: (data: Partial<AmazonAccount>) => accountsApi.create(data),
+    mutationFn: (data: AccountPayload) => accountsApi.create(data as Partial<AmazonAccount>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] })
       queryClient.invalidateQueries({ queryKey: ['accounts-summary'] })
-      toast({ title: t('accounts.addedSuccess') })
+      toast({ title: t('accounts.saved') })
       onOpenChange(false)
-      resetForm()
     },
     onError: () => {
+      toast({ variant: 'destructive', title: t('accounts.saveFailed') })
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<AccountPayload> }) =>
+      accountsApi.update(id, data as Partial<AmazonAccount>),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      queryClient.invalidateQueries({ queryKey: ['accounts-summary'] })
+      toast({ title: t('accounts.saved') })
+      onOpenChange(false)
+    },
+    onError: () => {
+      toast({ variant: 'destructive', title: t('accounts.saveFailed') })
+    },
+  })
+
+  const profilesMutation = useMutation({
+    mutationFn: () => accountsApi.listAdvertisingProfiles({
+      refresh_token: adsToken || undefined,
+      account_id: account?.id,
+      marketplace_country: selectedMarketplace?.country || targetAccount?.marketplace_country,
+      client_id: adsClientId || undefined,
+      client_secret: adsClientSecret || undefined,
+    }),
+    onSuccess: (items) => {
+      setProfiles(items)
+      const firstMatch = items.find((profile) =>
+        profile.country_code && targetAccount?.marketplace_country &&
+        profile.country_code.toUpperCase() === targetAccount.marketplace_country.toUpperCase()
+      ) || items[0]
+      setSelectedProfileId(firstMatch?.profile_id || '')
+      toast({ title: t('accounts.adsProfilesLoaded') })
+    },
+    onError: (error: unknown) => {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       toast({
         variant: 'destructive',
-        title: t('accounts.addedFailed'),
-        description: t('accounts.addedFailedDesc'),
+        title: t('accounts.adsProfilesFailed'),
+        description: detail,
       })
     },
   })
 
-  const resetForm = () => {
-    setAccountName('')
-    setAccountType('seller')
-    setMarketplace('')
-    setRefreshToken('')
-  }
+  const save = () => {
+    if (mode === 'ads') {
+      const profile = profiles.find((item) => item.profile_id === selectedProfileId)
+      const targetId = selectedAccountId !== 'new' ? selectedAccountId : undefined
+      if (targetId) {
+        updateMutation.mutate({
+          id: targetId,
+          data: {
+            advertising_refresh_token: adsToken || undefined,
+            advertising_profile_id: selectedProfileId || undefined,
+          },
+        })
+        return
+      }
+      if (!profile || !profile.marketplace_id || !profile.country_code) return
+      createMutation.mutate({
+        account_name: profile.account_name || t('accounts.adsOnlyAccount'),
+        account_type: (profile.account_type === 'vendor' ? 'vendor' : 'seller'),
+        marketplace_id: profile.marketplace_id,
+        marketplace_country: profile.country_code,
+        advertising_refresh_token: adsToken || undefined,
+        advertising_profile_id: profile.profile_id,
+      })
+      return
+    }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const selectedMarketplace = marketplaces.find((item) => item.id === marketplace)
     if (!selectedMarketplace) return
-
-    createMutation.mutate({
+    const payload: AccountPayload = {
       account_name: accountName,
       account_type: accountType,
-      marketplace_id: marketplace,
+      marketplace_id: selectedMarketplace.id,
       marketplace_country: selectedMarketplace.country,
-      refresh_token: refreshToken || undefined,
-    } as Partial<AmazonAccount>)
+      refresh_token: spToken || undefined,
+    }
+    if (account) {
+      updateMutation.mutate({ id: account.id, data: payload })
+    } else {
+      createMutation.mutate(payload)
+    }
   }
 
-  if (!open) return null
+  const isSaving = createMutation.isPending || updateMutation.isPending
+  const title = mode === 'ads'
+    ? t('accounts.connectAds')
+    : mode === 'sp'
+      ? t('accounts.connectSellerCentral')
+      : account
+        ? t('accounts.editAccount')
+        : t('accounts.addAccountManually')
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>{t('accounts.dialog.title')}</CardTitle>
-          <CardDescription>{t('accounts.dialog.subtitle')}</CardDescription>
-        </CardHeader>
-        <form onSubmit={handleSubmit}>
-          <CardContent className="space-y-4">
-            {hasOrgApiKeys ? (
-              <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
-                <CheckCircle2 className="h-4 w-4 shrink-0" />
-                {t('accounts.dialog.apiKeysConfigured')}
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                <span>
-                  {t('accounts.dialog.apiKeysMissing')}{' '}
-                  <Link to="/settings?tab=amazon-api" className="font-medium underline" onClick={() => onOpenChange(false)}>
-                    {t('nav.settings')}
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            {mode === 'ads' ? t('accounts.adsFlowDesc') : t('accounts.spFlowDesc')}
+          </DialogDescription>
+        </DialogHeader>
+
+        {mode !== 'ads' ? (
+          <div className="space-y-4">
+            {savedApiKeys && !(savedApiKeys.sp_api_client_id && savedApiKeys.has_client_secret) && (
+              <Alert variant="warning">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>{t('accounts.spKeysMissingTitle')}</AlertTitle>
+                <AlertDescription>
+                  {t('accounts.spKeysMissingDesc')}{' '}
+                  <Link to="/settings?tab=amazon-api" className="font-medium underline">
+                    {t('settings.tabAmazonApi')}
                   </Link>
-                </span>
-              </div>
+                </AlertDescription>
+              </Alert>
             )}
-
-            <div className="space-y-2">
-              <Label htmlFor="accountName">{t('accounts.dialog.accountName')}</Label>
-              <Input
-                id="accountName"
-                placeholder={t('accounts.dialog.accountNamePlaceholder')}
-                value={accountName}
-                onChange={(e) => setAccountName(e.target.value)}
-                required
-              />
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>{t('accounts.dialog.accountName')}</Label>
+                <Input value={accountName} onChange={(e) => setAccountName(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>{t('accounts.dialog.accountType')}</Label>
+                <Select value={accountType} onValueChange={(value: AccountType) => setAccountType(value)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="seller">{t('accounts.dialog.seller')}</SelectItem>
+                    <SelectItem value="vendor">{t('accounts.dialog.vendor')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-
             <div className="space-y-2">
-              <Label htmlFor="accountType">{t('accounts.dialog.accountType')}</Label>
-              <Select value={accountType} onValueChange={(value: 'seller' | 'vendor') => setAccountType(value)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="seller">{t('accounts.dialog.seller')}</SelectItem>
-                  <SelectItem value="vendor">{t('accounts.dialog.vendor')}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="marketplace">{t('accounts.dialog.marketplace')}</Label>
+              <Label>{t('accounts.dialog.marketplace')}</Label>
               <Select value={marketplace} onValueChange={setMarketplace}>
-                <SelectTrigger>
-                  <SelectValue placeholder={t('accounts.dialog.selectMarketplace')} />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue placeholder={t('accounts.dialog.selectMarketplace')} /></SelectTrigger>
                 <SelectContent>
-                  {marketplaces.map((marketplaceItem) => (
-                    <SelectItem key={marketplaceItem.id} value={marketplaceItem.id}>
-                      {t(marketplaceItem.nameKey)} ({marketplaceItem.country})
+                  {marketplaces.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {t(item.nameKey)} ({item.country})
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-
             <div className="space-y-2">
-              <Label htmlFor="refreshToken">{t('accounts.dialog.refreshToken')}</Label>
+              <Label>{t('accounts.dialog.refreshToken')}</Label>
               <Input
-                id="refreshToken"
                 type="password"
-                placeholder={t('accounts.dialog.refreshTokenPlaceholder')}
-                value={refreshToken}
-                onChange={(e) => setRefreshToken(e.target.value)}
-                required
+                value={spToken}
+                onChange={(e) => setSpToken(e.target.value)}
+                placeholder={account?.has_refresh_token ? t('accounts.keepExistingToken') : 'Atzr|...'}
               />
-              <p className="text-xs text-muted-foreground">
-                {t('accounts.dialog.refreshTokenHelp')}
-              </p>
+              <p className="text-xs text-muted-foreground">{t('accounts.dialog.refreshTokenHelp')}</p>
             </div>
-          </CardContent>
-          <div className="flex justify-end gap-2 p-6 pt-0">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              {t('common.cancel')}
-            </Button>
-            <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('accounts.addAccount')}
-            </Button>
           </div>
-        </form>
-      </Card>
-    </div>
+        ) : (
+          <div className="space-y-4">
+            <Alert>
+              <Megaphone className="h-4 w-4" />
+              <AlertTitle>{t('accounts.adsSeparateTitle')}</AlertTitle>
+              <AlertDescription>{t('accounts.adsSeparateDesc')}</AlertDescription>
+            </Alert>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>{t('accounts.adsRefreshToken')}</Label>
+                <Input
+                  type="password"
+                  value={adsToken}
+                  onChange={(e) => setAdsToken(e.target.value)}
+                  placeholder={account?.has_advertising_refresh_token ? t('accounts.keepExistingToken') : 'Atzr|...'}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>{t('accounts.dialog.marketplace')}</Label>
+                <Select value={marketplace} onValueChange={setMarketplace}>
+                  <SelectTrigger><SelectValue placeholder={t('accounts.scanAllRegions')} /></SelectTrigger>
+                  <SelectContent>
+                    {marketplaces.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {t(item.nameKey)} ({item.country})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>{t('accounts.adsClientId')}</Label>
+                <Input value={adsClientId} onChange={(e) => setAdsClientId(e.target.value)} placeholder={t('accounts.optionalIfConfigured')} />
+              </div>
+              <div className="space-y-2">
+                <Label>{t('accounts.adsClientSecret')}</Label>
+                <Input type="password" value={adsClientSecret} onChange={(e) => setAdsClientSecret(e.target.value)} placeholder={t('accounts.optionalIfConfigured')} />
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => profilesMutation.mutate()}
+              disabled={profilesMutation.isPending || (!adsToken && !account?.has_advertising_refresh_token)}
+            >
+              {profilesMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+              {t('accounts.listAdsProfiles')}
+            </Button>
+
+            {profiles.length > 0 && (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>{t('accounts.advertisingProfile')}</Label>
+                  <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {profiles.map((profile) => (
+                        <SelectItem key={profile.profile_id} value={profile.profile_id}>
+                          {profile.account_name || profile.profile_id} - {profile.country_code || t('accounts.unknownMarketplace')}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('accounts.linkToAccount')}</Label>
+                  <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="new">{t('accounts.createAdsOnlyAccount')}</SelectItem>
+                      {accounts.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.account_name} - {item.marketplace_country}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            {t('common.cancel')}
+          </Button>
+          <Button type="button" onClick={save} disabled={isSaving}>
+            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {t('common.save')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
-  const [showAddDialog, setShowAddDialog] = useState(false)
-  const queryClient = useQueryClient()
-  const { toast } = useToast()
   const { t } = useTranslation()
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+  const [dialogMode, setDialogMode] = useState<ConnectionMode | null>(null)
+  const [selectedAccount, setSelectedAccount] = useState<AmazonAccount | null>(null)
+  const [detailsAccount, setDetailsAccount] = useState<AmazonAccount | null>(null)
+  const [marketplaceFilter, setMarketplaceFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [typeFilter, setTypeFilter] = useState<'all' | AccountType>('all')
 
-  const { data: accounts, isLoading } = useQuery<AmazonAccount[]>({
+  const { data: accounts = [], isLoading, isError } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
     queryFn: () => accountsApi.list(),
   })
@@ -251,12 +462,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
       queryClient.invalidateQueries({ queryKey: ['accounts'] })
       toast({ title: t('accounts.syncStarted') })
     },
-    onError: () => {
-      toast({
-        variant: 'destructive',
-        title: t('accounts.syncFailed'),
-      })
-    },
+    onError: () => toast({ variant: 'destructive', title: t('accounts.syncFailed') }),
   })
 
   const deleteMutation = useMutation({
@@ -266,13 +472,25 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
       queryClient.invalidateQueries({ queryKey: ['accounts-summary'] })
       toast({ title: t('accounts.deleted') })
     },
-    onError: () => {
-      toast({
-        variant: 'destructive',
-        title: t('accounts.deleteFailed'),
-      })
-    },
+    onError: () => toast({ variant: 'destructive', title: t('accounts.deleteFailed') }),
   })
+
+  const filteredAccounts = useMemo(() => accounts.filter((account) => {
+    if (marketplaceFilter !== 'all' && account.marketplace_country !== marketplaceFilter) return false
+    if (typeFilter !== 'all' && account.account_type !== typeFilter) return false
+    if (statusFilter !== 'all' && connectionState(account) !== statusFilter) return false
+    return true
+  }), [accounts, marketplaceFilter, statusFilter, typeFilter])
+
+  const marketplaceOptions = Array.from(new Set(accounts.map((account) => account.marketplace_country))).sort()
+  const fullConnectionCount = accounts.filter((account) => connectionState(account) === 'connected').length
+  const partialConnectionCount = accounts.filter((account) => connectionState(account) === 'partial').length
+
+  const openDialog = (mode: ConnectionMode, account: AmazonAccount | null = null) => {
+    setDetailsAccount(null)
+    setSelectedAccount(account)
+    setDialogMode(mode)
+  }
 
   if (isLoading) {
     return (
@@ -282,128 +500,199 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
     )
   }
 
+  if (isError) {
+    return (
+      <Alert variant="destructive">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>{t('accounts.loadFailed')}</AlertTitle>
+        <AlertDescription>{t('accounts.loadFailedDesc')}</AlertDescription>
+      </Alert>
+    )
+  }
+
   return (
     <div className="space-y-6">
-      {embedded ? (
-        <div className="flex items-center justify-between gap-4">
-          <div>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          {embedded ? (
             <h2 className="text-2xl font-semibold tracking-tight">{t('accounts.title')}</h2>
-            <p className="text-muted-foreground">{t('accounts.subtitle')}</p>
-          </div>
-          <Button onClick={() => setShowAddDialog(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            {t('accounts.addAccount')}
-          </Button>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between gap-4">
-          <div>
+          ) : (
             <h1 className="text-3xl font-bold tracking-tight">{t('accounts.title')}</h1>
-            <p className="text-muted-foreground">{t('accounts.subtitle')}</p>
-          </div>
-          <Button onClick={() => setShowAddDialog(true)}>
+          )}
+          <p className="text-muted-foreground">{t('accounts.subtitle')}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => openDialog('sp')}>
+            <Store className="mr-2 h-4 w-4" />
+            {t('accounts.connectSellerCentral')}
+          </Button>
+          <Button variant="outline" onClick={() => openDialog('ads')}>
+            <Megaphone className="mr-2 h-4 w-4" />
+            {t('accounts.connectAds')}
+          </Button>
+          <Button variant="outline" onClick={() => openDialog('manual')}>
             <Plus className="mr-2 h-4 w-4" />
-            {t('accounts.addAccount')}
+            {t('accounts.addAccountManually')}
           </Button>
         </div>
+      </div>
+
+      {!embedded && (
+        <Alert>
+          <Link2 className="h-4 w-4" />
+          <AlertTitle>{t('accounts.separateConnectionsTitle')}</AlertTitle>
+          <AlertDescription>{t('accounts.separateConnectionsDesc')}</AlertDescription>
+        </Alert>
       )}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{summary?.total_accounts || 0}</div>
-            <p className="text-sm text-muted-foreground">{t('accounts.totalAccounts')}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-green-600">{summary?.active_accounts || 0}</div>
-            <p className="text-sm text-muted-foreground">{t('accounts.active')}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-blue-600">{summary?.syncing_accounts || 0}</div>
-            <p className="text-sm text-muted-foreground">{t('accounts.syncing')}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-red-600">{summary?.error_accounts || 0}</div>
-            <p className="text-sm text-muted-foreground">{t('accounts.errors')}</p>
-          </CardContent>
-        </Card>
+      <div className="grid gap-3 md:grid-cols-4">
+        <Card><CardContent className="pt-5"><div className="text-2xl font-bold">{summary?.total_accounts || 0}</div><p className="text-sm text-muted-foreground">{t('accounts.totalAccounts')}</p></CardContent></Card>
+        <Card><CardContent className="pt-5"><div className="text-2xl font-bold text-emerald-600">{fullConnectionCount}</div><p className="text-sm text-muted-foreground">{t('accounts.fullConnected')}</p></CardContent></Card>
+        <Card><CardContent className="pt-5"><div className="text-2xl font-bold text-amber-600">{partialConnectionCount}</div><p className="text-sm text-muted-foreground">{t('accounts.partialConnected')}</p></CardContent></Card>
+        <Card><CardContent className="pt-5"><div className="text-2xl font-bold text-red-600">{summary?.error_accounts || 0}</div><p className="text-sm text-muted-foreground">{t('accounts.errors')}</p></CardContent></Card>
       </div>
 
-      <div className="space-y-4">
-        {accounts?.length === 0 ? (
-          <Card>
-            <CardContent className="py-10 text-center">
-              <p className="text-muted-foreground">{t('accounts.noAccounts')}</p>
-              <Button className="mt-4" onClick={() => setShowAddDialog(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                {t('accounts.addFirstAccount')}
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          accounts?.map((account) => (
-            <Card key={account.id}>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <h3 className="text-lg font-semibold">{account.account_name}</h3>
-                      <StatusBadge status={account.sync_status} />
-                      <Badge variant="outline">{account.account_type}</Badge>
-                      <Badge variant="secondary">{account.marketplace_country}</Badge>
-                      {account.has_refresh_token ? (
-                        <Badge variant="outline" className="gap-1 border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-400">
-                          <KeyRound className="h-3 w-3" /> {t('accounts.credentialsOk')}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="gap-1 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400">
-                          <AlertTriangle className="h-3 w-3" /> {t('accounts.missingRefreshToken')}
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      {t('accounts.lastSynced')} {account.last_sync_at ? formatDate(account.last_sync_at) : t('common.never')}
-                    </p>
-                    {account.sync_error_message && (
-                      <p className="text-sm text-destructive">{account.sync_error_message}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => syncMutation.mutate(account.id)}
-                      disabled={syncMutation.isPending || account.sync_status === 'syncing'}
-                    >
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      {t('accounts.sync')}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        if (confirm(t('accounts.deleteConfirm'))) {
-                          deleteMutation.mutate(account.id)
-                        }
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
+      <div className="flex flex-col gap-3 md:flex-row">
+        <Select value={marketplaceFilter} onValueChange={setMarketplaceFilter}>
+          <SelectTrigger className="md:w-[190px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t('accounts.allMarketplaces')}</SelectItem>
+            {marketplaceOptions.map((country) => <SelectItem key={country} value={country}>{country}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter} onValueChange={(value: StatusFilter) => setStatusFilter(value)}>
+          <SelectTrigger className="md:w-[190px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t('accounts.allStatuses')}</SelectItem>
+            <SelectItem value="connected">{t('accounts.fullConnected')}</SelectItem>
+            <SelectItem value="partial">{t('accounts.partialConnected')}</SelectItem>
+            <SelectItem value="missing">{t('accounts.missingCredentials')}</SelectItem>
+            <SelectItem value="error">{t('accounts.syncFailedStatus')}</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={typeFilter} onValueChange={(value: 'all' | AccountType) => setTypeFilter(value)}>
+          <SelectTrigger className="md:w-[170px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t('accounts.allTypes')}</SelectItem>
+            <SelectItem value="seller">{t('accounts.dialog.seller')}</SelectItem>
+            <SelectItem value="vendor">{t('accounts.dialog.vendor')}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
-      <AddAccountDialog open={showAddDialog} onOpenChange={setShowAddDialog} />
+      {accounts.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-10 text-center">
+          <Store className="mx-auto h-10 w-10 text-muted-foreground" />
+          <h3 className="mt-4 text-lg font-semibold">{t('accounts.emptyTitle')}</h3>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">{t('accounts.emptyDesc')}</p>
+          <div className="mt-5 flex flex-wrap justify-center gap-2">
+            <Button onClick={() => openDialog('sp')}><Store className="mr-2 h-4 w-4" />{t('accounts.connectSellerCentral')}</Button>
+            <Button variant="outline" onClick={() => openDialog('ads')}><Megaphone className="mr-2 h-4 w-4" />{t('accounts.connectAds')}</Button>
+          </div>
+        </div>
+      ) : (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{t('accounts.connectedAccounts')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t('accounts.accountName')}</TableHead>
+                  <TableHead>{t('accounts.marketplace')}</TableHead>
+                  <TableHead>{t('accounts.accountType')}</TableHead>
+                  <TableHead>{t('accounts.spApiStatus')}</TableHead>
+                  <TableHead>{t('accounts.adsStatus')}</TableHead>
+                  <TableHead>{t('accounts.advertisingProfile')}</TableHead>
+                  <TableHead>{t('accounts.lastSync')}</TableHead>
+                  <TableHead>{t('accounts.syncStatus')}</TableHead>
+                  <TableHead className="text-right">{t('accounts.actions')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredAccounts.map((account) => (
+                  <TableRow key={account.id} className="cursor-pointer" onClick={() => setDetailsAccount(account)}>
+                    <TableCell className="font-medium">{account.account_name}</TableCell>
+                    <TableCell>{account.marketplace_country}</TableCell>
+                    <TableCell><Badge variant="outline">{account.account_type}</Badge></TableCell>
+                    <TableCell><CredentialBadge connected={account.has_refresh_token} label={account.has_refresh_token ? t('accounts.connected') : t('accounts.missing')} /></TableCell>
+                    <TableCell><CredentialBadge connected={account.has_advertising_refresh_token && !!account.advertising_profile_id} label={account.has_advertising_refresh_token && account.advertising_profile_id ? t('accounts.connected') : t('accounts.missing')} /></TableCell>
+                    <TableCell className="font-mono text-xs">{account.advertising_profile_id || '-'}</TableCell>
+                    <TableCell>{account.last_sync_at ? formatDate(account.last_sync_at) : t('common.never')}</TableCell>
+                    <TableCell><StatusBadge status={account.sync_status} /></TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+                        <Button variant="ghost" size="icon" onClick={() => openDialog('manual', account)} aria-label={t('common.edit')}><Edit className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => openDialog('sp', account)} aria-label={t('accounts.reconnectSp')}><KeyRound className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => openDialog('ads', account)} aria-label={t('accounts.reconnectAds')}><Megaphone className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => syncMutation.mutate(account.id)} disabled={syncMutation.isPending || account.sync_status === 'syncing'} aria-label={t('accounts.sync')}><RefreshCw className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => setDetailsAccount(account)} aria-label={t('accounts.viewDetails')}><Eye className="h-4 w-4" /></Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            if (window.confirm(t('accounts.deleteConfirm'))) deleteMutation.mutate(account.id)
+                          }}
+                          aria-label={t('common.delete')}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      <Dialog open={!!detailsAccount} onOpenChange={(open) => !open && setDetailsAccount(null)}>
+        <DialogContent className="sm:max-w-xl">
+          {detailsAccount && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{detailsAccount.account_name}</DialogTitle>
+                <DialogDescription>{detailsAccount.marketplace_country} - {detailsAccount.account_type}</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-3 text-sm">
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.spApiStatus')}</span><CredentialBadge connected={detailsAccount.has_refresh_token} label={detailsAccount.has_refresh_token ? t('accounts.connected') : t('accounts.missing')} /></div>
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.adsStatus')}</span><CredentialBadge connected={detailsAccount.has_advertising_refresh_token && !!detailsAccount.advertising_profile_id} label={detailsAccount.has_advertising_refresh_token && detailsAccount.advertising_profile_id ? t('accounts.connected') : t('accounts.missing')} /></div>
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.advertisingProfile')}</span><span className="font-mono">{detailsAccount.advertising_profile_id || '-'}</span></div>
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.lastSync')}</span><span>{detailsAccount.last_sync_at ? formatDate(detailsAccount.last_sync_at) : t('common.never')}</span></div>
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.syncStatus')}</span><StatusBadge status={detailsAccount.sync_status} /></div>
+                {detailsAccount.sync_error_message && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>{t('accounts.lastError')}</AlertTitle>
+                    <AlertDescription>{detailsAccount.sync_error_message}</AlertDescription>
+                  </Alert>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => openDialog('sp', detailsAccount)}>{t('accounts.reconnectSp')}</Button>
+                <Button variant="outline" onClick={() => openDialog('ads', detailsAccount)}>{t('accounts.reconnectAds')}</Button>
+                <Button onClick={() => syncMutation.mutate(detailsAccount.id)}>{t('accounts.sync')}</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <AccountDialog
+        key={`${dialogMode || 'closed'}-${selectedAccount?.id || 'new'}`}
+        open={!!dialogMode}
+        mode={dialogMode || 'manual'}
+        account={selectedAccount}
+        accounts={accounts}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDialogMode(null)
+            setSelectedAccount(null)
+          }
+        }}
+      />
     </div>
   )
 }

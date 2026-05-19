@@ -14,6 +14,12 @@ from app.models.scheduled_report import ScheduledReport, ScheduledReportRun
 from app.models.sync_job import SyncJob
 from app.models.alert import AlertRule, Alert
 from app.models.market_research import MarketResearchReport
+from app.models.brand_analysis import (
+    AsinOfferSnapshot,
+    BrandAnalysisCapability,
+    BrandAnalysisJob,
+    BrandAnalysisSourceFile,
+)
 from app.models.google_sheets import GoogleSheetsConnection, GoogleSheetsSync, GoogleSheetsSyncRun
 from app.models.strategic_recommendation import StrategicRecommendation
 
@@ -41,6 +47,10 @@ __all__ = [
     "AlertRule",
     "Alert",
     "MarketResearchReport",
+    "BrandAnalysisJob",
+    "BrandAnalysisSourceFile",
+    "BrandAnalysisCapability",
+    "AsinOfferSnapshot",
     "GoogleSheetsConnection",
     "GoogleSheetsSync",
     "GoogleSheetsSyncRun",

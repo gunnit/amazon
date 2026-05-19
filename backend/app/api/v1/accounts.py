@@ -1,6 +1,6 @@
 """Amazon account management endpoints."""
 from datetime import date, timedelta
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
@@ -11,13 +11,16 @@ from app.models.product import Product
 from app.models.sales_data import SalesData
 from app.schemas.account import (
     AmazonAccountCreate, AmazonAccountUpdate, AmazonAccountResponse,
-    AccountStatusResponse, AccountSummary
+    AccountStatusResponse, AccountSummary, AdvertisingProfilesRequest,
+    AdvertisingProfileResponse,
 )
-from app.core.security import encrypt_value
+from app.core.security import decrypt_value, encrypt_value
 from app.core.exceptions import AmazonAPIError
 from app.services.data_extraction import DAILY_TOTAL_ASIN, DataExtractionService
 
 router = APIRouter()
+
+ADS_PROFILE_SCAN_COUNTRIES = ("US", "IT", "JP")
 
 
 def _account_to_response(account: AmazonAccount) -> AmazonAccountResponse:
@@ -64,6 +67,61 @@ def _account_to_status_response(account: AmazonAccount) -> AccountStatusResponse
         last_sync_heartbeat_at=account.last_sync_heartbeat_at,
         sync_error_code=account.sync_error_code,
         sync_error_kind=account.sync_error_kind,
+    )
+
+
+def _get_org_advertising_setting(organization, key: str) -> Optional[str]:
+    advertising_api = (getattr(organization, "settings", None) or {}).get("advertising_api")
+    if not advertising_api:
+        return None
+    enc_value = advertising_api.get(key)
+    if not enc_value:
+        return None
+    try:
+        return decrypt_value(enc_value)
+    except Exception:
+        return None
+
+
+def _normalize_ads_profile(profile: dict) -> AdvertisingProfileResponse:
+    account_info = profile.get("accountInfo") or {}
+    country_code = (
+        profile.get("countryCode")
+        or profile.get("country_code")
+        or account_info.get("countryCode")
+        or account_info.get("country_code")
+    )
+    account_name = (
+        account_info.get("name")
+        or account_info.get("accountName")
+        or profile.get("accountName")
+        or profile.get("name")
+    )
+    account_type = (
+        account_info.get("type")
+        or account_info.get("accountType")
+        or profile.get("accountType")
+        or profile.get("type")
+    )
+    marketplace_id = (
+        profile.get("marketplaceId")
+        or profile.get("marketplace_id")
+        or account_info.get("marketplaceId")
+        or account_info.get("marketplace_id")
+    )
+    if not marketplace_id and country_code:
+        from app.core.amazon.advertising_client import ADS_MARKETPLACE_BY_COUNTRY
+
+        marketplace_id = ADS_MARKETPLACE_BY_COUNTRY.get(str(country_code).upper())
+
+    return AdvertisingProfileResponse(
+        profile_id=str(profile.get("profileId") or profile.get("profile_id") or profile.get("id")),
+        account_name=account_name,
+        country_code=str(country_code).upper() if country_code else None,
+        marketplace_id=marketplace_id,
+        account_type=str(account_type).lower() if account_type else None,
+        currency=profile.get("currencyCode") or profile.get("currency"),
+        timezone=profile.get("timezone"),
     )
 
 
@@ -231,6 +289,90 @@ async def get_accounts_summary(
     )
 
 
+@router.post("/advertising/profiles", response_model=List[AdvertisingProfileResponse])
+async def list_advertising_profiles(
+    profiles_in: AdvertisingProfilesRequest,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """List Amazon Ads profiles available to an Ads authorization."""
+    refresh_token = profiles_in.refresh_token
+
+    if profiles_in.account_id:
+        result = await db.execute(
+            select(AmazonAccount).where(
+                AmazonAccount.id == profiles_in.account_id,
+                AmazonAccount.organization_id == organization.id,
+            )
+        )
+        account = result.scalar_one_or_none()
+        if not account:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        if not refresh_token and account.advertising_refresh_token_encrypted:
+            try:
+                refresh_token = decrypt_value(account.advertising_refresh_token_encrypted)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Could not decrypt Advertising refresh token for this account",
+                ) from exc
+
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide an Advertising refresh token or an account with Ads credentials",
+        )
+
+    from app.config import settings
+    from app.core.amazon.advertising_client import AdvertisingAPIClient
+
+    client_id = (
+        profiles_in.client_id
+        or _get_org_advertising_setting(organization, "client_id_enc")
+        or settings.AMAZON_ADS_CLIENT_ID
+    )
+    client_secret = (
+        profiles_in.client_secret
+        or _get_org_advertising_setting(organization, "client_secret_enc")
+        or settings.AMAZON_ADS_CLIENT_SECRET
+    )
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Advertising client_id and client_secret are required to list profiles",
+        )
+
+    countries = [profiles_in.marketplace_country.upper()] if profiles_in.marketplace_country else list(ADS_PROFILE_SCAN_COUNTRIES)
+    profiles_by_id: Dict[str, AdvertisingProfileResponse] = {}
+    errors: List[str] = []
+
+    for country in countries:
+        client = AdvertisingAPIClient(
+            client_id=client_id,
+            client_secret=client_secret,
+            refresh_token=refresh_token,
+            marketplace_country=country,
+        )
+        try:
+            for profile in client.list_profiles():
+                normalized = _normalize_ads_profile(profile)
+                if normalized.profile_id and normalized.profile_id != "None":
+                    profiles_by_id[normalized.profile_id] = normalized
+        except AmazonAPIError as exc:
+            errors.append(f"{country}: {exc.message}")
+        finally:
+            client.close()
+
+    if not profiles_by_id and errors:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not list Advertising profiles. " + " | ".join(errors),
+        )
+
+    return list(profiles_by_id.values())
+
+
 @router.get("/{account_id}", response_model=AmazonAccountResponse)
 async def get_account(
     account_id: UUID,
@@ -284,6 +426,12 @@ async def update_account(
     # Update fields
     if account_in.account_name is not None:
         account.account_name = account_in.account_name
+    if account_in.account_type is not None:
+        account.account_type = AccountType(account_in.account_type)
+    if account_in.marketplace_id is not None:
+        account.marketplace_id = account_in.marketplace_id
+    if account_in.marketplace_country is not None:
+        account.marketplace_country = account_in.marketplace_country
     if account_in.is_active is not None:
         account.is_active = account_in.is_active
     if account_in.refresh_token is not None:

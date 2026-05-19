@@ -12,7 +12,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.amazon_account import AmazonAccount, SyncStatus
-from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
+from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics, AdvertisingMetricsByAsin
 from app.models.order import Order, OrderItem
 from app.models.returns_data import ReturnData
 from app.models.sales_data import SalesData
@@ -360,61 +360,87 @@ class DataExtractionService:
             # Load org for credential resolution
             organization = await self._load_organization(account)
 
-            # Validate SP-API auth before sync
-            client = self._create_sp_api_client(account, organization)
-            client.smoke_test()
-            logger.info(f"SP-API auth validated for {account.account_name}")
-            await self._touch_sync(account)
+            sales_count = 0
+            inventory_count = 0
+            orders_count = 0
+            returns_count = 0
+            advertising_count = 0
+            products_count = 0
 
-            # Sync different data types based on account type
-            from app.models.amazon_account import AccountType
-            if account.account_type == AccountType.VENDOR:
-                sales_count = await self.sync_vendor_sales_data(account, organization)
+            sp_api_available = False
+            try:
+                # Validate SP-API auth before SP-backed sync steps.
+                client = self._create_sp_api_client(account, organization)
+                client.smoke_test()
+                sp_api_available = True
+                logger.info(f"SP-API auth validated for {account.account_name}")
                 await self._touch_sync(account)
-                inventory_count = 0  # Vendors don't use FBA inventory
-                orders_count = 0
-                returns_count = 0
-                advertising_count = await _run_optional_step(
-                    "Advertising",
-                    lambda: self.sync_advertising(account, organization),
+            except AmazonAPIError as exc:
+                if exc.error_code != "MISSING_CREDENTIALS" or not account.advertising_refresh_token_encrypted:
+                    raise
+                warning_message = (
+                    f"SP-API skipped for {account.account_name}: no SP-API refresh token configured"
                 )
-                await self._touch_sync(account)
-                products_count = await _run_optional_step(
-                    "Product",
-                    lambda: self.sync_products(account, organization),
-                )
+                logger.info(warning_message)
+                warning_messages.append(warning_message)
+                warning_codes.append(exc.error_code)
+
+            if sp_api_available:
+                # Sync different data types based on account type
+                from app.models.amazon_account import AccountType
+                if account.account_type == AccountType.VENDOR:
+                    sales_count = await self.sync_vendor_sales_data(account, organization)
+                    await self._touch_sync(account)
+                    inventory_count = 0  # Vendors don't use FBA inventory
+                    orders_count = 0
+                    returns_count = 0
+                    advertising_count = await _run_optional_step(
+                        "Advertising",
+                        lambda: self.sync_advertising(account, organization),
+                    )
+                    await self._touch_sync(account)
+                    products_count = await _run_optional_step(
+                        "Product",
+                        lambda: self.sync_products(account, organization),
+                    )
+                else:
+                    sales_count = await self.sync_sales_data(account, organization)
+                    await self._touch_sync(account)
+                    inventory_count = await _run_optional_step(
+                        "Inventory",
+                        lambda: self.sync_inventory(account, organization),
+                    )
+                    await self._touch_sync(account)
+                    orders_count = await _run_optional_step(
+                        "Orders",
+                        lambda: self.sync_orders(
+                            account,
+                            organization,
+                            last_sync_started_at=previous_sync_started_at,
+                            last_sync_succeeded_at=previous_sync_succeeded_at,
+                        ),
+                    )
+                    await self._touch_sync(account)
+                    returns_count = await _run_optional_step(
+                        "Returns",
+                        lambda: self.sync_returns(account, organization),
+                    )
+                    await self._touch_sync(account)
+                    advertising_count = await _run_optional_step(
+                        "Advertising",
+                        lambda: self.sync_advertising(account, organization),
+                    )
+                    await self._touch_sync(account)
+                    products_count = await _run_optional_step(
+                        "Product",
+                        lambda: self.sync_products(account, organization),
+                    )
             else:
-                sales_count = await self.sync_sales_data(account, organization)
-                await self._touch_sync(account)
-                inventory_count = await _run_optional_step(
-                    "Inventory",
-                    lambda: self.sync_inventory(account, organization),
-                )
-                await self._touch_sync(account)
-                orders_count = await _run_optional_step(
-                    "Orders",
-                    lambda: self.sync_orders(
-                        account,
-                        organization,
-                        last_sync_started_at=previous_sync_started_at,
-                        last_sync_succeeded_at=previous_sync_succeeded_at,
-                    ),
-                )
-                await self._touch_sync(account)
-                returns_count = await _run_optional_step(
-                    "Returns",
-                    lambda: self.sync_returns(account, organization),
-                )
-                await self._touch_sync(account)
                 advertising_count = await _run_optional_step(
                     "Advertising",
                     lambda: self.sync_advertising(account, organization),
                 )
                 await self._touch_sync(account)
-                products_count = await _run_optional_step(
-                    "Product",
-                    lambda: self.sync_products(account, organization),
-                )
 
             completed_at = datetime.utcnow()
             account.sync_status = SyncStatus.SUCCESS
@@ -1262,42 +1288,72 @@ class DataExtractionService:
                 return self._decimal(value)
         return Decimal("0")
 
-    async def sync_advertising(self, account: AmazonAccount, organization=None) -> int:
-        """Sync advertising campaigns and daily Sponsored Products metrics."""
-        if not account.advertising_refresh_token_encrypted:
-            logger.info(
-                "Skipping advertising sync for %s: missing refresh token",
-                account.account_name,
-            )
+    async def _upsert_advertising_asin_metrics(self, values: dict[str, Any]) -> None:
+        """Insert or update ASIN-level advertising metrics."""
+        stmt = pg_insert(AdvertisingMetricsByAsin).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_ad_asin_metrics_campaign_asin_date",
+            set_={
+                "account_id": stmt.excluded.account_id,
+                "impressions": stmt.excluded.impressions,
+                "clicks": stmt.excluded.clicks,
+                "cost": stmt.excluded.cost,
+                "attributed_sales_7d": stmt.excluded.attributed_sales_7d,
+                "attributed_units_ordered_7d": stmt.excluded.attributed_units_ordered_7d,
+                "ctr": stmt.excluded.ctr,
+                "cpc": stmt.excluded.cpc,
+                "acos": stmt.excluded.acos,
+                "roas": stmt.excluded.roas,
+            },
+        )
+        await self.db.execute(stmt)
+
+    def _request_campaign_reports(
+        self,
+        client,
+        profile_id: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[tuple[str, str]]:
+        """Request campaign reports for SP, SB, and SD. Returns list of (report_type, report_id)."""
+        report_types = ["sp_campaigns", "sb_campaigns", "sd_campaigns"]
+        requested: list[tuple[str, str]] = []
+        for rt in report_types:
+            try:
+                report_id = client.request_report(
+                    profile_id=profile_id,
+                    report_type=rt,
+                    date_range=(start_date, end_date),
+                )
+                requested.append((rt, report_id))
+            except AmazonAPIError as exc:
+                logger.warning("Could not request %s report for profile %s: %s", rt, profile_id, exc)
+        return requested
+
+    async def _process_campaign_report(
+        self,
+        client,
+        profile_id: str,
+        report_type: str,
+        report_id: str,
+        account: AmazonAccount,
+        campaign_id_map: dict[str, UUID],
+    ) -> int:
+        """Download and process a campaign-level report. Returns count of metric rows."""
+        campaign_type_by_report = {
+            "sp_campaigns": "sponsoredProducts",
+            "sb_campaigns": "sponsoredBrands",
+            "sd_campaigns": "sponsoredDisplay",
+        }
+        campaign_type = campaign_type_by_report.get(report_type, "sponsoredProducts")
+
+        try:
+            report_payload = client.download_report(profile_id=profile_id, report_id=report_id)
+        except AmazonAPIError as exc:
+            logger.warning("Failed to download %s report: %s", report_type, exc)
             return 0
 
-        try:
-            client, profile_id = self._create_advertising_api_client(account, organization)
-        except AmazonAPIError as exc:
-            if exc.error_code in {"MISSING_ADVERTISING_CREDENTIALS", "MISSING_ADVERTISING_PROFILE"}:
-                logger.info("Skipping advertising sync for %s: %s", account.account_name, exc)
-                return 0
-            raise
-
-        try:
-            campaigns = client.list_campaigns(profile_id)
-            campaign_count = await self._sync_advertising_campaigns(account, campaigns)
-            await self.db.flush()
-
-            end_date = date.today()
-            start_date = end_date - timedelta(days=6)
-            report_id = client.request_report(
-                profile_id=profile_id,
-                report_type="sp_campaigns",
-                date_range=(start_date, end_date),
-            )
-            report_payload = client.download_report(profile_id=profile_id, report_id=report_id)
-        finally:
-            client.close()
-
-        campaign_id_map = await self._campaign_ids_by_external_id(account)
         metric_count = 0
-
         for row in self._extract_report_rows(report_payload):
             external_campaign_id = self._normalize_campaign_id(row)
             if not external_campaign_id:
@@ -1310,14 +1366,13 @@ class DataExtractionService:
                     {
                         "campaignId": external_campaign_id,
                         "campaignName": row.get("campaignName") or row.get("name"),
-                        "campaignType": "sponsoredProducts",
+                        "campaignType": campaign_type,
                         "campaignStatus": row.get("campaignStatus") or row.get("state"),
                     },
                 )
                 if internal_campaign_id is None:
                     continue
                 campaign_id_map[external_campaign_id] = internal_campaign_id
-                campaign_count += 1
 
             metric_date = self._extract_report_date(row)
             if not metric_date:
@@ -1363,14 +1418,144 @@ class DataExtractionService:
             )
             metric_count += 1
 
+        return metric_count
+
+    async def _process_asin_report(
+        self,
+        client,
+        profile_id: str,
+        report_id: str,
+        account: AmazonAccount,
+        campaign_id_map: dict[str, UUID],
+    ) -> int:
+        """Download and process the advertised-product (ASIN-level) report."""
+        try:
+            report_payload = client.download_report(profile_id=profile_id, report_id=report_id)
+        except AmazonAPIError as exc:
+            logger.warning("Failed to download ASIN report: %s", exc)
+            return 0
+
+        asin_count = 0
+        for row in self._extract_report_rows(report_payload):
+            asin = row.get("advertisedAsin") or row.get("asin")
+            if not asin:
+                continue
+            metric_date = self._extract_report_date(row)
+            if not metric_date:
+                continue
+
+            external_campaign_id = self._normalize_campaign_id(row)
+            if not external_campaign_id:
+                continue
+
+            internal_campaign_id = campaign_id_map.get(external_campaign_id)
+            if internal_campaign_id is None:
+                internal_campaign_id = await self._upsert_advertising_campaign(
+                    account,
+                    {
+                        "campaignId": external_campaign_id,
+                        "campaignName": row.get("campaignName") or row.get("name"),
+                        "campaignType": "sponsoredProducts",
+                        "campaignStatus": row.get("campaignStatus") or row.get("state"),
+                    },
+                )
+                if internal_campaign_id is None:
+                    continue
+                campaign_id_map[external_campaign_id] = internal_campaign_id
+
+            impressions = self._int_value(row.get("impressions"))
+            clicks = self._int_value(row.get("clicks"))
+            cost = self._decimal(row.get("cost"))
+            sales_7d = self._decimal(row.get("sales7d"))
+            units_7d = self._int_value(row.get("unitsSold7d"))
+
+            ctr = self._metric_ratio(Decimal(clicks) * Decimal("100"), Decimal(impressions)) if impressions > 0 else Decimal("0")
+            cpc = self._metric_ratio(cost, Decimal(clicks)) if clicks > 0 else Decimal("0")
+            acos = self._metric_ratio(cost * Decimal("100"), sales_7d) if sales_7d > 0 else Decimal("0")
+            roas = self._metric_ratio(sales_7d, cost) if cost > 0 else Decimal("0")
+
+            await self._upsert_advertising_asin_metrics(
+                {
+                    "account_id": account.id,
+                    "campaign_id": internal_campaign_id,
+                    "asin": asin,
+                    "date": metric_date,
+                    "impressions": impressions,
+                    "clicks": clicks,
+                    "cost": cost,
+                    "attributed_sales_7d": sales_7d,
+                    "attributed_units_ordered_7d": units_7d,
+                    "ctr": ctr,
+                    "cpc": cpc,
+                    "acos": acos,
+                    "roas": roas,
+                }
+            )
+            asin_count += 1
+
+        return asin_count
+
+    async def sync_advertising(self, account: AmazonAccount, organization=None) -> int:
+        """Sync advertising campaigns and metrics (SP, SB, SD + ASIN-level)."""
+        if not account.advertising_refresh_token_encrypted:
+            logger.info(
+                "Skipping advertising sync for %s: missing refresh token",
+                account.account_name,
+            )
+            return 0
+
+        try:
+            client, profile_id = self._create_advertising_api_client(account, organization)
+        except AmazonAPIError as exc:
+            if exc.error_code in {"MISSING_ADVERTISING_CREDENTIALS", "MISSING_ADVERTISING_PROFILE"}:
+                logger.info("Skipping advertising sync for %s: %s", account.account_name, exc)
+                return 0
+            raise
+
+        try:
+            campaigns = client.list_campaigns(profile_id)
+            await self._sync_advertising_campaigns(account, campaigns)
+            await self.db.flush()
+
+            end_date = date.today()
+            start_date = end_date - timedelta(days=6)
+
+            campaign_reports = self._request_campaign_reports(client, profile_id, start_date, end_date)
+
+            asin_report_id = None
+            try:
+                asin_report_id = client.request_report(
+                    profile_id=profile_id,
+                    report_type="sp_advertised_product",
+                    date_range=(start_date, end_date),
+                )
+            except AmazonAPIError as exc:
+                logger.warning("Could not request ASIN report for %s: %s", account.account_name, exc)
+
+            campaign_id_map = await self._campaign_ids_by_external_id(account)
+            metric_count = 0
+
+            for report_type, report_id in campaign_reports:
+                metric_count += await self._process_campaign_report(
+                    client, profile_id, report_type, report_id, account, campaign_id_map,
+                )
+
+            asin_count = 0
+            if asin_report_id:
+                asin_count = await self._process_asin_report(
+                    client, profile_id, asin_report_id, account, campaign_id_map,
+                )
+        finally:
+            client.close()
+
         await self.db.flush()
         logger.info(
-            "Synced %d advertising campaigns and %d metric rows for %s",
-            campaign_count,
-            metric_count,
+            "Synced advertising for %s: %d campaign metric rows, %d ASIN metric rows",
             account.account_name,
+            metric_count,
+            asin_count,
         )
-        return metric_count
+        return metric_count + asin_count
 
     async def sync_advertising_data(self, account: AmazonAccount, organization=None) -> int:
         """Backward-compatible alias for advertising sync."""

@@ -80,6 +80,7 @@ sys.modules["app.models.product"] = product_module
 advertising_module = types.ModuleType("app.models.advertising")
 advertising_module.AdvertisingCampaign = type("AdvertisingCampaign", (), {})
 advertising_module.AdvertisingMetrics = type("AdvertisingMetrics", (), {})
+advertising_module.AdvertisingMetricsByAsin = type("AdvertisingMetricsByAsin", (), {})
 sys.modules["app.models.advertising"] = advertising_module
 
 schema_spec = spec_from_file_location("app.schemas.analytics", SCHEMA_PATH)

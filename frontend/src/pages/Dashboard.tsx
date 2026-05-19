@@ -12,6 +12,8 @@ import {
   Globe,
   ArrowRight,
   ChevronRight,
+  Megaphone,
+  Target,
 } from 'lucide-react'
 import {
   LineChart,
@@ -543,6 +545,36 @@ export default function Dashboard() {
           icon={Package}
         />
       </div>
+
+      {/* Advertising KPIs */}
+      {kpis?.roas.is_available !== false && (
+        <div className="grid gap-4 md:grid-cols-3">
+          <KPICard
+            title={t('dashboard.adSpend')}
+            value={kpis?.total_ad_spend.value || 0}
+            change={kpis?.total_ad_spend.change_percent}
+            trend={kpis?.total_ad_spend.trend}
+            icon={DollarSign}
+            format="currency"
+          />
+          <KPICard
+            title="ROAS"
+            value={kpis?.roas.value || 0}
+            change={kpis?.roas.change_percent}
+            trend={kpis?.roas.trend}
+            icon={Target}
+            format="number"
+          />
+          <KPICard
+            title="ACoS"
+            value={kpis?.acos.value || 0}
+            change={kpis?.acos.change_percent}
+            trend={kpis?.acos.trend}
+            icon={Megaphone}
+            format="percent"
+          />
+        </div>
+      )}
 
       <PeriodComparisonCard
         comparison={comparisonLoading ? undefined : comparison}

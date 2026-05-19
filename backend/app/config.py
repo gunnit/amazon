@@ -68,6 +68,24 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     MARKET_RESEARCH_MAX_COMPETITORS: int = 5
 
+    # Deprecated external market API boundary (not used by Brand Analysis).
+    # These optional values are retained only so older environments keep
+    # booting; the production Brand Analysis path is internal Amazon data
+    # plus Market Research, with generic external yearly uploads as fallback.
+    HELIUM10_USERNAME: Optional[str] = None
+    HELIUM10_PASSWORD: Optional[str] = None
+    HELIUM10_API_BASE_URL: Optional[str] = None
+    HELIUM10_API_KEY: Optional[str] = None
+    HELIUM10_AUTOMATION_ENABLED: bool = False
+
+    # Brand Analysis
+    BRAND_ANALYSIS_MAX_UPLOAD_MB: int = 25
+    BRAND_ANALYSIS_STORAGE_BACKEND: str = "db"  # "db" or "s3"
+    BRAND_ANALYSIS_SALES_TRAFFIC_RECOVERY_DAYS: int = 730
+    BRAND_ANALYSIS_PARTIAL_USABLE_MONTHS: int = 3
+    BRAND_ANALYSIS_MAX_SYNC_ATTEMPTS: int = 1
+    BRAND_ANALYSIS_CAPABILITY_CACHE_TTL_HOURS: int = 24
+
     # Google OAuth (Sheets integration)
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None

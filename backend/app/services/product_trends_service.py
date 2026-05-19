@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.alert import Alert, AlertRule
+from app.models.advertising import AdvertisingMetricsByAsin
 from app.models.inventory import InventoryData
 from app.models.product import BSRHistory, Product
 from app.models.sales_data import SalesData
@@ -466,6 +467,12 @@ class ProductTrendsService:
             current_start=current_start,
             current_end=current_end,
         )
+        ad_data = await self._ad_metrics_by_asin(
+            account_ids=account_ids,
+            asins=list(asins),
+            start_date=current_start,
+            end_date=current_end,
+        )
 
         all_products: List[Dict[str, Any]] = []
         for product_asin in sorted(asins):
@@ -524,6 +531,12 @@ class ProductTrendsService:
                 inventory_days_of_cover=inventory_days_of_cover,
             )
 
+            product_ad = ad_data.get(product_asin, {})
+            ad_spend = product_ad.get("ad_spend", 0.0)
+            ad_sales = product_ad.get("ad_sales", 0.0)
+            ad_acos = round((ad_spend / ad_sales * 100), 1) if ad_sales > 0 else None
+            ad_roas = round((ad_sales / ad_spend), 2) if ad_spend > 0 else None
+
             all_products.append(
                 {
                     "asin": product_asin,
@@ -549,6 +562,10 @@ class ProductTrendsService:
                     "previous_inventory": previous_inventory,
                     "inventory_days_of_cover": inventory_days_of_cover,
                     "review_velocity_change_percent": None,
+                    "ad_spend": round(ad_spend, 2),
+                    "ad_sales": round(ad_sales, 2),
+                    "acos": ad_acos,
+                    "roas": ad_roas,
                     "supporting_signals": supporting_signals,
                     "recent_sales": self._recent_sales_points(product_series, current_end),
                     "data_quality": quality,
@@ -792,6 +809,40 @@ class ProductTrendsService:
             elif previous_start <= row.snapshot_date <= previous_end and asin_snapshots["previous_inventory"] is None:
                 asin_snapshots["previous_inventory"] = inventory_value
         return snapshots
+
+    async def _ad_metrics_by_asin(
+        self,
+        *,
+        account_ids: List[UUID],
+        asins: List[str],
+        start_date: date,
+        end_date: date,
+    ) -> Dict[str, Dict[str, float]]:
+        if not asins:
+            return {}
+
+        result = await self.db.execute(
+            select(
+                AdvertisingMetricsByAsin.asin,
+                func.sum(AdvertisingMetricsByAsin.cost).label("ad_spend"),
+                func.sum(AdvertisingMetricsByAsin.attributed_sales_7d).label("ad_sales"),
+            )
+            .where(
+                AdvertisingMetricsByAsin.account_id.in_(account_ids),
+                AdvertisingMetricsByAsin.asin.in_(asins),
+                AdvertisingMetricsByAsin.date >= start_date,
+                AdvertisingMetricsByAsin.date <= end_date,
+            )
+            .group_by(AdvertisingMetricsByAsin.asin)
+        )
+
+        return {
+            row.asin: {
+                "ad_spend": float(row.ad_spend or 0),
+                "ad_sales": float(row.ad_sales or 0),
+            }
+            for row in result.all()
+        }
 
     def _recent_sales_points(
         self,

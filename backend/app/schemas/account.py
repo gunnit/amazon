@@ -40,6 +40,9 @@ class AmazonAccountCreate(BaseModel):
 class AmazonAccountUpdate(BaseModel):
     """Schema for updating an Amazon account."""
     account_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    account_type: Optional[AccountType] = None
+    marketplace_id: Optional[str] = None
+    marketplace_country: Optional[str] = Field(None, min_length=2, max_length=10)
     is_active: Optional[bool] = None
     refresh_token: Optional[str] = None
     client_id: Optional[str] = None
@@ -48,6 +51,26 @@ class AmazonAccountUpdate(BaseModel):
     advertising_refresh_token: Optional[str] = None
     login_email: Optional[str] = None
     login_password: Optional[str] = None
+
+
+class AdvertisingProfilesRequest(BaseModel):
+    """Request available Advertising profiles for a refresh token or account."""
+    refresh_token: Optional[str] = None
+    account_id: Optional[UUID] = None
+    marketplace_country: Optional[str] = Field(None, min_length=2, max_length=10)
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+
+
+class AdvertisingProfileResponse(BaseModel):
+    """Normalized Amazon Ads profile metadata."""
+    profile_id: str
+    account_name: Optional[str] = None
+    country_code: Optional[str] = None
+    marketplace_id: Optional[str] = None
+    account_type: Optional[str] = None
+    currency: Optional[str] = None
+    timezone: Optional[str] = None
 
 
 class AmazonAccountResponse(BaseModel):

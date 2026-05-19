@@ -5,6 +5,8 @@ import {
   FileText,
   BarChart3,
   TrendingUp,
+  Megaphone,
+  Store,
   Search,
   Bell,
   Package,
@@ -27,10 +29,13 @@ import { useTranslation } from '@/i18n'
 
 const navItems = [
   { key: 'nav.dashboard', href: '/', icon: LayoutDashboard },
+  { key: 'nav.accounts', href: '/accounts', icon: Store },
   { key: 'nav.reports', href: '/reports', icon: FileText },
   { key: 'nav.analytics', href: '/analytics', icon: BarChart3 },
+  { key: 'nav.advertising', href: '/advertising', icon: Megaphone },
   { key: 'nav.forecasts', href: '/forecasts', icon: TrendingUp },
   { key: 'nav.marketResearch', href: '/market-research', icon: Search },
+  { key: 'nav.brandAnalysis', href: '/brand-analysis', icon: FileText },
   { key: 'nav.catalog', href: '/catalog', icon: Package },
   { key: 'nav.recommendations', href: '/recommendations', icon: Lightbulb },
   { key: 'nav.alerts', href: '/alerts', icon: Bell },

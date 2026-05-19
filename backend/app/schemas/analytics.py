@@ -23,6 +23,7 @@ class DashboardKPIs(BaseModel):
     total_orders: MetricValue
     average_order_value: MetricValue
     return_rate: MetricValue
+    total_ad_spend: MetricValue
     roas: MetricValue
     acos: MetricValue
     ctr: MetricValue
@@ -199,6 +200,10 @@ class ProductPerformance(BaseModel):
     current_bsr: Optional[int]
     bsr_change: Optional[int]
     revenue_share: float
+    ad_spend: float = 0.0
+    ad_sales: float = 0.0
+    acos: Optional[float] = None
+    roas: Optional[float] = None
 
 
 class TopPerformers(BaseModel):
@@ -325,6 +330,10 @@ class ProductTrendItem(BaseModel):
     previous_inventory: Optional[int] = None
     inventory_days_of_cover: Optional[float] = None
     review_velocity_change_percent: Optional[float] = None
+    ad_spend: float = 0.0
+    ad_sales: float = 0.0
+    acos: Optional[float] = None
+    roas: Optional[float] = None
     supporting_signals: List[str] = Field(default_factory=list)
     recent_sales: List[ProductTrendTimeseriesPoint] = Field(default_factory=list)
     data_quality: str

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, cast, Date, and_
 
 from app.models.sales_data import SalesData
-from app.models.advertising import AdvertisingMetrics, AdvertisingCampaign
+from app.models.advertising import AdvertisingMetrics, AdvertisingCampaign, AdvertisingMetricsByAsin
 from app.models.product import Product, BSRHistory
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 
@@ -175,7 +175,25 @@ class AnalyticsService:
         result = await self.db.execute(query)
         rows = result.all()
 
-        # Get product details
+        asins = [row.asin for row in rows]
+
+        ad_query = (
+            select(
+                AdvertisingMetricsByAsin.asin,
+                func.sum(AdvertisingMetricsByAsin.cost).label("ad_spend"),
+                func.sum(AdvertisingMetricsByAsin.attributed_sales_7d).label("ad_sales"),
+            )
+            .where(
+                AdvertisingMetricsByAsin.account_id.in_(account_ids),
+                AdvertisingMetricsByAsin.asin.in_(asins),
+                AdvertisingMetricsByAsin.date >= start_date,
+                AdvertisingMetricsByAsin.date <= end_date,
+            )
+            .group_by(AdvertisingMetricsByAsin.asin)
+        )
+        ad_result = await self.db.execute(ad_query)
+        ad_by_asin = {r.asin: r for r in ad_result.all()}
+
         products = []
         for row in rows:
             product_result = await self.db.execute(
@@ -188,12 +206,22 @@ class AnalyticsService:
             )
             product = product_result.scalar_one_or_none()
 
+            ad = ad_by_asin.get(row.asin)
+            ad_spend = float(ad.ad_spend) if ad and ad.ad_spend else 0.0
+            ad_sales = float(ad.ad_sales) if ad and ad.ad_sales else 0.0
+            ad_acos = (ad_spend / ad_sales * 100) if ad_sales > 0 else None
+            ad_roas = (ad_sales / ad_spend) if ad_spend > 0 else None
+
             products.append({
                 "asin": row.asin,
                 "title": product.title if product else None,
                 "revenue": float(row.revenue),
                 "units": int(row.units),
                 "orders": int(row.orders),
+                "ad_spend": ad_spend,
+                "ad_sales": ad_sales,
+                "acos": round(ad_acos, 1) if ad_acos is not None else None,
+                "roas": round(ad_roas, 2) if ad_roas is not None else None,
             })
 
         return products

@@ -15,7 +15,7 @@ from app.models.order import Order, OrderItem
 from app.models.returns_data import ReturnData
 from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
-from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
+from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics, AdvertisingMetricsByAsin
 from app.models.product import Product
 from app.services.analytics_service import AnalyticsService
 from app.services.ai_analysis_service import ProductTrendInsightsAnalysisService
@@ -578,6 +578,13 @@ async def get_dashboard_kpis(
     ctr_metric = _build_comparison_metric(
         "ctr", "CTR", "percent", ads_current["ctr"], ads_previous["ctr"]
     )
+    ad_spend_metric = _build_comparison_metric(
+        "total_ad_spend",
+        "Ad Spend",
+        "currency",
+        ads_current["spend"],
+        ads_previous["spend"],
+    )
 
     # Count active ASINs and synced accounts (exclude sentinel)
     asin_count = await db.execute(
@@ -610,6 +617,7 @@ async def get_dashboard_kpis(
             is_available=False,
             unavailable_reason=MISSING_DATA_SOURCE,
         ),
+        total_ad_spend=_metric_value_from_comparison(ad_spend_metric),
         roas=_metric_value_from_comparison(roas_metric),
         acos=_metric_value_from_comparison(acos_metric),
         ctr=_metric_value_from_comparison(ctr_metric),
@@ -1056,6 +1064,34 @@ async def get_top_performers(
         ).all()
         title_map = {row.asin: row.title for row in product_rows if row.title}
 
+    ad_metrics_by_asin: dict[str, dict[str, float]] = {}
+    if asins:
+        ad_rows = (
+            await db.execute(
+                select(
+                    AdvertisingMetricsByAsin.asin,
+                    func.sum(AdvertisingMetricsByAsin.cost).label("ad_spend"),
+                    func.sum(AdvertisingMetricsByAsin.attributed_sales_7d).label("ad_sales"),
+                )
+                .where(
+                    AdvertisingMetricsByAsin.account_id.in_(accounts_query),
+                    AdvertisingMetricsByAsin.asin.in_(asins),
+                    AdvertisingMetricsByAsin.date >= start_date,
+                    AdvertisingMetricsByAsin.date <= end_date,
+                )
+                .group_by(AdvertisingMetricsByAsin.asin)
+            )
+        ).all()
+        for row in ad_rows:
+            ad_spend = float(row.ad_spend or 0)
+            ad_sales = float(row.ad_sales or 0)
+            ad_metrics_by_asin[row.asin] = {
+                "ad_spend": ad_spend,
+                "ad_sales": ad_sales,
+                "acos": (ad_spend / ad_sales * 100) if ad_sales > 0 else None,
+                "roas": (ad_sales / ad_spend) if ad_spend > 0 else None,
+            }
+
     by_revenue = [
         ProductPerformance(
             asin=row.asin,
@@ -1068,6 +1104,18 @@ async def get_top_performers(
             current_bsr=None,
             bsr_change=None,
             revenue_share=(float(row.total_revenue or 0) / total_revenue * 100) if total_revenue > 0 else 0,
+            ad_spend=round(ad_metrics_by_asin.get(row.asin, {}).get("ad_spend", 0.0), 2),
+            ad_sales=round(ad_metrics_by_asin.get(row.asin, {}).get("ad_sales", 0.0), 2),
+            acos=(
+                round(ad_metrics_by_asin[row.asin]["acos"], 1)
+                if row.asin in ad_metrics_by_asin and ad_metrics_by_asin[row.asin]["acos"] is not None
+                else None
+            ),
+            roas=(
+                round(ad_metrics_by_asin[row.asin]["roas"], 2)
+                if row.asin in ad_metrics_by_asin and ad_metrics_by_asin[row.asin]["roas"] is not None
+                else None
+            ),
         )
         for row in rows
     ]
@@ -1356,11 +1404,14 @@ async def get_advertising_insights(
     db: DbSession,
     start_date: date = Query(default=date.today() - timedelta(days=30)),
     end_date: date = Query(default=date.today()),
+    account_ids: Optional[List[UUID]] = Query(default=None),
 ):
     """Get advertising performance insights."""
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
+    if account_ids:
+        accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
     overall_query = (
         select(
             func.sum(AdvertisingMetrics.cost).label("spend"),
