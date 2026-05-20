@@ -34,18 +34,25 @@ export const useAuthStore = create<AuthState>()(
           localStorage.setItem('access_token', tokens.access_token)
           localStorage.setItem('refresh_token', tokens.refresh_token)
 
-          // Fetch user + organization in parallel — they don't depend on each other.
-          // This saves one round-trip, which matters on a cold-started free-tier API.
-          const [user, organization] = await Promise.all([
+          // Fetch user + organization in parallel — they don't depend on each
+          // other. Use allSettled so a transient failure on the org endpoint
+          // doesn't strand the user on a spinning login screen: as long as
+          // /auth/me works, we authenticate and let the dashboard refetch org
+          // data lazily.
+          const [userResult, orgResult] = await Promise.allSettled([
             authApi.getCurrentUser(),
             authApi.getOrganization(),
           ])
 
+          if (userResult.status === 'rejected') {
+            throw userResult.reason
+          }
+
           set({
-            user,
-            organization,
+            user: userResult.value,
+            organization: orgResult.status === 'fulfilled' ? orgResult.value : null,
             isAuthenticated: true,
-            isLoading: false
+            isLoading: false,
           })
         } catch (error: unknown) {
           const errorMessage = error instanceof Error
