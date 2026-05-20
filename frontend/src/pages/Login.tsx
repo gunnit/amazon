@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -14,10 +14,22 @@ import { useTranslation } from '@/i18n'
 
 export default function Login() {
   const [isLoading, setIsLoading] = useState(false)
+  const [showWarmupHint, setShowWarmupHint] = useState(false)
   const navigate = useNavigate()
   const { toast } = useToast()
   const { login } = useAuthStore()
   const { t } = useTranslation()
+
+  // Show a "server warming up" hint if login takes longer than 4s — common on
+  // Render free tier after a cold start. Resets when loading finishes.
+  useEffect(() => {
+    if (!isLoading) {
+      setShowWarmupHint(false)
+      return
+    }
+    const timer = setTimeout(() => setShowWarmupHint(true), 4000)
+    return () => clearTimeout(timer)
+  }, [isLoading])
 
   const loginSchema = z.object({
     email: z.string().email(t('login.invalidEmail')),
@@ -93,11 +105,16 @@ export default function Login() {
               )}
             </div>
           </CardContent>
-          <CardFooter className="flex flex-col gap-4">
+          <CardFooter className="flex flex-col gap-3">
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('login.signIn')}
+              {isLoading ? t('login.signingIn') : t('login.signIn')}
             </Button>
+            {showWarmupHint && (
+              <p className="text-xs text-center text-muted-foreground animate-in fade-in">
+                {t('login.warmupHint')}
+              </p>
+            )}
             <p className="text-sm text-center text-muted-foreground">
               {t('login.noAccount')}{' '}
               <Link to="/register" className="text-primary hover:underline">

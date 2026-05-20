@@ -29,33 +29,43 @@ export function DateRangeFilter() {
   const { datePreset, customStartDate, customEndDate, setDatePreset, setCustomDateRange } =
     useFilterStore()
   const [calendarOpen, setCalendarOpen] = useState(false)
+  const [pendingRange, setPendingRange] = useState<DateRange | undefined>(undefined)
   const { t } = useTranslation()
 
   const handlePresetChange = (value: string) => {
     if (value === 'custom') {
-      setCalendarOpen(true)
       setDatePreset('custom')
+      // Defer opening the popover so the Select's own dropdown finishes closing.
+      // Without this, Radix can treat the Select's close-click as a click-outside
+      // for the freshly-mounted Popover and immediately close it again.
+      setTimeout(() => setCalendarOpen(true), 60)
     } else {
+      setCalendarOpen(false)
+      setPendingRange(undefined)
       setDatePreset(value as DatePreset)
     }
   }
 
   const handleDateSelect = (range: DateRange | undefined) => {
+    setPendingRange(range)
     if (range?.from && range?.to) {
       const start = format(range.from, 'yyyy-MM-dd')
       const end = format(range.to, 'yyyy-MM-dd')
       setCustomDateRange(start, end)
       setCalendarOpen(false)
+      setPendingRange(undefined)
     }
   }
 
   const displayLabel =
     datePreset === 'custom' && customStartDate && customEndDate
-      ? `${format(new Date(customStartDate + 'T00:00:00'), 'MMM d')} - ${format(new Date(customEndDate + 'T00:00:00'), 'MMM d')}`
+      ? `${format(new Date(customStartDate + 'T00:00:00'), 'MMM d, yyyy')} - ${format(new Date(customEndDate + 'T00:00:00'), 'MMM d, yyyy')}`
       : undefined
 
-  const calendarFrom = customStartDate ? new Date(customStartDate + 'T00:00:00') : undefined
-  const calendarTo = customEndDate ? new Date(customEndDate + 'T00:00:00') : undefined
+  const calendarFrom =
+    pendingRange?.from ?? (customStartDate ? new Date(customStartDate + 'T00:00:00') : undefined)
+  const calendarTo =
+    pendingRange?.to ?? (customEndDate ? new Date(customEndDate + 'T00:00:00') : undefined)
 
   return (
     <div className="flex items-center gap-2">
@@ -63,7 +73,9 @@ export function DateRangeFilter() {
         <SelectTrigger className="w-[170px] h-9 text-sm">
           <CalendarIcon className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
           <SelectValue>
-            {displayLabel || t(PRESET_KEYS.find((p) => p.value === datePreset)?.key || '')}
+            {datePreset === 'custom' && !displayLabel
+              ? t('filter.customRange')
+              : t(PRESET_KEYS.find((p) => p.value === datePreset)?.key || '')}
           </SelectValue>
         </SelectTrigger>
         <SelectContent>
@@ -75,16 +87,21 @@ export function DateRangeFilter() {
         </SelectContent>
       </Select>
 
+      {/* Always render the Popover when in custom mode so its mount lifecycle
+          doesn't race with the Select close event. */}
       {datePreset === 'custom' && (
         <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
           <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="h-9 text-xs">
-              {customStartDate && customEndDate
-                ? `${format(new Date(customStartDate + 'T00:00:00'), 'MMM d, yyyy')} - ${format(new Date(customEndDate + 'T00:00:00'), 'MMM d, yyyy')}`
-                : t('filter.pickDates')}
+            <Button variant="outline" size="sm" className="h-9 text-xs whitespace-nowrap">
+              {displayLabel ?? t('filter.pickDates')}
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0" align="start">
+            <div className="border-b px-3 py-2 text-xs text-muted-foreground">
+              {pendingRange?.from && !pendingRange?.to
+                ? t('filter.pickEndDate')
+                : t('filter.pickStartDate')}
+            </div>
             <Calendar
               mode="range"
               selected={{ from: calendarFrom, to: calendarTo }}

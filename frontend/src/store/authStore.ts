@@ -34,8 +34,12 @@ export const useAuthStore = create<AuthState>()(
           localStorage.setItem('access_token', tokens.access_token)
           localStorage.setItem('refresh_token', tokens.refresh_token)
 
-          const user = await authApi.getCurrentUser()
-          const organization = await authApi.getOrganization()
+          // Fetch user + organization in parallel — they don't depend on each other.
+          // This saves one round-trip, which matters on a cold-started free-tier API.
+          const [user, organization] = await Promise.all([
+            authApi.getCurrentUser(),
+            authApi.getOrganization(),
+          ])
 
           set({
             user,
