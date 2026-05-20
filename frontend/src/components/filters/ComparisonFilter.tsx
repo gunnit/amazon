@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { format } from 'date-fns'
+import { useEffect, useState } from 'react'
+import { format, subMonths } from 'date-fns'
 import { ArrowRightLeft, CalendarRange } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -36,18 +36,34 @@ function ComparisonDateRangeButton({
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  // Track in-progress selection so the first click "sticks" before the user
+  // picks the closing date. Without this, react-day-picker fires onSelect
+  // with {from, to: undefined} on first click, which we'd ignore — leaving
+  // the calendar visually frozen.
+  const [pendingRange, setPendingRange] = useState<DateRange | undefined>(undefined)
 
-  const selectedRange = {
+  // Reset pending range whenever the popover closes or the committed range
+  // changes from outside (e.g. reset button).
+  useEffect(() => {
+    if (!open) setPendingRange(undefined)
+  }, [open])
+
+  const committedRange: DateRange = {
     from: start ? new Date(start + 'T00:00:00') : undefined,
     to: end ? new Date(end + 'T00:00:00') : undefined,
   }
+  const displayedRange: DateRange = pendingRange ?? committedRange
 
   const handleSelect = (range: DateRange | undefined) => {
+    setPendingRange(range)
     if (range?.from && range?.to) {
       onChange(format(range.from, 'yyyy-MM-dd'), format(range.to, 'yyyy-MM-dd'))
       setOpen(false)
+      setPendingRange(undefined)
     }
   }
+
+  const defaultMonth = displayedRange.from ?? subMonths(new Date(), 1)
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -60,11 +76,17 @@ function ComparisonDateRangeButton({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">
+        <div className="border-b px-3 py-2 text-xs text-muted-foreground">
+          {pendingRange?.from && !pendingRange?.to
+            ? t('filter.pickEndDate')
+            : t('filter.pickStartDate')}
+        </div>
         <Calendar
           mode="range"
-          selected={selectedRange}
+          selected={displayedRange}
           onSelect={handleSelect}
           numberOfMonths={2}
+          defaultMonth={defaultMonth}
           disabled={{ after: new Date() }}
         />
       </PopoverContent>
