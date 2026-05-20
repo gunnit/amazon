@@ -5,6 +5,7 @@ import type {
   DashboardKPIs, TrendData, SalesAggregated, ComparisonResponse,
   AdsVsOrganicResponse, AdvertisingInsights,
   CategorySalesData, HourlyOrdersData, ProductTrendsResponse, ReturnsAnalyticsResponse, TopPerformersResponse,
+  PaginatedProductPerformance, PerProductSortKey,
   Forecast, Product,
   ForecastExportJob,
   ForecastProductOption,
@@ -456,6 +457,20 @@ export const analyticsApi = {
     account_ids?: string[]
   }): Promise<TopPerformersResponse> => {
     const response = await api.get('/analytics/top-performers', { params })
+    return response.data
+  },
+
+  getPerProductPerformance: async (params: {
+    start_date: string
+    end_date: string
+    account_ids?: string[]
+    offset?: number
+    limit?: number
+    sort_by?: PerProductSortKey
+    sort_dir?: 'asc' | 'desc'
+    search?: string
+  }): Promise<PaginatedProductPerformance> => {
+    const response = await api.get('/analytics/per-product-performance', { params })
     return response.data
   },
 

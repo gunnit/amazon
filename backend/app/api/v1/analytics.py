@@ -6,7 +6,7 @@ from decimal import Decimal
 import logging
 import re
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import Date, and_, cast, func, select, text
+from sqlalchemy import Date, and_, case, cast, func, select, text
 
 from app.api.deps import CurrentOrganization, CurrentSuperuser, CurrentUser, DbSession
 from app.config import settings
@@ -23,7 +23,7 @@ from app.services.product_trends_service import ProductTrendsService, build_rule
 from app.schemas.analytics import (
     DashboardKPIs, MetricValue, TrendData, TrendDataPoint,
     ComparisonDailyPoint, ComparisonMetric, ComparisonPeriod, ComparisonResponse,
-    ProductPerformance, TopPerformers,
+    PaginatedProductPerformance, ProductPerformance, TopPerformers,
     AdvertisingInsights, CategorySalesData, HourlyOrdersData, ProductTrendsResponse,
     ReturnAsinMetric, ReturnReasonBreakdown, ReturnsAnalyticsResponse, ReturnsSummary,
     ReturnsTrendPoint,
@@ -1125,6 +1125,171 @@ async def get_top_performers(
         by_units=by_revenue,  # Same for now
         by_growth=[],  # Would require historical comparison
     )
+
+
+_PER_PRODUCT_SORT_COLUMNS = {
+    "revenue": "total_revenue",
+    "units": "total_units",
+    "orders": "total_orders",
+    "acos": "acos",
+    "roas": "roas",
+    "ad_spend": "ad_spend",
+}
+
+
+@router.get("/per-product-performance", response_model=PaginatedProductPerformance)
+async def get_per_product_performance(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    start_date: date = Query(default=date.today() - timedelta(days=30)),
+    end_date: date = Query(default=date.today()),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=500),
+    sort_by: str = Query(default="revenue"),
+    sort_dir: str = Query(default="desc"),
+    search: Optional[str] = Query(default=None),
+):
+    """Paginated per-product performance for the Analytics ‘Per product’ tab.
+
+    Returns a flat, sortable, searchable list of every ASIN with sales in the
+    range, joined left with ad metrics so products without ads still appear.
+    """
+    accounts_query = select(AmazonAccount.id).where(
+        AmazonAccount.organization_id == organization.id
+    )
+    if account_ids:
+        accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
+
+    sort_col = _PER_PRODUCT_SORT_COLUMNS.get(sort_by, "total_revenue")
+    sort_desc = sort_dir.lower() != "asc"
+
+    # Sales aggregates per ASIN.
+    sales_subq = (
+        select(
+            SalesData.asin.label("asin"),
+            func.sum(SalesData.units_ordered).label("total_units"),
+            func.sum(SalesData.ordered_product_sales).label("total_revenue"),
+            func.sum(SalesData.total_order_items).label("total_orders"),
+        )
+        .where(
+            SalesData.account_id.in_(accounts_query),
+            SalesData.asin != DAILY_TOTAL_ASIN,
+            SalesData.date >= start_date,
+            SalesData.date <= end_date,
+        )
+        .group_by(SalesData.asin)
+        .subquery()
+    )
+
+    ad_subq = (
+        select(
+            AdvertisingMetricsByAsin.asin.label("asin"),
+            func.sum(AdvertisingMetricsByAsin.cost).label("ad_spend"),
+            func.sum(AdvertisingMetricsByAsin.attributed_sales_7d).label("ad_sales"),
+        )
+        .where(
+            AdvertisingMetricsByAsin.account_id.in_(accounts_query),
+            AdvertisingMetricsByAsin.date >= start_date,
+            AdvertisingMetricsByAsin.date <= end_date,
+        )
+        .group_by(AdvertisingMetricsByAsin.asin)
+        .subquery()
+    )
+
+    product_subq = (
+        select(
+            Product.asin.label("asin"),
+            func.max(Product.title).label("title"),
+            func.max(Product.sku).label("sku"),
+            func.max(Product.current_bsr).label("current_bsr"),
+        )
+        .where(Product.account_id.in_(accounts_query))
+        .group_by(Product.asin)
+        .subquery()
+    )
+
+    ad_spend_col = func.coalesce(ad_subq.c.ad_spend, 0).label("ad_spend")
+    ad_sales_col = func.coalesce(ad_subq.c.ad_sales, 0).label("ad_sales")
+    acos_col = case(
+        (ad_sales_col > 0, ad_spend_col / ad_sales_col * 100.0),
+        else_=None,
+    ).label("acos")
+    roas_col = case(
+        (ad_spend_col > 0, ad_sales_col / ad_spend_col),
+        else_=None,
+    ).label("roas")
+
+    base = (
+        select(
+            sales_subq.c.asin,
+            sales_subq.c.total_units,
+            sales_subq.c.total_revenue,
+            sales_subq.c.total_orders,
+            product_subq.c.title,
+            product_subq.c.sku,
+            product_subq.c.current_bsr,
+            ad_spend_col,
+            ad_sales_col,
+            acos_col,
+            roas_col,
+        )
+        .select_from(sales_subq)
+        .join(product_subq, product_subq.c.asin == sales_subq.c.asin, isouter=True)
+        .join(ad_subq, ad_subq.c.asin == sales_subq.c.asin, isouter=True)
+    )
+
+    if search:
+        like = f"%{search}%"
+        base = base.where(
+            (sales_subq.c.asin.ilike(like)) | (product_subq.c.title.ilike(like))
+        )
+
+    total_revenue_row = await db.execute(
+        select(func.coalesce(func.sum(sales_subq.c.total_revenue), 0))
+    )
+    total_revenue = float(total_revenue_row.scalar() or 0)
+
+    count_query = select(func.count()).select_from(base.subquery())
+    total = int((await db.execute(count_query)).scalar() or 0)
+
+    sort_expr = {
+        "total_revenue": sales_subq.c.total_revenue,
+        "total_units": sales_subq.c.total_units,
+        "total_orders": sales_subq.c.total_orders,
+        "acos": acos_col,
+        "roas": roas_col,
+        "ad_spend": ad_spend_col,
+    }[sort_col]
+    base = base.order_by(sort_expr.desc() if sort_desc else sort_expr.asc())
+    base = base.limit(limit).offset(offset)
+
+    rows = (await db.execute(base)).all()
+    items = [
+        ProductPerformance(
+            asin=row.asin,
+            title=row.title,
+            sku=row.sku,
+            total_units=int(row.total_units or 0),
+            total_revenue=Decimal(row.total_revenue or 0),
+            total_orders=int(row.total_orders or 0),
+            avg_price=None,
+            current_bsr=row.current_bsr,
+            bsr_change=None,
+            revenue_share=(
+                float(row.total_revenue or 0) / total_revenue * 100
+                if total_revenue > 0
+                else 0
+            ),
+            ad_spend=round(float(row.ad_spend or 0), 2),
+            ad_sales=round(float(row.ad_sales or 0), 2),
+            acos=round(float(row.acos), 1) if row.acos is not None else None,
+            roas=round(float(row.roas), 2) if row.roas is not None else None,
+        )
+        for row in rows
+    ]
+    return PaginatedProductPerformance(items=items, total=total, offset=offset, limit=limit)
 
 
 @router.get("/product-trends", response_model=ProductTrendsResponse)

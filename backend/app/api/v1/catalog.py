@@ -65,19 +65,16 @@ async def list_products(
     offset: int = 0,
 ):
     """List products from the catalog."""
-    accounts_query = select(AmazonAccount.id).where(
-        AmazonAccount.organization_id == organization.id
-    )
-    if account_ids:
-        accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
-
     query = (
-        select(Product)
-        .where(Product.account_id.in_(accounts_query))
+        select(Product, AmazonAccount.account_type)
+        .join(AmazonAccount, AmazonAccount.id == Product.account_id)
+        .where(AmazonAccount.organization_id == organization.id)
         .order_by(Product.updated_at.desc())
         .limit(limit)
         .offset(offset)
     )
+    if account_ids:
+        query = query.where(AmazonAccount.id.in_(account_ids))
 
     if active_only:
         query = query.where(Product.is_active == True)  # noqa: E712
@@ -90,8 +87,13 @@ async def list_products(
     if category:
         query = query.where(Product.category == category)
 
-    result = await db.execute(query)
-    return result.scalars().all()
+    rows = (await db.execute(query)).all()
+    return [
+        ProductResponse.model_validate(
+            {**product.__dict__, "account_type": account_type.value if account_type else None}
+        )
+        for product, account_type in rows
+    ]
 
 
 @router.get("/products/{asin}", response_model=ProductResponse)
@@ -102,22 +104,23 @@ async def get_product(
     db: DbSession,
 ):
     """Get product details by ASIN."""
-    accounts_query = select(AmazonAccount.id).where(
-        AmazonAccount.organization_id == organization.id
-    )
-
     result = await db.execute(
-        select(Product).where(
-            Product.account_id.in_(accounts_query),
+        select(Product, AmazonAccount.account_type)
+        .join(AmazonAccount, AmazonAccount.id == Product.account_id)
+        .where(
+            AmazonAccount.organization_id == organization.id,
             Product.asin == asin,
         )
     )
-    product = result.scalar_one_or_none()
+    row = result.first()
 
-    if not product:
+    if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
 
-    return product
+    product, account_type = row
+    return ProductResponse.model_validate(
+        {**product.__dict__, "account_type": account_type.value if account_type else None}
+    )
 
 
 @router.put("/products/{asin}", response_model=ProductResponse)

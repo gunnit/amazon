@@ -1134,8 +1134,9 @@ class DataExtractionService:
 
             for asin in batch:
                 catalog_data = client.get_catalog_item_details(asin)
-                # Competitive pricing API is seller-only; skip for vendor accounts
-                competitive_price = None if client.is_vendor else client.get_competitive_pricing(asin)
+                # get_competitive_pricing internally handles vendor accounts by
+                # falling back to catalog payload pricing, so we don't skip here.
+                competitive_price = client.get_competitive_pricing(asin)
 
                 # Parse catalog data
                 title = None
@@ -1197,6 +1198,23 @@ class DataExtractionService:
                     )
                     self.db.add(product_record)
                     await self.db.flush()
+
+                # Backfill SKU from InventoryData if missing (seller accounts).
+                # Vendor accounts don't expose seller-side SKUs.
+                if not product_record.sku and not client.is_vendor:
+                    inv_sku_row = (
+                        await self.db.execute(
+                            select(InventoryData.sku)
+                            .where(
+                                InventoryData.account_id == account.id,
+                                InventoryData.asin == asin,
+                                InventoryData.sku.isnot(None),
+                            )
+                            .limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if inv_sku_row:
+                        product_record.sku = inv_sku_row
 
                 if bsr is not None:
                     bsr_history = (

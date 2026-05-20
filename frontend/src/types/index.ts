@@ -232,6 +232,32 @@ export interface TopPerformersResponse {
   by_growth: TopPerformerData[]
 }
 
+export interface PerProductPerformanceItem {
+  asin: string
+  title: string | null
+  sku: string | null
+  total_units: number
+  total_revenue: string | number
+  total_orders: number
+  avg_price: string | number | null
+  current_bsr: number | null
+  bsr_change: number | null
+  revenue_share: number
+  ad_spend: number
+  ad_sales: number
+  acos: number | null
+  roas: number | null
+}
+
+export interface PaginatedProductPerformance {
+  items: PerProductPerformanceItem[]
+  total: number
+  offset: number
+  limit: number
+}
+
+export type PerProductSortKey = 'revenue' | 'units' | 'orders' | 'acos' | 'roas' | 'ad_spend'
+
 export interface HourlyOrdersData {
   hour: number
   orders: number
@@ -546,6 +572,7 @@ export interface GoogleSheetsSyncRun {
 export interface Product {
   id: string
   account_id: string
+  account_type?: AccountType | null
   asin: string
   sku: string | null
   title: string | null

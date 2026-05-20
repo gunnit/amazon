@@ -159,7 +159,13 @@ export default function Catalog() {
                       <TableRow key={p.id}>
                         <TableCell className="font-mono text-xs">{p.asin}</TableCell>
                         <TableCell className="max-w-[320px] truncate">{p.title ?? '—'}</TableCell>
-                        <TableCell className="font-mono text-xs">{p.sku ?? '—'}</TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {p.sku
+                            ? p.sku
+                            : p.account_type === 'vendor'
+                              ? <span className="text-muted-foreground" title={t('catalog.products.skuVendorNa')}>N/A</span>
+                              : '—'}
+                        </TableCell>
                         <TableCell>{p.brand ?? '—'}</TableCell>
                         <TableCell>
                           {p.current_price != null ? Number(p.current_price).toFixed(2) : '—'}

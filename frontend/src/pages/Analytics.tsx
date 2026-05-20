@@ -44,6 +44,7 @@ import { useTranslation } from '@/i18n'
 import ProductTrendBadge from '@/components/analytics/ProductTrendBadge'
 import ProductTrendSparkline from '@/components/analytics/ProductTrendSparkline'
 import TrendInsightsCard from '@/components/analytics/TrendInsightsCard'
+import { PerProductPerformanceTable } from '@/components/analytics/PerProductPerformanceTable'
 import type {
   AdsVsOrganicAsinBreakdownItem,
   AdsVsOrganicResponse,
@@ -59,7 +60,7 @@ import type {
 const ALL_ASINS_VALUE = '__all_asins__'
 const RETURN_REASON_COLORS = ['#0f766e', '#2563eb', '#d97706', '#dc2626', '#7c3aed', '#0891b2']
 
-type AnalyticsTab = 'overview' | 'returns' | 'ads-vs-organic'
+type AnalyticsTab = 'overview' | 'per-product' | 'returns' | 'ads-vs-organic'
 
 function truncateLabel(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -593,6 +594,7 @@ export default function Analytics() {
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as AnalyticsTab)} className="space-y-4">
         <TabsList>
           <TabsTrigger value="overview">{t('analytics.overviewTab')}</TabsTrigger>
+          <TabsTrigger value="per-product">{t('analytics.perProductTab')}</TabsTrigger>
           <TabsTrigger value="returns">{t('analytics.returnsTab')}</TabsTrigger>
           <TabsTrigger value="ads-vs-organic">{t('analytics.adsVsOrganicTab')}</TabsTrigger>
         </TabsList>
@@ -1093,6 +1095,14 @@ export default function Analytics() {
               />
             )}
           </div>
+        </TabsContent>
+
+        <TabsContent value="per-product" className="space-y-6">
+          <PerProductPerformanceTable
+            dateRange={dateRange}
+            accountIds={trendAccountIds}
+            enabled={activeTab === 'per-product'}
+          />
         </TabsContent>
 
         <TabsContent value="returns" className="space-y-6">

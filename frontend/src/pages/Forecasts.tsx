@@ -438,6 +438,7 @@ export default function Forecasts() {
   const [selectedAccount, setSelectedAccount] = useState<string>('')
   const [forecastHorizon, setForecastHorizon] = useState('30')
   const [selectedAsin, setSelectedAsin] = useState(ALL_ASINS_VALUE)
+  const [displayedForecastId, setDisplayedForecastId] = useState<string | null>(null)
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const { t } = useTranslation()
@@ -467,6 +468,7 @@ export default function Forecasts() {
       forecastsApi.generate(params),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['forecasts'] })
+      setDisplayedForecastId(null)
       toast({ title: t('forecasts.generateSuccess') })
     },
     onError: (error) => {
@@ -497,8 +499,15 @@ export default function Forecasts() {
     })
   }
 
-  // Get the latest forecast for display
-  const latestForecast = forecasts?.[0]
+  // Resolve which forecast to display: user-selected row, else the latest one.
+  const latestForecast = useMemo(() => {
+    if (!forecasts || forecasts.length === 0) return undefined
+    if (displayedForecastId) {
+      const match = forecasts.find((f) => f.id === displayedForecastId)
+      if (match) return match
+    }
+    return forecasts[0]
+  }, [forecasts, displayedForecastId])
   const availableProducts = products ?? []
   const confidenceLevel = useMemo(
     () => getForecastConfidenceLevel(latestForecast),
@@ -670,7 +679,16 @@ export default function Forecasts() {
               </Select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">{t('forecasts.asinOptional')}</label>
+              <label className="text-sm font-medium flex items-center gap-1">
+                {t('forecasts.asinOptional')}
+                <span
+                  className="text-muted-foreground"
+                  title={t('forecasts.allAsinsTooltip')}
+                  aria-label={t('forecasts.allAsinsTooltip')}
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </span>
+              </label>
               <Select
                 value={selectedAsin}
                 onValueChange={setSelectedAsin}
@@ -1081,38 +1099,18 @@ export default function Forecasts() {
         </Card>
       )}
 
-      {/* Previous Forecasts */}
-      {forecasts && forecasts.length > 1 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{t('forecasts.previousForecasts')}</CardTitle>
-            <CardDescription>{t('forecasts.previousDesc')}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {forecasts.slice(1, 6).map((forecast) => (
-                <div
-                  key={forecast.id}
-                  className="flex items-center justify-between py-2 border-b last:border-0"
-                >
-                  <div className="flex items-center gap-4">
-                    <Badge variant="outline">{forecast.model_used}</Badge>
-                    <span className="text-sm">
-                      {t('forecasts.forecastItem', {
-                        days: forecast.horizon_days,
-                        type: forecast.forecast_type,
-                      })}
-                    </span>
-                  </div>
-                  <span className="text-sm text-muted-foreground">
-                    {formatDate(forecast.generated_at)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Per-ASIN Forecast Breakdown */}
+      <PerAsinForecastTable
+        forecasts={forecasts ?? []}
+        availableProducts={availableProducts}
+        selectedAccount={selectedAccount}
+        onRowClick={(forecast) => {
+          setDisplayedForecastId(forecast.id)
+          if (forecast.asin) setSelectedAsin(forecast.asin)
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+        }}
+        t={t}
+      />
 
       {/* Export Modal */}
       {latestForecast && (
@@ -1124,5 +1122,116 @@ export default function Forecasts() {
         />
       )}
     </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Per-ASIN Forecast Breakdown table — replaces the read-only "Previous
+// Forecasts" list. Shows the latest forecast per ASIN and lets the user click
+// a row to load that forecast into the chart above.
+// ────────────────────────────────────────────────────────────────────────────
+function PerAsinForecastTable({
+  forecasts,
+  availableProducts,
+  selectedAccount,
+  onRowClick,
+  t,
+}: {
+  forecasts: Forecast[]
+  availableProducts: ForecastProductOption[]
+  selectedAccount: string
+  onRowClick: (forecast: Forecast) => void
+  t: (key: string, vars?: Record<string, string | number>) => string
+}) {
+  const titleByAsin = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const p of availableProducts) {
+      if (p.title) map.set(p.asin, p.title)
+    }
+    return map
+  }, [availableProducts])
+
+  const rows = useMemo(() => {
+    const filtered = forecasts.filter((f) => {
+      if (!f.asin) return false
+      if (selectedAccount && f.account_id !== selectedAccount) return false
+      return true
+    })
+    // Keep the most recent forecast per ASIN.
+    const latestByAsin = new Map<string, Forecast>()
+    for (const f of filtered) {
+      const existing = latestByAsin.get(f.asin as string)
+      if (!existing || new Date(f.generated_at) > new Date(existing.generated_at)) {
+        latestByAsin.set(f.asin as string, f)
+      }
+    }
+    return Array.from(latestByAsin.values()).sort(
+      (a, b) => new Date(b.generated_at).getTime() - new Date(a.generated_at).getTime(),
+    )
+  }, [forecasts, selectedAccount])
+
+  if (rows.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('forecasts.byAsinTitle')}</CardTitle>
+        <CardDescription>{t('forecasts.byAsinDesc')}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>ASIN</TableHead>
+                <TableHead>{t('forecasts.byAsin.title')}</TableHead>
+                <TableHead className="text-right">{t('forecasts.byAsin.horizon')}</TableHead>
+                <TableHead className="text-right">{t('forecasts.byAsin.predictedUnits')}</TableHead>
+                <TableHead>{t('forecasts.byAsin.confidence')}</TableHead>
+                <TableHead className="text-right">{t('forecasts.byAsin.generatedAt')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((forecast) => {
+                const predictedTotal = forecast.predictions.reduce(
+                  (acc, p) => acc + (p.predicted_value || 0),
+                  0,
+                )
+                const level = getForecastConfidenceLevel(forecast)
+                const title = titleByAsin.get(forecast.asin as string)
+                return (
+                  <TableRow
+                    key={forecast.id}
+                    className="cursor-pointer hover:bg-muted/60"
+                    onClick={() => onRowClick(forecast)}
+                  >
+                    <TableCell className="font-mono text-xs">{forecast.asin}</TableCell>
+                    <TableCell className="max-w-[280px] truncate">{title ?? '—'}</TableCell>
+                    <TableCell className="text-right">
+                      {t('forecasts.byAsin.daysValue', { days: forecast.horizon_days })}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {predictedTotal.toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      {level ? (
+                        <Badge variant={CONFIDENCE_BADGE_VARIANTS[level]}>
+                          {t(`forecasts.confidence.${level}`)}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right text-sm text-muted-foreground">
+                      {formatDate(forecast.generated_at)}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

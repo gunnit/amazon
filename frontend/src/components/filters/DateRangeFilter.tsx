@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { CalendarIcon } from 'lucide-react'
-import { format } from 'date-fns'
+import { format, subMonths } from 'date-fns'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -90,6 +90,7 @@ export function DateRangeFilter() {
               selected={{ from: calendarFrom, to: calendarTo }}
               onSelect={handleDateSelect}
               numberOfMonths={2}
+              defaultMonth={calendarFrom ?? subMonths(new Date(), 1)}
               disabled={{ after: new Date() }}
             />
           </PopoverContent>

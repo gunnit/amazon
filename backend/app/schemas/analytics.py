@@ -213,6 +213,14 @@ class TopPerformers(BaseModel):
     by_growth: List[ProductPerformance]
 
 
+class PaginatedProductPerformance(BaseModel):
+    """Paginated product performance for the full catalog table."""
+    items: List[ProductPerformance]
+    total: int
+    offset: int
+    limit: int
+
+
 class CompetitorAnalysis(BaseModel):
     """Competitor analysis data."""
     competitor_asin: str

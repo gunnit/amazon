@@ -142,6 +142,7 @@ class ProductResponse(BaseModel):
     """Schema for product response."""
     id: UUID
     account_id: UUID
+    account_type: Optional[str] = None
     asin: str
     sku: Optional[str]
     title: Optional[str]

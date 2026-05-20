@@ -688,6 +688,54 @@ export default function MarketResearch() {
                 </Card>
               )}
 
+              {/* Empty-state when discovery returned no competitors */}
+              {selectedReport.product_snapshot && (!selectedReport.competitor_data || selectedReport.competitor_data.length === 0) && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <AlertCircle className="h-5 w-5 text-amber-500" />
+                      {t('marketResearch.noResults.title')}
+                    </CardTitle>
+                    <CardDescription>
+                      {t('marketResearch.noResults.help')}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      {t('marketResearch.noResults.body')}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => {
+                          setShowAdvanced(true)
+                          window.scrollTo({ top: 0, behavior: 'smooth' })
+                        }}
+                      >
+                        {t('marketResearch.noResults.cta')}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={generateMutation.isPending || !selectedAccount || !selectedReport.source_asin}
+                        onClick={() => {
+                          if (!selectedReport.source_asin) return
+                          generateMutation.mutate({
+                            source_asin: selectedReport.source_asin,
+                            account_id: selectedAccount,
+                            language: analysisLanguage,
+                            ...(extraAsins.length > 0 ? { extra_competitor_asins: extraAsins } : {}),
+                          })
+                        }}
+                      >
+                        {t('marketResearch.noResults.retry')}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Comparison Table */}
               {selectedReport.product_snapshot && selectedReport.competitor_data && (
                 <Card>
