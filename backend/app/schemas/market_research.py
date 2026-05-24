@@ -98,13 +98,18 @@ class ComparisonDimension(BaseModel):
     competitor_best_name: Optional[str] = None
     client_rank: Optional[int] = None
     total_competitors: int = 0
+    competitors_with_data: int = 0
     gap_percent: Optional[float] = None
 
 
 class ComparisonMatrixResponse(BaseModel):
-    """Detailed client-vs-competitor comparison matrix."""
+    """Detailed client-vs-competitor comparison matrix.
+
+    ``overall_score`` is ``None`` when no dimension had enough comparable
+    competitor data to score the client.
+    """
     dimensions: List[ComparisonDimension]
-    overall_score: float = Field(ge=0, le=100)
+    overall_score: Optional[float] = Field(default=None, ge=0, le=100)
     opportunities: List[Literal["price", "bsr", "reviews", "rating"]]
 
 
@@ -119,7 +124,12 @@ class MarketSearchRequest(BaseModel):
 
 
 class MarketSearchResult(BaseModel):
-    """A single product found in the market search."""
+    """A single product found in the market search.
+
+    Fields can be ``None`` when SP-API does not surface them. Callers
+    should consult ``missing_data`` to render explicit N/A markers
+    instead of inventing values.
+    """
     asin: str
     title: Optional[str] = None
     brand: Optional[str] = None
@@ -128,6 +138,7 @@ class MarketSearchResult(BaseModel):
     bsr: Optional[int] = None
     review_count: Optional[int] = None
     rating: Optional[float] = None
+    missing_data: Optional[List[str]] = None
 
 
 class MarketSearchResponse(BaseModel):

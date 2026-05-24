@@ -3141,6 +3141,19 @@ def process_brand_analysis_job(job_id: str) -> None:
 
                 await _set_status("generating_pptx", "Generating PowerPoint deck")
                 pptx_bytes = build_brand_analysis_pptx(metrics, narrative)
+                # Open the deck back up to confirm the file is structurally
+                # valid (16 slides, correct OOXML). If it isn't, surface as a
+                # job failure rather than letting the user download a broken
+                # artifact.
+                try:
+                    pptx_fingerprint = validate_pptx_bytes(pptx_bytes)
+                except Exception as pptx_exc:
+                    raise BrandAnalysisDataError(
+                        f"Generated Brand Analysis deck failed validation: {pptx_exc}"
+                    ) from pptx_exc
+                metrics["pptx_fingerprint"] = {
+                    "slide_count": pptx_fingerprint.get("slide_count"),
+                }
                 filename = f"brand_analysis_{_safe_filename_part(job.brand_name)}_{datetime.utcnow().date().isoformat()}.pptx"
 
                 storage = BrandAnalysisStorage()

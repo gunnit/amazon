@@ -222,6 +222,45 @@ def test_pptx_validate_helper_returns_structural_fingerprint():
     assert "SEO & CONTENT" in deck_text
 
 
+def test_validate_pptx_bytes_rejects_corrupted_artifact():
+    """Pipeline validation must reject bytes that don't open as a deck.
+
+    Guards against silently storing a broken artifact and handing it to
+    the user. The processor wraps validate_pptx_bytes in a BrandAnalysisDataError
+    so the job fails loudly instead.
+    """
+    try:
+        validate_pptx_bytes(b"not a real pptx file")
+    except Exception:
+        return
+    raise AssertionError("Expected validate_pptx_bytes to reject garbage bytes")
+
+
+def test_pptx_pipeline_from_sample_2024_2025_data_produces_downloadable_artifact():
+    """End-to-end: parse year exports, calculate metrics, build narrative,
+    build PPTX, then validate the deck. Mirrors the process_brand_analysis_job
+    pipeline without spinning up Celery or a real DB.
+    """
+    parsed_2024 = parse_brand_export(_csv_bytes(_source_rows_2024()), "sample_2024.csv", year=2024)
+    parsed_2025 = parse_brand_export(_csv_bytes(_source_rows_2025()), "sample_2025.csv", year=2025)
+
+    metrics = calculate_brand_metrics(parsed_2024, parsed_2025, brand_name="Acme")
+    completeness = assess_data_completeness(parsed_2024, parsed_2025)
+    metrics["data_completeness"] = completeness
+    metrics["limitations"] = build_limitation_summary(metrics, capability_matrix=None, data_coverage=None)
+    metrics["metric_source_registry"] = build_metric_source_registry(metrics, "manual_upload")
+
+    narrative = build_fallback_narrative(metrics)
+    pptx_bytes = build_brand_analysis_pptx(metrics, narrative)
+
+    fingerprint = validate_pptx_bytes(pptx_bytes)
+    assert fingerprint["slide_count"] == 16
+    # The artifact bytes are what the API hands back from /download — make
+    # sure they're a real OOXML zip and not, say, an HTML error page.
+    assert pptx_bytes[:2] == b"PK"
+    assert len(pptx_bytes) > 5_000
+
+
 def test_column_validation_error_message_includes_available_columns():
     bad_rows = [{"ASIN": "B001", "Title": "X"}]  # missing revenue
     try:
