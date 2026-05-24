@@ -250,11 +250,18 @@ class ForecastHistoricalPoint(BaseModel):
 
 
 class ForecastProductOption(BaseModel):
-    """ASIN option that has enough history for forecasting."""
+    """ASIN option for the forecast generator.
+
+    The UI uses ``is_eligible`` and ``ineligible_reason`` to render
+    disabled options with an actionable explanation instead of silently
+    hiding ASINs that lack enough history.
+    """
     asin: str
     title: Optional[str] = None
     history_days: int
     last_sale_date: Optional[date] = None
+    is_eligible: bool = True
+    ineligible_reason: Optional[str] = None
 
 
 class ForecastResponse(BaseModel):
