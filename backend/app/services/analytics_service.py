@@ -46,34 +46,50 @@ class AnalyticsService:
         start_date: date,
         end_date: date,
     ) -> Dict[str, Any]:
-        """Get metrics for a specific period."""
-        query = (
+        """Get metrics for a specific period.
+
+        Totals (revenue/units/orders) come from the DAILY_TOTAL_ASIN sentinel
+        rows so they match what salesAndTrafficByDate reports. Active ASIN
+        counts come from real per-ASIN rows, otherwise the sentinel itself
+        would be counted as a product.
+        """
+        totals_query = (
             select(
                 func.sum(SalesData.ordered_product_sales).label("revenue"),
                 func.sum(SalesData.units_ordered).label("units"),
                 func.sum(SalesData.total_order_items).label("orders"),
-                func.count(func.distinct(SalesData.asin)).label("active_asins"),
             )
             .where(
                 SalesData.account_id.in_(account_ids),
+                SalesData.asin == DAILY_TOTAL_ASIN,
                 SalesData.date >= start_date,
                 SalesData.date <= end_date,
             )
         )
 
-        result = await self.db.execute(query)
-        row = result.one()
+        totals_row = (await self.db.execute(totals_query)).one()
 
-        revenue = float(row.revenue or 0)
-        units = int(row.units or 0)
-        orders = int(row.orders or 0)
+        active_asins_query = (
+            select(func.count(func.distinct(SalesData.asin)))
+            .where(
+                SalesData.account_id.in_(account_ids),
+                SalesData.asin != DAILY_TOTAL_ASIN,
+                SalesData.date >= start_date,
+                SalesData.date <= end_date,
+            )
+        )
+        active_asins = int((await self.db.execute(active_asins_query)).scalar() or 0)
+
+        revenue = float(totals_row.revenue or 0)
+        units = int(totals_row.units or 0)
+        orders = int(totals_row.orders or 0)
 
         return {
             "revenue": revenue,
             "units": units,
             "orders": orders,
             "average_order_value": revenue / orders if orders > 0 else 0,
-            "active_asins": row.active_asins or 0,
+            "active_asins": active_asins,
         }
 
     def _calculate_changes(
@@ -124,6 +140,7 @@ class AnalyticsService:
             select(SalesData.date, value_expr.label("value"))
             .where(
                 SalesData.account_id.in_(account_ids),
+                SalesData.asin == DAILY_TOTAL_ASIN,
                 SalesData.date >= start_date,
                 SalesData.date <= end_date,
             )
@@ -164,6 +181,7 @@ class AnalyticsService:
             )
             .where(
                 SalesData.account_id.in_(account_ids),
+                SalesData.asin != DAILY_TOTAL_ASIN,
                 SalesData.date >= start_date,
                 SalesData.date <= end_date,
             )
