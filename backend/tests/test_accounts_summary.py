@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from enum import Enum
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -47,6 +48,14 @@ data_extraction_stub = types.ModuleType("app.services.data_extraction")
 data_extraction_stub.DAILY_TOTAL_ASIN = "__DAILY_TOTAL__"
 data_extraction_stub.DataExtractionService = type("DataExtractionService", (), {})
 sys.modules["app.services.data_extraction"] = data_extraction_stub
+
+config_stub = types.ModuleType("app.config")
+config_stub.settings = SimpleNamespace(
+    AMAZON_ADS_CLIENT_ID=None,
+    AMAZON_ADS_CLIENT_SECRET=None,
+    AMAZON_ADS_PROFILE_ID=None,
+)
+sys.modules["app.config"] = config_stub
 
 
 class StubAccountType(str, Enum):
@@ -125,8 +134,8 @@ class FakeDb:
         return FakeResult(self._values)
 
 
-def _make_account(account_id, *, name: str):
-    return SimpleNamespace(
+def _make_account(account_id, *, name: str, **overrides):
+    base = dict(
         id=account_id,
         organization_id=uuid4(),
         account_name=name,
@@ -145,9 +154,13 @@ def _make_account(account_id, *, name: str):
         sync_error_code=None,
         sync_error_kind=None,
         sp_api_refresh_token_encrypted="secret",
-        created_at=None,
-        updated_at=None,
+        advertising_refresh_token_encrypted=None,
+        advertising_profile_id=None,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
+    base.update(overrides)
+    return SimpleNamespace(**base)
 
 
 @pytest.mark.asyncio
@@ -204,3 +217,67 @@ async def test_get_accounts_summary_keeps_zero_defaults_without_metrics(monkeypa
     assert summary.accounts[0].total_sales_30d == 0
     assert summary.accounts[0].total_units_30d == 0
     assert summary.accounts[0].active_asins == 0
+
+
+def _org_with_ads_client_creds():
+    return SimpleNamespace(
+        id=uuid4(),
+        settings={"advertising_api": {"client_id_enc": "x", "client_secret_enc": "y"}},
+    )
+
+
+def _org_without_ads_client_creds():
+    return SimpleNamespace(id=uuid4(), settings={})
+
+
+def test_ads_connection_state_missing_client_credentials():
+    account = _make_account(uuid4(), name="MyStore")
+    response = accounts._account_to_response(account, _org_without_ads_client_creds())
+    assert response.ads_connection_state.value == "missing_client_credentials"
+    assert response.has_ads_client_credentials is False
+
+
+def test_ads_connection_state_missing_refresh_token_when_client_creds_present():
+    account = _make_account(uuid4(), name="MyStore")
+    response = accounts._account_to_response(account, _org_with_ads_client_creds())
+    assert response.ads_connection_state.value == "missing_refresh_token"
+    assert response.has_ads_client_credentials is True
+    assert response.has_advertising_refresh_token is False
+
+
+def test_ads_connection_state_missing_profile_when_token_present():
+    account = _make_account(
+        uuid4(),
+        name="MyStore",
+        advertising_refresh_token_encrypted="enc-token",
+    )
+    response = accounts._account_to_response(account, _org_with_ads_client_creds())
+    assert response.ads_connection_state.value == "missing_profile"
+    assert response.has_advertising_refresh_token is True
+    assert response.advertising_profile_id is None
+
+
+def test_ads_connection_state_auth_failure_when_recent_sync_error():
+    account = _make_account(
+        uuid4(),
+        name="MyStore",
+        advertising_refresh_token_encrypted="enc-token",
+        advertising_profile_id="123456789",
+        sync_error_code="ADS_AUTH_FAILURE",
+        sync_error_message="Amazon rejected the Ads token",
+    )
+    response = accounts._account_to_response(account, _org_with_ads_client_creds())
+    assert response.ads_connection_state.value == "auth_failure"
+    assert response.ads_connection_detail == "Amazon rejected the Ads token"
+
+
+def test_ads_connection_state_ok_when_everything_configured():
+    account = _make_account(
+        uuid4(),
+        name="MyStore",
+        advertising_refresh_token_encrypted="enc-token",
+        advertising_profile_id="123456789",
+    )
+    response = accounts._account_to_response(account, _org_with_ads_client_creds())
+    assert response.ads_connection_state.value == "ok"
+    assert response.ads_connection_detail is None

@@ -763,6 +763,22 @@ export const recommendationsApi = {
     const response = await api.post('/recommendations/generate', payload ?? {})
     return response.data
   },
+
+  exportXlsx: async (params: {
+    status?: 'pending' | 'implemented' | 'dismissed'
+    category?: 'pricing' | 'advertising' | 'inventory' | 'content'
+    account_id?: string
+    asin?: string
+    ids?: string[]
+    language?: 'en' | 'it'
+    limit?: number
+  }): Promise<Blob> => {
+    const response = await api.post('/exports/recommendations-xlsx', null, {
+      params,
+      responseType: 'blob',
+    })
+    return response.data
+  },
 }
 
 // Exports API

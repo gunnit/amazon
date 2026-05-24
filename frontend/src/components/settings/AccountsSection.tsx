@@ -49,11 +49,13 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
 import { cn, formatDate } from '@/lib/utils'
+import { isPlaceholderAccountName } from '@/lib/accountNaming'
 import { accountsApi, authApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
 import type {
   AccountSummary,
   AccountType,
+  AdsConnectionState,
   AdvertisingProfile,
   AmazonAccount,
   ApiKeysResponse,
@@ -92,6 +94,14 @@ function connectionState(account: AmazonAccount): StatusFilter {
   return 'missing'
 }
 
+function resolveAdsState(account: AmazonAccount): AdsConnectionState {
+  if (account.ads_connection_state) return account.ads_connection_state
+  if (account.has_ads_client_credentials === false) return 'missing_client_credentials'
+  if (!account.has_advertising_refresh_token) return 'missing_refresh_token'
+  if (!account.advertising_profile_id) return 'missing_profile'
+  return 'ok'
+}
+
 function StatusBadge({ status }: { status: SyncStatus }) {
   const { t } = useTranslation()
   const config = {
@@ -127,6 +137,37 @@ function CredentialBadge({
     </Badge>
   ) : (
     <Badge variant="outline" className="gap-1 whitespace-nowrap border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400">
+      <AlertTriangle className="h-3 w-3" />
+      {label}
+    </Badge>
+  )
+}
+
+function AdsStateBadge({ account }: { account: AmazonAccount }) {
+  const { t } = useTranslation()
+  const state = resolveAdsState(account)
+  const label = t(`accounts.adsState.${state}`)
+  const detail = account.ads_connection_detail || undefined
+  if (state === 'ok') {
+    return (
+      <Badge className="gap-1 whitespace-nowrap bg-emerald-500 text-white" title={detail}>
+        <Check className="h-3 w-3" />
+        {label}
+      </Badge>
+    )
+  }
+  const isAuthFailure = state === 'auth_failure'
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        'gap-1 whitespace-nowrap',
+        isAuthFailure
+          ? 'border-red-300 text-red-700 dark:border-red-700 dark:text-red-400'
+          : 'border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400',
+      )}
+      title={detail}
+    >
       <AlertTriangle className="h-3 w-3" />
       {label}
     </Badge>
@@ -485,6 +526,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
   const marketplaceOptions = Array.from(new Set(accounts.map((account) => account.marketplace_country))).sort()
   const fullConnectionCount = accounts.filter((account) => connectionState(account) === 'connected').length
   const partialConnectionCount = accounts.filter((account) => connectionState(account) === 'partial').length
+  const placeholderNamedAccounts = accounts.filter((account) => isPlaceholderAccountName(account.account_name))
 
   const openDialog = (mode: ConnectionMode, account: AmazonAccount | null = null) => {
     setDetailsAccount(null)
@@ -542,6 +584,20 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
           <Link2 className="h-4 w-4" />
           <AlertTitle>{t('accounts.separateConnectionsTitle')}</AlertTitle>
           <AlertDescription>{t('accounts.separateConnectionsDesc')}</AlertDescription>
+        </Alert>
+      )}
+
+      {placeholderNamedAccounts.length > 0 && (
+        <Alert variant="warning">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>{t('accounts.placeholderNameAlertTitle')}</AlertTitle>
+          <AlertDescription>
+            {t('accounts.placeholderNameAlertDesc')}
+            {' '}
+            <span className="font-medium">
+              {placeholderNamedAccounts.map((account) => account.account_name).join(', ')}
+            </span>
+          </AlertDescription>
         </Alert>
       )}
 
@@ -611,13 +667,45 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredAccounts.map((account) => (
-                  <TableRow key={account.id} className="cursor-pointer" onClick={() => setDetailsAccount(account)}>
-                    <TableCell className="font-medium">{account.account_name}</TableCell>
+                {filteredAccounts.map((account) => {
+                  const isPlaceholder = isPlaceholderAccountName(account.account_name)
+                  return (
+                  <TableRow
+                    key={account.id}
+                    className={cn(
+                      'cursor-pointer',
+                      isPlaceholder && 'bg-amber-50/40 dark:bg-amber-950/20',
+                    )}
+                    onClick={() => setDetailsAccount(account)}
+                  >
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <span>{account.account_name}</span>
+                        {isPlaceholder && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              openDialog('manual', account)
+                            }}
+                            className="inline-flex"
+                            title={t('accounts.placeholderNameTooltip')}
+                          >
+                            <Badge
+                              variant="outline"
+                              className="gap-1 whitespace-nowrap border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400"
+                            >
+                              <AlertTriangle className="h-3 w-3" />
+                              {t('accounts.placeholderNameBadge')}
+                            </Badge>
+                          </button>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell>{account.marketplace_country}</TableCell>
                     <TableCell><Badge variant="outline">{account.account_type}</Badge></TableCell>
                     <TableCell><CredentialBadge connected={account.has_refresh_token} label={account.has_refresh_token ? t('accounts.connected') : t('accounts.missing')} /></TableCell>
-                    <TableCell><CredentialBadge connected={account.has_advertising_refresh_token && !!account.advertising_profile_id} label={account.has_advertising_refresh_token && account.advertising_profile_id ? t('accounts.connected') : t('accounts.missing')} /></TableCell>
+                    <TableCell><AdsStateBadge account={account} /></TableCell>
                     <TableCell className="font-mono text-xs">{account.advertising_profile_id || '-'}</TableCell>
                     <TableCell>{account.last_sync_at ? formatDate(account.last_sync_at) : t('common.never')}</TableCell>
                     <TableCell><StatusBadge status={account.sync_status} /></TableCell>
@@ -641,7 +729,8 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                  )
+                })}
               </TableBody>
             </Table>
           </CardContent>
@@ -658,7 +747,10 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
               </DialogHeader>
               <div className="grid gap-3 text-sm">
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.spApiStatus')}</span><CredentialBadge connected={detailsAccount.has_refresh_token} label={detailsAccount.has_refresh_token ? t('accounts.connected') : t('accounts.missing')} /></div>
-                <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.adsStatus')}</span><CredentialBadge connected={detailsAccount.has_advertising_refresh_token && !!detailsAccount.advertising_profile_id} label={detailsAccount.has_advertising_refresh_token && detailsAccount.advertising_profile_id ? t('accounts.connected') : t('accounts.missing')} /></div>
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.adsStatus')}</span><AdsStateBadge account={detailsAccount} /></div>
+                {detailsAccount.ads_connection_detail && resolveAdsState(detailsAccount) !== 'ok' && (
+                  <p className="text-xs text-muted-foreground">{detailsAccount.ads_connection_detail}</p>
+                )}
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.advertisingProfile')}</span><span className="font-mono">{detailsAccount.advertising_profile_id || '-'}</span></div>
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.lastSync')}</span><span>{detailsAccount.last_sync_at ? formatDate(detailsAccount.last_sync_at) : t('common.never')}</span></div>
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.syncStatus')}</span><StatusBadge status={detailsAccount.sync_status} /></div>

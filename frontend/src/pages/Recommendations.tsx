@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CheckCircle2,
+  Download,
   Lightbulb,
   Loader2,
   Megaphone,
@@ -11,6 +12,7 @@ import {
   Tag,
   X,
 } from 'lucide-react'
+import { downloadBlob } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -204,6 +206,44 @@ export default function Recommendations() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recommendations'] }),
   })
 
+  const exportMutation = useMutation({
+    mutationFn: async () => {
+      const accountId =
+        selectedGenerateAccountId === ALL_GENERATE_ACCOUNTS_VALUE
+          ? undefined
+          : selectedGenerateAccountId
+      const asin =
+        selectedGenerateAsin === ALL_GENERATE_PRODUCTS_VALUE
+          ? undefined
+          : selectedGenerateAsin
+      const blob = await recommendationsApi.exportXlsx({
+        status,
+        category: (category as StrategicRecommendation['category']) || undefined,
+        account_id: accountId,
+        asin,
+        language,
+      })
+      const today = new Date().toISOString().slice(0, 10)
+      const suffix = asin || (accountId ? accountId.slice(0, 8) : 'all')
+      downloadBlob(blob, `inthezon_recommendations_${suffix}_${today}_${language}.xlsx`)
+    },
+    onSuccess: () => {
+      toast({ title: t('recommendations.exportSuccess') })
+    },
+    onError: (err: unknown) => {
+      const message =
+        err && typeof err === 'object' && 'response' in err
+          ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ??
+            t('recommendations.exportFailedDesc'))
+          : t('recommendations.exportFailedDesc')
+      toast({
+        variant: 'destructive',
+        title: t('recommendations.exportFailed'),
+        description: String(message),
+      })
+    },
+  })
+
   const items = listQuery.data ?? []
 
   return (
@@ -276,6 +316,24 @@ export default function Recommendations() {
               <Sparkles className="mr-2 h-4 w-4" />
             )}
             {t('recommendations.generate')}
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={() => exportMutation.mutate()}
+            disabled={exportMutation.isPending || items.length === 0}
+            title={
+              items.length === 0
+                ? t('recommendations.exportEmpty')
+                : t('recommendations.exportTooltip')
+            }
+          >
+            {exportMutation.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-4 w-4" />
+            )}
+            {t('recommendations.export')}
           </Button>
         </div>
       </div>
