@@ -138,7 +138,14 @@ class MarketResearchService:
         return list(result.scalars().all())
 
     def get_comparison_matrix(self, report: MarketResearchReport) -> dict[str, Any]:
-        """Build a dimension-by-dimension comparison matrix for a completed report."""
+        """Build a dimension-by-dimension comparison matrix for a completed report.
+
+        Tolerant of partial data: each dimension reports how many competitors
+        contributed a value (``competitors_with_data``). Dimensions that lack
+        enough comparable data are still returned (so the UI can label them
+        N/A) but do not contribute to ``overall_score``. When no dimension is
+        scoreable, ``overall_score`` is ``None`` rather than a misleading 0.
+        """
         product_snapshot = report.product_snapshot or {}
         competitor_data = report.competitor_data or []
 
@@ -168,7 +175,13 @@ class MarketResearchService:
 
             dimensions.append(dimension)
 
-            if dimension["client_rank"] is not None and dimension["total_competitors"] > 1:
+            # Only score dimensions where we have the client value plus at
+            # least one comparable competitor value. This prevents a single
+            # data point from anchoring an overall_score.
+            if (
+                dimension["client_rank"] is not None
+                and dimension.get("competitors_with_data", 0) >= 1
+            ):
                 normalized_rank = self._normalize_rank(
                     rank=dimension["client_rank"],
                     total=dimension["total_competitors"],
@@ -181,7 +194,7 @@ class MarketResearchService:
 
         return {
             "dimensions": dimensions,
-            "overall_score": round(overall_score / total_weight, 1) if total_weight else 0.0,
+            "overall_score": round(overall_score / total_weight, 1) if total_weight else None,
             "opportunities": opportunities,
         }
 
@@ -276,6 +289,7 @@ class MarketResearchService:
             "competitor_best_name": competitor_best_name,
             "client_rank": client_rank,
             "total_competitors": len(ranked_values),
+            "competitors_with_data": len(raw_competitor_values),
             "gap_percent": gap_percent,
             "is_worse_than_average": is_worse_than_average,
         }
@@ -405,6 +419,22 @@ def process_report_background(
                             ]
                         )
                     )
+                    discovery_errors: list[str] = []
+
+                    def _safe_catalog_search(query: str, max_results: int) -> list[dict]:
+                        try:
+                            return client.search_catalog_by_keyword(
+                                query, max_results=max_results
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Catalog search failed for %r on report %s: %s",
+                                query,
+                                report_id,
+                                exc,
+                            )
+                            discovery_errors.append(f"catalog_search:{exc}"[:300])
+                            return []
 
                     if search_type == "asin":
                         # Fetch the specific ASIN as reference product
@@ -429,9 +459,7 @@ def process_report_background(
                             # Discover related products
                             await _set_progress("Discovering related products...", 25)
                             search_kw = source_title[:80] if source_title else search_query
-                            raw = client.search_catalog_by_keyword(
-                                search_kw, max_results=15
-                            )
+                            raw = _safe_catalog_search(search_kw, max_results=15)
                             comp_asins = [
                                 r["asin"] for r in raw
                                 if r["asin"] != reference_asin
@@ -451,13 +479,15 @@ def process_report_background(
                         else:
                             # keyword or brand search
                             await _set_progress("Searching market...", 15)
-                            raw = client.search_catalog_by_keyword(
-                                search_query, max_results=15
-                            )
+                            raw = _safe_catalog_search(search_query, max_results=15)
                             if not raw:
                                 raise ValueError(
                                     f"No products found for '{search_query}'. "
                                     "Try a different search term."
+                                    + (
+                                        f" Catalog search errors: {discovery_errors[0]}"
+                                        if discovery_errors else ""
+                                    )
                                 )
 
                             reference_asin = selected_reference_asin
@@ -482,7 +512,9 @@ def process_report_background(
                             f"({sample_size} products)"
                         )
 
-                    # Fetch competitor data
+                    # Fetch competitor data. _fetch_product_data already
+                    # captures per-ASIN errors via the ``fetch_errors`` field
+                    # on the snapshot, so one bad ASIN doesn't sink the report.
                     comp_data = []
                     total_comps = len(comp_asins)
                     for i, asin in enumerate(comp_asins):
@@ -493,6 +525,12 @@ def process_report_background(
                         comp_data.append(_fetch_product_data(client, asin))
                         time.sleep(0.5)
                     report.competitor_data = comp_data
+                    if discovery_errors and isinstance(report.product_snapshot, dict):
+                        snapshot_copy = dict(report.product_snapshot)
+                        existing = list(snapshot_copy.get("fetch_errors") or [])
+                        existing.extend(discovery_errors)
+                        snapshot_copy["fetch_errors"] = list(dict.fromkeys(existing))
+                        report.product_snapshot = snapshot_copy
 
                 else:
                     # ── Classic Product Analysis mode ──
@@ -628,7 +666,12 @@ def _discover_competitors(
     source_brand: Optional[str],
     max_results: int = 8,
 ) -> List[str]:
-    """Auto-discover competitor ASINs via SP-API catalog search."""
+    """Auto-discover competitor ASINs via SP-API catalog search.
+
+    Returns an empty list (with a logged warning) on transient catalog
+    search failures rather than letting the exception propagate; the
+    caller can still complete the report with the source product alone.
+    """
     if not source_title:
         logger.warning(f"No title for {source_asin}, cannot discover competitors")
         return []
@@ -659,12 +702,20 @@ def _discover_competitors(
     search_query = " ".join(keywords)
     logger.info(f"Competitor search query: '{search_query}' (from: {source_title[:60]})")
 
-    results = client.search_competitor_asins(
-        keywords=search_query,
-        source_asin=source_asin,
-        source_brand=source_brand,
-        max_results=max_results,
-    )
+    try:
+        results = client.search_competitor_asins(
+            keywords=search_query,
+            source_asin=source_asin,
+            source_brand=source_brand,
+            max_results=max_results,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Competitor discovery via SP-API catalog search failed for %s: %s",
+            source_asin,
+            exc,
+        )
+        return []
 
     return [r["asin"] for r in results]
 

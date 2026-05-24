@@ -878,10 +878,12 @@ export default function MarketResearch() {
                             {t('marketResearch.overallScore')}
                           </p>
                           <Badge variant="secondary">
-                            {comparisonMatrix.overall_score.toFixed(1)}/100
+                            {comparisonMatrix.overall_score != null
+                              ? `${comparisonMatrix.overall_score.toFixed(1)}/100`
+                              : 'N/A'}
                           </Badge>
                         </div>
-                        <Progress value={comparisonMatrix.overall_score} className="mt-3 h-2" />
+                        <Progress value={comparisonMatrix.overall_score ?? 0} className="mt-3 h-2" />
                         <p className="mt-2 text-xs text-muted-foreground">
                           {t('marketResearch.overallScoreHelper')}
                         </p>

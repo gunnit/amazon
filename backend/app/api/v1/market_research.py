@@ -388,29 +388,43 @@ async def market_search(
         )
 
     def _priced_results(items: List[dict], limit: int) -> List[dict]:
-        missing_price_asins = [item["asin"] for item in items if item.get("price") is None]
-        price_map = client.get_market_prices_for_asins(missing_price_asins)
+        """Return up to ``limit`` catalog results, enriching with Pricing API data when possible.
 
-        priced_items = []
-        for item in items:
+        Products without a price are still returned. The previous behaviour
+        silently dropped them, which left the user with an empty market search
+        whenever SP-API Pricing wasn't available (vendor accounts, throttling,
+        403s, or items with no live offers). Missing fields are flagged via
+        ``missing_data`` so the UI can display "N/A" markers explicitly.
+        """
+        missing_price_asins = [item["asin"] for item in items if item.get("price") is None]
+        try:
+            price_map = client.get_market_prices_for_asins(missing_price_asins)
+        except Exception as exc:
+            logger.warning(
+                "Bulk pricing lookup failed for market search; continuing without prices: %s",
+                exc,
+            )
+            price_map = {}
+
+        enriched_items: List[dict] = []
+        for item in items[:limit]:
             enriched = dict(item)
             if enriched.get("price") is None:
                 price = price_map.get(enriched["asin"])
                 if price is not None:
                     enriched["price"] = float(price)
 
-            if enriched.get("price") is None:
-                logger.info(
-                    "Skipping market search result without price for %s",
-                    enriched.get("asin"),
-                )
-                continue
+            missing_fields = [
+                field
+                for field in ("price", "bsr", "review_count", "rating")
+                if enriched.get(field) is None
+            ]
+            if missing_fields:
+                enriched["missing_data"] = missing_fields
 
-            priced_items.append(enriched)
-            if len(priced_items) >= limit:
-                break
+            enriched_items.append(enriched)
 
-        return priced_items
+        return enriched_items
 
     # Perform the search based on type
     from app.core.exceptions import AmazonAPIError
@@ -471,6 +485,7 @@ async def market_search(
             bsr=r.get("bsr"),
             review_count=r.get("review_count"),
             rating=r.get("rating"),
+            missing_data=r.get("missing_data") or None,
         )
         for r in results
     ]
