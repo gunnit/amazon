@@ -1303,6 +1303,12 @@ const it: Record<string, string> = {
   'recommendations.category.advertising': 'Pubblicità',
   'recommendations.category.inventory': 'Inventario',
   'recommendations.category.content': 'Contenuti',
+  'recommendations.export': 'Esporta report',
+  'recommendations.exportTooltip': 'Scarica un report XLSX formattato per il filtro corrente.',
+  'recommendations.exportEmpty': 'Nessuna raccomandazione da esportare. Genera o modifica prima il filtro.',
+  'recommendations.exportSuccess': 'Raccomandazioni esportate',
+  'recommendations.exportFailed': 'Esportazione fallita',
+  'recommendations.exportFailedDesc': 'Impossibile generare il report delle raccomandazioni.',
 
   // Advertising page
   'nav.advertising': 'Pubblicità',
