@@ -47,9 +47,19 @@ export interface AmazonAccount {
   sync_error_kind?: string | null
   has_refresh_token: boolean
   has_advertising_refresh_token: boolean
+  has_ads_client_credentials?: boolean
+  ads_connection_state?: AdsConnectionState
+  ads_connection_detail?: string | null
   created_at: string
   updated_at: string
 }
+
+export type AdsConnectionState =
+  | 'ok'
+  | 'missing_refresh_token'
+  | 'missing_profile'
+  | 'missing_client_credentials'
+  | 'auth_failure'
 
 export interface AdvertisingProfilesRequest {
   refresh_token?: string
@@ -600,6 +610,8 @@ export interface ForecastProductOption {
   title: string | null
   history_days: number
   last_sale_date: string | null
+  is_eligible?: boolean
+  ineligible_reason?: string | null
 }
 
 export interface ForecastHistoricalPoint {
@@ -707,12 +719,13 @@ export interface ComparisonDimension {
   competitor_best_name: string | null
   client_rank: number | null
   total_competitors: number
+  competitors_with_data?: number
   gap_percent: number | null
 }
 
 export interface ComparisonMatrixResponse {
   dimensions: ComparisonDimension[]
-  overall_score: number
+  overall_score: number | null
   opportunities: Array<'price' | 'bsr' | 'reviews' | 'rating'>
 }
 
@@ -726,6 +739,7 @@ export interface MarketSearchResult {
   bsr: number | null
   review_count: number | null
   rating: number | null
+  missing_data?: string[] | null
 }
 
 export interface MarketSearchResponse {

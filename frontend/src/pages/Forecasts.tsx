@@ -703,18 +703,35 @@ export default function Forecasts() {
                     {t('forecasts.allAsins')}
                   </SelectItem>
                   {availableProducts.length > 0 ? (
-                    availableProducts.map((product) => (
-                      <SelectItem key={product.asin} value={product.asin}>
-                        <span className="font-mono text-xs mr-2">{product.asin}</span>
-                        <span className="truncate">
-                          {product.title
-                            ? product.title.length > 50
-                              ? product.title.slice(0, 50) + '\u2026'
-                              : product.title
-                            : product.asin}
-                        </span>
-                      </SelectItem>
-                    ))
+                    availableProducts.map((product) => {
+                      const eligible = product.is_eligible !== false
+                      const reason = product.ineligible_reason || undefined
+                      const titleText = product.title
+                        ? product.title.length > 50
+                          ? product.title.slice(0, 50) + '\u2026'
+                          : product.title
+                        : product.asin
+                      return (
+                        <SelectItem
+                          key={product.asin}
+                          value={product.asin}
+                          disabled={!eligible}
+                          title={eligible ? undefined : reason}
+                        >
+                          <span className="font-mono text-xs mr-2">{product.asin}</span>
+                          <span className="truncate">
+                            {titleText}
+                            {!eligible && (
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                \u00b7 {t('forecasts.notEnoughHistory', {
+                                  days: product.history_days,
+                                })}
+                              </span>
+                            )}
+                          </span>
+                        </SelectItem>
+                      )
+                    })
                   ) : (
                     <SelectItem value="__no_asins__" disabled>
                       {selectedAccount
@@ -1186,7 +1203,7 @@ function PerAsinForecastTable({
                 <TableHead>ASIN</TableHead>
                 <TableHead>{t('forecasts.byAsin.title')}</TableHead>
                 <TableHead className="text-right">{t('forecasts.byAsin.horizon')}</TableHead>
-                <TableHead className="text-right">{t('forecasts.byAsin.predictedUnits')}</TableHead>
+                <TableHead className="text-right">{t('forecasts.byAsin.predictedRevenue')}</TableHead>
                 <TableHead>{t('forecasts.byAsin.confidence')}</TableHead>
                 <TableHead className="text-right">{t('forecasts.byAsin.generatedAt')}</TableHead>
               </TableRow>
@@ -1211,7 +1228,7 @@ function PerAsinForecastTable({
                       {t('forecasts.byAsin.daysValue', { days: forecast.horizon_days })}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {predictedTotal.toLocaleString()}
+                      {formatCurrency(predictedTotal)}
                     </TableCell>
                     <TableCell>
                       {level ? (
