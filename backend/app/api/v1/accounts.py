@@ -12,7 +12,7 @@ from app.models.sales_data import SalesData
 from app.schemas.account import (
     AmazonAccountCreate, AmazonAccountUpdate, AmazonAccountResponse,
     AccountStatusResponse, AccountSummary, AdvertisingProfilesRequest,
-    AdvertisingProfileResponse,
+    AdvertisingProfileResponse, AdsConnectionState,
 )
 from app.core.security import decrypt_value, encrypt_value
 from app.core.exceptions import AmazonAPIError
@@ -22,9 +22,60 @@ router = APIRouter()
 
 ADS_PROFILE_SCAN_COUNTRIES = ("US", "IT", "JP")
 
+ADS_AUTH_FAILURE_SYNC_CODES = {
+    "MISSING_ADVERTISING_CLIENT_CREDENTIALS",
+    "MISSING_ADVERTISING_REFRESH_TOKEN",
+    "MISSING_ADVERTISING_PROFILE",
+    "ADS_AUTH_FAILURE",
+    "ADS_UNAUTHORIZED",
+}
 
-def _account_to_response(account: AmazonAccount) -> AmazonAccountResponse:
+
+def _org_has_ads_client_credentials(organization) -> bool:
+    """Return True if the org (or env fallback) has Ads client_id/client_secret configured."""
+    from app.config import settings as app_settings
+
+    advertising_api = (getattr(organization, "settings", None) or {}).get("advertising_api") or {}
+    has_org_client_id = bool(advertising_api.get("client_id_enc"))
+    has_org_client_secret = bool(advertising_api.get("client_secret_enc"))
+    if has_org_client_id and has_org_client_secret:
+        return True
+    return bool(app_settings.AMAZON_ADS_CLIENT_ID and app_settings.AMAZON_ADS_CLIENT_SECRET)
+
+
+def _resolve_ads_connection_state(
+    account: AmazonAccount,
+    organization=None,
+) -> tuple[AdsConnectionState, Optional[str]]:
+    """Resolve a structured Ads connection state for the UI."""
+    has_client_creds = _org_has_ads_client_credentials(organization) if organization is not None else False
+    if not has_client_creds:
+        return (
+            AdsConnectionState.MISSING_CLIENT_CREDENTIALS,
+            "Organization Ads client_id/client_secret are not configured.",
+        )
+    if not account.advertising_refresh_token_encrypted:
+        return (
+            AdsConnectionState.MISSING_REFRESH_TOKEN,
+            "Authorize this account in Amazon Ads to obtain a refresh token.",
+        )
+    if not account.advertising_profile_id:
+        return (
+            AdsConnectionState.MISSING_PROFILE,
+            "Pick the Ads profile that matches this account's marketplace.",
+        )
+    sync_error_code = (account.sync_error_code or "").upper()
+    if sync_error_code in ADS_AUTH_FAILURE_SYNC_CODES:
+        return (
+            AdsConnectionState.AUTH_FAILURE,
+            account.sync_error_message or "Amazon rejected the latest Ads authorization.",
+        )
+    return AdsConnectionState.OK, None
+
+
+def _account_to_response(account: AmazonAccount, organization=None) -> AmazonAccountResponse:
     """Convert ORM account to response with computed fields."""
+    ads_state, ads_detail = _resolve_ads_connection_state(account, organization)
     return AmazonAccountResponse(
         id=account.id,
         organization_id=account.organization_id,
@@ -46,6 +97,9 @@ def _account_to_response(account: AmazonAccount) -> AmazonAccountResponse:
         sync_error_kind=account.sync_error_kind,
         has_refresh_token=bool(account.sp_api_refresh_token_encrypted),
         has_advertising_refresh_token=bool(account.advertising_refresh_token_encrypted),
+        has_ads_client_credentials=_org_has_ads_client_credentials(organization) if organization is not None else False,
+        ads_connection_state=ads_state,
+        ads_connection_detail=ads_detail,
         created_at=account.created_at,
         updated_at=account.updated_at,
     )
@@ -218,7 +272,7 @@ async def list_accounts(
         .where(AmazonAccount.organization_id == organization.id)
         .order_by(AmazonAccount.created_at.desc())
     )
-    return [_account_to_response(a) for a in result.scalars().all()]
+    return [_account_to_response(a, organization) for a in result.scalars().all()]
 
 
 @router.post("", response_model=AmazonAccountResponse, status_code=status.HTTP_201_CREATED)
@@ -253,7 +307,7 @@ async def create_account(
     await db.flush()
     await db.refresh(account)
 
-    return _account_to_response(account)
+    return _account_to_response(account, organization)
 
 
 @router.get("/summary", response_model=AccountSummary)
@@ -396,7 +450,7 @@ async def get_account(
             detail="Account not found"
         )
 
-    return _account_to_response(account)
+    return _account_to_response(account, organization)
 
 
 @router.put("/{account_id}", response_model=AmazonAccountResponse)
@@ -448,7 +502,7 @@ async def update_account(
     await db.flush()
     await db.refresh(account)
 
-    return _account_to_response(account)
+    return _account_to_response(account, organization)
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

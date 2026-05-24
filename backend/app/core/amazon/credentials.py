@@ -139,7 +139,7 @@ def resolve_advertising_credentials(account, organization=None) -> dict:
     if not refresh_token:
         raise AmazonAPIError(
             f"No Advertising refresh token available for account {account.account_name}",
-            error_code="MISSING_ADVERTISING_CREDENTIALS",
+            error_code="MISSING_ADVERTISING_REFRESH_TOKEN",
         )
 
     profile_id = getattr(account, "advertising_profile_id", None) or settings.AMAZON_ADS_PROFILE_ID
@@ -161,7 +161,7 @@ def resolve_advertising_credentials(account, organization=None) -> dict:
     if not client_id or not client_secret:
         raise AmazonAPIError(
             f"Missing Advertising client credentials for account {account.account_name}",
-            error_code="MISSING_ADVERTISING_CREDENTIALS",
+            error_code="MISSING_ADVERTISING_CLIENT_CREDENTIALS",
         )
 
     return {

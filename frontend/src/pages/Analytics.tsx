@@ -1413,6 +1413,13 @@ export default function Analytics() {
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                   <p className="font-medium">{t('analytics.accountLevelAttribution')}</p>
                   <p className="mt-1">{t('analytics.asinAttributionNotice')}</p>
+                  {(adsVsOrganicData?.attribution_notes || []).length > 0 && (
+                    <ul className="mt-2 list-disc pl-5 text-xs">
+                      {adsVsOrganicData?.attribution_notes.map((note, idx) => (
+                        <li key={idx}>{note}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
 

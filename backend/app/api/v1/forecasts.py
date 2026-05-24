@@ -118,8 +118,21 @@ async def list_forecast_available_products(
     lookback_days: int = Query(default=365, ge=30, le=730),
     min_history_days: int = Query(default=ForecastService.MIN_HISTORY_DAYS, ge=1, le=30),
     limit: int = Query(default=1000, ge=1, le=5000),
+    include_ineligible: bool = Query(
+        default=True,
+        description=(
+            "When true (default), also return ASINs that have any sales in the lookback "
+            "window but not enough history to forecast, flagged with is_eligible=false. "
+            "The UI uses this to render disabled options with an explanation."
+        ),
+    ),
 ):
-    """List account ASINs that have enough sales history for a forecast."""
+    """List ASINs the user can pick when generating a forecast.
+
+    By default returns both eligible and ineligible ASINs; ineligible
+    ones carry an actionable reason so the UI can disable them with an
+    explanation instead of silently hiding them.
+    """
     account_result = await db.execute(
         select(AmazonAccount.id).where(
             AmazonAccount.id == account_id,
@@ -135,7 +148,7 @@ async def list_forecast_available_products(
         )
 
     start_date = date.today() - timedelta(days=lookback_days)
-    result = await db.execute(
+    base = (
         select(
             SalesData.asin,
             func.max(Product.title).label("title"),
@@ -156,20 +169,44 @@ async def list_forecast_available_products(
             SalesData.date >= start_date,
         )
         .group_by(SalesData.asin)
-        .having(func.count(func.distinct(SalesData.date)) >= min_history_days)
-        .order_by(func.max(SalesData.date).desc(), SalesData.asin)
-        .limit(limit)
     )
 
-    return [
-        ForecastProductOption(
-            asin=row.asin,
-            title=row.title,
-            history_days=int(row.history_days or 0),
-            last_sale_date=row.last_sale_date,
+    if include_ineligible:
+        query = base.order_by(
+            (func.count(func.distinct(SalesData.date)) >= min_history_days).desc(),
+            func.max(SalesData.date).desc(),
+            SalesData.asin,
+        ).limit(limit)
+    else:
+        query = (
+            base.having(func.count(func.distinct(SalesData.date)) >= min_history_days)
+            .order_by(func.max(SalesData.date).desc(), SalesData.asin)
+            .limit(limit)
         )
-        for row in result.all()
-    ]
+
+    result = await db.execute(query)
+    options: list[ForecastProductOption] = []
+    for row in result.all():
+        history_days = int(row.history_days or 0)
+        is_eligible = history_days >= min_history_days
+        reason = None
+        if not is_eligible:
+            reason = (
+                f"Only {history_days} day{'s' if history_days != 1 else ''} of "
+                f"sales history in the last {lookback_days} days "
+                f"(need at least {min_history_days})."
+            )
+        options.append(
+            ForecastProductOption(
+                asin=row.asin,
+                title=row.title,
+                history_days=history_days,
+                last_sale_date=row.last_sale_date,
+                is_eligible=is_eligible,
+                ineligible_reason=reason,
+            )
+        )
+    return options
 
 
 @router.post("/generate", response_model=dict)

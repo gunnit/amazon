@@ -465,6 +465,34 @@ def deliver_scheduled_report_run_job(run_id: str) -> None:
                 await db.commit()
                 return
 
+            if not settings.SENDGRID_API_KEY:
+                run.delivery_status = "failed"
+                run.status = "failed"
+                run.error_message = (
+                    "Email delivery is not configured: SENDGRID_API_KEY is missing. "
+                    "The report artifact is available to download from the run history."
+                )
+                run.progress_step = "Delivery not configured"
+                run.completed_at = utcnow()
+                schedule.last_run_status = "failed"
+                schedule.last_run_at = run.completed_at
+                await db.commit()
+                return
+
+            if not run.recipients_snapshot:
+                run.delivery_status = "failed"
+                run.status = "failed"
+                run.error_message = (
+                    "Email delivery is not configured: no recipients are set on this schedule. "
+                    "Add at least one recipient or download the artifact manually."
+                )
+                run.progress_step = "Delivery not configured"
+                run.completed_at = utcnow()
+                schedule.last_run_status = "failed"
+                schedule.last_run_at = run.completed_at
+                await db.commit()
+                return
+
             try:
                 run.delivery_status = "processing"
                 run.progress_step = "Sending email"
@@ -488,7 +516,10 @@ def deliver_scheduled_report_run_job(run_id: str) -> None:
                     ],
                 )
                 if not sent:
-                    raise ValueError("Email delivery failed")
+                    raise ValueError(
+                        "SendGrid rejected the email — check the API key, sender identity, "
+                        "and recipient list."
+                    )
 
                 run.delivery_status = "delivered"
                 run.status = "delivered"

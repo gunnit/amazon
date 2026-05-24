@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Megaphone,
@@ -12,13 +13,22 @@ import {
   Loader2,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { FilterBar, DateRangeFilter, AccountFilter } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
-import { analyticsApi } from '@/services/api'
+import { accountsApi, analyticsApi } from '@/services/api'
 import { formatCurrency, formatNumber, cn } from '@/lib/utils'
-import type { AdvertisingInsights, CampaignInsight } from '@/types'
+import type { AdsConnectionState, AdvertisingInsights, AmazonAccount, CampaignInsight } from '@/types'
+
+function resolveAdsState(account: AmazonAccount): AdsConnectionState {
+  if (account.ads_connection_state) return account.ads_connection_state
+  if (account.has_ads_client_credentials === false) return 'missing_client_credentials'
+  if (!account.has_advertising_refresh_token) return 'missing_refresh_token'
+  if (!account.advertising_profile_id) return 'missing_profile'
+  return 'ok'
+}
 
 function MetricCard({
   label,
@@ -153,6 +163,19 @@ export default function Advertising() {
     }),
   })
 
+  const { data: accountsList = [] } = useQuery<AmazonAccount[]>({
+    queryKey: ['accounts'],
+    queryFn: () => accountsApi.list(),
+  })
+
+  const scopedAccounts = accountIds.length > 0
+    ? accountsList.filter((account) => accountIds.includes(account.id))
+    : accountsList
+  const adsStates = scopedAccounts.map(resolveAdsState)
+  const okAdsAccounts = adsStates.filter((state) => state === 'ok').length
+  const showNoAdsBanner = scopedAccounts.length > 0 && okAdsAccounts === 0
+  const showPartialAdsBanner = !showNoAdsBanner && okAdsAccounts < scopedAccounts.length && scopedAccounts.length > 0
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -173,6 +196,31 @@ export default function Advertising() {
           <AccountFilter />
         </FilterBar>
       </div>
+
+      {showNoAdsBanner && (
+        <Alert variant="warning">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>{t('advertising.noAdsConnectionsTitle')}</AlertTitle>
+          <AlertDescription>
+            {t('advertising.noAdsConnectionsDesc')}{' '}
+            <Link to="/accounts" className="font-medium underline">
+              {t('advertising.openAccounts')}
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
+      {showPartialAdsBanner && (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>{t('advertising.partialAdsConnectionsTitle')}</AlertTitle>
+          <AlertDescription>
+            {t('advertising.partialAdsConnectionsDesc')}{' '}
+            <Link to="/accounts" className="font-medium underline">
+              {t('advertising.openAccounts')}
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* KPI Overview */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">

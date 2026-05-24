@@ -18,6 +18,15 @@ class SyncStatus(str, Enum):
     ERROR = "error"
 
 
+class AdsConnectionState(str, Enum):
+    """Resolved state of the Amazon Ads integration for a single account."""
+    OK = "ok"
+    MISSING_REFRESH_TOKEN = "missing_refresh_token"
+    MISSING_PROFILE = "missing_profile"
+    MISSING_CLIENT_CREDENTIALS = "missing_client_credentials"
+    AUTH_FAILURE = "auth_failure"
+
+
 class AmazonAccountCreate(BaseModel):
     """Schema for creating an Amazon account."""
     account_name: str = Field(..., min_length=1, max_length=255)
@@ -95,6 +104,9 @@ class AmazonAccountResponse(BaseModel):
     sync_error_kind: Optional[str] = None
     has_refresh_token: bool = False
     has_advertising_refresh_token: bool = False
+    has_ads_client_credentials: bool = False
+    ads_connection_state: AdsConnectionState = AdsConnectionState.MISSING_REFRESH_TOKEN
+    ads_connection_detail: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
