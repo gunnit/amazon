@@ -125,6 +125,10 @@ advertising_module.AdvertisingMetrics = TableStub(
     "advertising_metrics",
     ["campaign_id", "cost", "attributed_sales_7d", "impressions", "clicks", "date"],
 )
+advertising_module.AdvertisingMetricsByAsin = TableStub(
+    "advertising_metrics_by_asin",
+    ["account_id", "asin", "cost", "attributed_sales_7d", "date"],
+)
 sys.modules["app.models.advertising"] = advertising_module
 
 schema_spec = spec_from_file_location("app.schemas.analytics", SCHEMA_PATH)

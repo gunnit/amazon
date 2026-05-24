@@ -27,12 +27,26 @@ logger = logging.getLogger(__name__)
 # trends, and comparison queries.  Real per-ASIN rows use actual ASINs.
 DAILY_TOTAL_ASIN = "__DAILY_TOTAL__"
 
+# Surfaced when the vendor sales sync had to fall back from the Vendor Sales /
+# Sales Diagnostic report (true shipped revenue) to purchase-order netCost.
+# Purchase-order data approximates *vendor cost of goods ordered by Amazon*,
+# not shipped revenue to customers — dashboards must show this as estimated.
+VENDOR_SALES_FALLBACK_WARNING = "VENDOR_SALES_FROM_PO_FALLBACK"
+VENDOR_SALES_FALLBACK_MESSAGE = (
+    "Vendor sales revenue is estimated from purchase-order netCost because the "
+    "Vendor Sales / Sales Diagnostic report was unavailable. Totals may differ "
+    "from Vendor Central shipped revenue."
+)
+
 
 class DataExtractionService:
     """Service for extracting data from Amazon."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        # Populated by sync_vendor_sales_data when the PO fallback path is used.
+        # sync_account reads it to add a non-fatal warning to the account.
+        self.vendor_sales_used_po_fallback: bool = False
 
     async def _load_organization(self, account: AmazonAccount):
         """Load the organization for an account."""
@@ -390,6 +404,9 @@ class DataExtractionService:
                 from app.models.amazon_account import AccountType
                 if account.account_type == AccountType.VENDOR:
                     sales_count = await self.sync_vendor_sales_data(account, organization)
+                    if self.vendor_sales_used_po_fallback:
+                        warning_messages.append(VENDOR_SALES_FALLBACK_MESSAGE)
+                        warning_codes.append(VENDOR_SALES_FALLBACK_WARNING)
                     await self._touch_sync(account)
                     inventory_count = 0  # Vendors don't use FBA inventory
                     orders_count = 0
@@ -579,6 +596,10 @@ class DataExtractionService:
 
         client = self._create_sp_api_client(account, organization)
 
+        # Reset the fallback flag on every run so a successful diagnostic-report
+        # sync clears the previous warning state.
+        self.vendor_sales_used_po_fallback = False
+
         # Accumulate daily totals for DAILY_TOTAL_ASIN sentinel records.
         # Keys are dates; values are dicts with running totals.
         daily_totals: Dict[date, dict] = {}
@@ -633,12 +654,16 @@ class DataExtractionService:
                 _accumulate_daily(entry_date, units, amount, units, currency)
 
         except AmazonAPIError:
-            logger.info(
-                f"Vendor sales report not available for {account.account_name}, "
-                "falling back to purchase orders"
+            self.vendor_sales_used_po_fallback = True
+            logger.warning(
+                "Vendor Sales / Sales Diagnostic report not available for %s; "
+                "falling back to purchase-order netCost as an estimated revenue proxy",
+                account.account_name,
             )
             # Fall back to purchase orders — aggregate by (date, asin) since
-            # multiple POs can contain the same ASIN on the same day
+            # multiple POs can contain the same ASIN on the same day.
+            # NOTE: netCost is the vendor's per-unit cost, not Amazon's shipped
+            # revenue to customers. Treat downstream totals as estimated.
             orders = client.get_vendor_purchase_orders(start_date, end_date)
             aggregated: Dict[tuple, dict] = {}
 
