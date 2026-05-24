@@ -22,6 +22,14 @@ from app.services.forecast_export_service import (
     build_forecast_workbook_bytes,
 )
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
+from app.services.strategic_recommendations_export import (
+    build_recommendations_workbook_bytes,
+)
+from app.services.strategic_recommendations_service import (
+    VALID_CATEGORIES as REC_VALID_CATEGORIES,
+    VALID_STATUSES as REC_VALID_STATUSES,
+    StrategicRecommendationsService,
+)
 from workers.tasks.forecast_exports import process_forecast_export
 
 logger = logging.getLogger(__name__)
@@ -669,6 +677,95 @@ async def export_market_research_pdf(
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/recommendations-xlsx")
+async def export_recommendations_xlsx(
+    db: DbSession,
+    organization: CurrentOrganization,
+    current_user: CurrentUser,
+    status_: Optional[str] = Query(default=None, alias="status"),
+    category: Optional[str] = Query(default=None),
+    account_id: Optional[UUID] = Query(default=None),
+    asin: Optional[str] = Query(default=None),
+    ids: Optional[List[UUID]] = Query(default=None),
+    language: str = Query(default="en", regex="^(en|it)$"),
+    limit: int = Query(default=200, ge=1, le=500),
+):
+    """Export the matching strategic recommendations as a client-facing XLSX."""
+    if status_ and status_ not in REC_VALID_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {status_}")
+    if category and category not in REC_VALID_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
+
+    service = StrategicRecommendationsService(db)
+    recommendations = await service.list_recommendations(
+        organization.id,
+        status=status_,
+        category=category,
+        account_id=account_id,
+        limit=limit,
+    )
+
+    if ids:
+        id_set = {str(rec_id) for rec_id in ids}
+        recommendations = [rec for rec in recommendations if str(rec.id) in id_set]
+
+    if asin:
+        normalized = asin.strip().upper()
+
+        def _matches_asin(rec) -> bool:
+            ctx = rec.context if isinstance(rec.context, dict) else None
+            if not ctx:
+                return False
+            asins = ctx.get("asins")
+            if isinstance(asins, list) and normalized in {
+                str(value).upper() for value in asins if isinstance(value, str)
+            }:
+                return True
+            filters = ctx.get("generation_filters")
+            if isinstance(filters, dict):
+                raw = filters.get("asin")
+                if isinstance(raw, str) and raw.upper() == normalized:
+                    return True
+            return False
+
+        recommendations = [rec for rec in recommendations if _matches_asin(rec)]
+
+    if not recommendations:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No recommendations match the requested filters",
+        )
+
+    accounts_result = await db.execute(
+        select(AmazonAccount.id, AmazonAccount.account_name).where(
+            AmazonAccount.organization_id == organization.id
+        )
+    )
+    account_names = {str(row.id): row.account_name for row in accounts_result.all()}
+
+    workbook_bytes = build_recommendations_workbook_bytes(
+        recommendations,
+        account_names=account_names,
+        language=language,
+        scope_account_id=str(account_id) if account_id else None,
+        scope_asin=asin.strip().upper() if asin else None,
+    )
+
+    today = date.today().isoformat()
+    suffix = (
+        asin.strip().upper()
+        if asin
+        else (str(account_id)[:8] if account_id else "all")
+    )
+    filename = f"inthezon_recommendations_{suffix}_{today}_{language}.xlsx"
+
+    return StreamingResponse(
+        io.BytesIO(workbook_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
