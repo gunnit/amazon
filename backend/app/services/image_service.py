@@ -21,7 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.exceptions import AmazonAPIError
 from app.models.amazon_account import AmazonAccount, AccountType
+from app.models.catalog_change_log import CatalogChangeLog
 from app.models.product import Product
+from app.schemas.catalog import CatalogChangeField, CatalogChangeStatus
 from app.services.catalog_service import CatalogOperationError
 
 logger = logging.getLogger(__name__)
@@ -55,8 +57,9 @@ def _ext_for(content_type: str, filename: Optional[str] = None) -> str:
 class ImageService:
     """Service for uploading catalog images and syncing them to SP-API."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, user_id: Optional[UUID] = None):
         self.db = db
+        self.user_id = user_id
         self._s3 = boto3.client(
             "s3",
             region_name=settings.AWS_S3_REGION,
@@ -227,6 +230,7 @@ class ImageService:
 
         sp_api_result: Optional[Dict[str, Any]] = None
         sp_api_error: Optional[str] = None
+        audit_status = CatalogChangeStatus.SKIPPED
 
         if push_to_amazon:
             if not product.sku:
@@ -243,12 +247,32 @@ class ImageService:
                         main_image_url=main_url,
                         other_image_urls=other_urls[:MAX_ALTERNATE_IMAGES],
                     )
+                    audit_status = CatalogChangeStatus.SUCCESS
                 except AmazonAPIError as exc:
                     logger.warning("SP-API image patch failed for %s: %s", product.sku, exc)
                     sp_api_error = str(exc)
+                    audit_status = CatalogChangeStatus.FAILED
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Unexpected failure patching images for %s", product.sku)
                     sp_api_error = str(exc)
+                    audit_status = CatalogChangeStatus.FAILED
+
+        self._audit(
+            organization_id=account.organization_id,
+            account_id=account_id,
+            asin=asin,
+            sku=product.sku,
+            field=CatalogChangeField.IMAGE,
+            old_value=None,
+            new_value={
+                "main_image_url": main_url,
+                "other_image_urls": other_urls[:MAX_ALTERNATE_IMAGES],
+                "uploaded_keys": [entry["key"] for entry in uploaded],
+            },
+            status=audit_status,
+            sp_api_error=sp_api_error,
+        )
+        await self.db.flush()
 
         return {
             "account_id": str(account_id),
@@ -259,6 +283,33 @@ class ImageService:
             "sp_api_result": sp_api_result,
             "sp_api_error": sp_api_error,
         }
+
+    def _audit(
+        self,
+        *,
+        organization_id: UUID,
+        account_id: UUID,
+        asin: Optional[str],
+        sku: Optional[str],
+        field: CatalogChangeField,
+        old_value: Any,
+        new_value: Any,
+        status: CatalogChangeStatus,
+        sp_api_error: Optional[str] = None,
+    ) -> None:
+        entry = CatalogChangeLog(
+            organization_id=organization_id,
+            account_id=account_id,
+            user_id=self.user_id,
+            asin=asin,
+            sku=sku,
+            field=field.value,
+            old_value=old_value,
+            new_value=new_value,
+            sp_api_status=status.value,
+            sp_api_error=sp_api_error,
+        )
+        self.db.add(entry)
 
     async def delete_image(self, account_id: UUID, asin: str, key: str) -> Dict[str, Any]:
         account = await self._require_seller_account(account_id)
