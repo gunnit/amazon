@@ -98,13 +98,14 @@ class Settings(BaseSettings):
     DATA_RETENTION_MONTHS: int = 24
     DATA_ARCHIVE_ENABLED: bool = False
     PARTITION_FUTURE_MONTHS: int = 3
+    # Only tables actually converted by migration 023_partition_ts_tables.
+    # inventory_data and orders are NOT partitioned (different access
+    # patterns); they remain row-deleted by manage_data_retention.
     PARTITION_MANAGED_TABLES: List[str] = [
         "sales_data",
-        "inventory_data",
         "advertising_metrics",
         "advertising_metrics_by_asin",
         "bsr_history",
-        "orders",
     ]
 
     # In-process scheduler (replaces Celery beat on free tier / no-Redis deploys)

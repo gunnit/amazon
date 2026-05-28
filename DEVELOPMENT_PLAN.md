@@ -52,7 +52,7 @@ Status legend:
 | 30 | Nomina account | 🟡 | **Blocked**: real customer names needed. UI flags placeholders; rename via PUT or `backend/scripts/rename_amazon_account.py` |
 | 31 | Brand Analysis | 🟢 | 16-slide PPTX validated; `/brand-analysis/{id}/download`; e2e covered |
 
-**Summary:** 21 🟢 / 6 🟡 / 4 🔴.
+**Summary:** 21 🟢 / 7 🟡 / 4 🔴.
 
 ---
 
@@ -94,29 +94,10 @@ After merge, item 10 moves to 🟢; observability + docs are not separate Excel 
 
 **Why separate:** the Excel note on item 23 is "non è realistico" — the product owner is signaling the model output is not trustworthy, not that the pipeline is broken. This is a modelling/UX problem, not a plumbing problem.
 
-**Direction (not committed):**
+**Direction (not committed — requires PM decision before scoping):**
 - Calibrate Prophet on per-ASIN seasonality; flag insufficient-history ASINs (< 90 days) instead of generating low-confidence forecasts.
 - Surface MAPE/RMSE on every forecast card so users see confidence, not just a number.
-- Consider a units-forecast variant (currently revenue-only) if account managers ask for it.
-
-**Claude Code prompt (for whoever picks this up):**
-```
-Improve sales forecast realism (Excel item 23).
-
-Context:
-- backend/app/services/forecast_service.py uses Prophet; output is revenue (recently relabeled from "units")
-- /forecasts/available-products already returns is_eligible/reason
-- Forecast schema includes MAPE, RMSE, confidence interval
-
-Goals:
-1. Tighten the eligibility floor — require ≥ 90 days of contiguous DAILY_TOTAL_ASIN history; exclude ASINs whose recent 30d sales count is below a configurable threshold.
-2. Add Prophet cross_validation() and persist MAPE on the holdout; expose it in the API response.
-3. Frontend: render a "confidence" pill (High <15%, Medium 15–30%, Low >30%) next to each forecast and gray out the forecast number for Low.
-4. Add a disclaimer for low-confidence forecasts: "insufficient history".
-5. Do not change the export labels — they are already correct (revenue).
-
-Do not touch catalog or observability code (other workstreams).
-```
+- Decide with PM whether to add a units-forecast variant alongside the existing revenue-only output.
 
 ---
 

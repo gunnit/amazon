@@ -745,7 +745,7 @@ See `render.yaml` in project root.
 #### Partitioning — implementation status (2026-05-28)
 `sales_data`, `advertising_metrics`, `advertising_metrics_by_asin`, and `bsr_history`
 are partitioned by `RANGE (date)` with one partition per month. The composite
-primary key is `(date, id)` (PostgreSQL requires the partition key in the PK).
+primary key is `(id, date)` (PostgreSQL requires the partition key in the PK).
 `workers/tasks/maintenance.py::manage_partitions` runs daily and:
 
 - creates partitions for the next `PARTITION_FUTURE_MONTHS` months (default 3)
@@ -756,8 +756,13 @@ primary key is `(date, id)` (PostgreSQL requires the partition key in the PK).
 
 Adding a new time-series table: extend `PARTITION_MANAGED_TABLES` in
 `backend/app/config.py` and write an Alembic migration that mirrors
-`019_partition_timeseries_tables.py` (idempotent conversion via `relkind`
+`023_partition_ts_tables.py` (idempotent conversion via `relkind`
 check, partitions for past 24 + future 24 months, data copy, rename).
+
+⚠️ The initial conversion in migration `023` takes an `ACCESS EXCLUSIVE LOCK`
+on each table during `INSERT INTO _new SELECT *` + `DROP TABLE` + `RENAME`.
+For DBs with non-trivial data, stop the API and Celery workers and run during
+a maintenance window — otherwise writes will fail during the lock.
 
 ### Background Jobs
 - Celery with multiple queues (high, default, low priority)

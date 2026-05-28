@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import re
 import uuid
 from typing import Optional
 
@@ -20,6 +21,9 @@ from starlette.responses import Response
 
 
 REQUEST_ID_HEADER = "X-Request-ID"
+# Accept only safe ID characters so a client cannot inject newlines or
+# control sequences into our JSON log lines via X-Request-ID.
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _REQUEST_ID_CTX: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "inthezon_request_id", default=None
 )
@@ -33,7 +37,10 @@ def get_request_id() -> Optional[str]:
 class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         incoming = request.headers.get(REQUEST_ID_HEADER)
-        request_id = incoming or uuid.uuid4().hex
+        if incoming and _REQUEST_ID_RE.match(incoming):
+            request_id = incoming
+        else:
+            request_id = uuid.uuid4().hex
         token = _REQUEST_ID_CTX.set(request_id)
         try:
             response: Response = await call_next(request)
