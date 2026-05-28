@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, Generic, List, Optional, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 ASIN_PATTERN = r"^[A-Z0-9]{10}$"
 CURRENCY_PATTERN = r"^[A-Z]{3}$"
@@ -50,11 +50,6 @@ class PriceUpdate(BaseModel):
     asin: Optional[str] = Field(default=None, pattern=ASIN_PATTERN)
     sku: Optional[str] = Field(default=None, min_length=1, max_length=100)
     price: Decimal = Field(..., ge=0, decimal_places=2)
-
-    @field_validator("price")
-    @classmethod
-    def _quantize(cls, v: Decimal) -> Decimal:
-        return v.quantize(Decimal("0.01"))
 
     def model_post_init(self, __context: Any) -> None:
         if not self.asin and not self.sku:
