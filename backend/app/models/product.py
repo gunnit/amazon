@@ -57,11 +57,13 @@ class BSRHistory(Base):
         UniqueConstraint("product_id", "date", "category", name="uq_bsr_product_date_category"),
     )
 
+    # Composite primary key (id, date) — table is RANGE-partitioned on `date`
+    # (migration 023); PostgreSQL requires the partition key in the PK.
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     product_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), index=True
     )
-    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    date: Mapped[date] = mapped_column(Date, primary_key=True, nullable=False, index=True)
     category: Mapped[str] = mapped_column(String(255), nullable=True)
     bsr: Mapped[int] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

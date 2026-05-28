@@ -3,7 +3,9 @@
 
 **Project:** Amazon Multi-Account Management & Analytics Platform  
 **Client:** Inthezon (Libera Brand Building Group)  
-**Date:** January 2026  
+**Date:** Updated 2026-05-28
+
+> Stories marked `[DONE]` are 🟢 in `docs/planning/Avanzamento tool Niuexa new.xlsx` (the source of truth). Stories without the marker are either 🟡 (backend ready but blocked externally) or 🔴 (not started). See `DEVELOPMENT_PLAN.md` for wave grouping.
 
 ---
 
@@ -19,7 +21,7 @@
 
 ## Epic 1: Multi-Account Authentication & Management
 
-### US-1.1: Centralized Account Connection
+### US-1.1: [DONE] Centralized Account Connection
 **As an** Account Manager  
 **I want to** connect multiple Amazon Seller and Vendor Central accounts in one place  
 **So that** I don't have to log in manually to each account separately  
@@ -37,7 +39,7 @@
 
 ---
 
-### US-1.2: OTP Management
+### US-1.2: [DONE] OTP Management
 **As an** Account Manager  
 **I want to** handle OTP authentication seamlessly  
 **So that** I'm not blocked every time I need to access an account  
@@ -53,7 +55,7 @@
 
 ---
 
-### US-1.3: Account Health Dashboard
+### US-1.3: [DONE] Account Health Dashboard
 **As an** Account Manager  
 **I want to** see the connection status of all accounts at a glance  
 **So that** I know immediately if any account has issues  
@@ -71,7 +73,7 @@
 
 ## Epic 2: Automated Data Extraction
 
-### US-2.1: Scheduled Sales Report Download
+### US-2.1: [DONE] Scheduled Sales Report Download
 **As a** Data Analyst  
 **I want to** automatically download sales reports on a schedule  
 **So that** I don't have to manually extract data every month  
@@ -89,7 +91,7 @@
 
 ---
 
-### US-2.2: Inventory Report Extraction
+### US-2.2: [DONE] Inventory Report Extraction
 **As an** Account Manager  
 **I want to** pull inventory/stock levels automatically  
 **So that** I can monitor availability across all accounts  
@@ -122,7 +124,7 @@
 
 ---
 
-### US-2.4: BSR (Best Seller Rank) Tracking
+### US-2.4: [DONE] BSR (Best Seller Rank) Tracking
 **As a** Strategist  
 **I want to** track BSR for products by category over time  
 **So that** I can monitor competitive positioning  
@@ -139,7 +141,7 @@
 
 ---
 
-### US-2.5: Competitor Data Collection
+### US-2.5: [DONE] Competitor Data Collection
 **As a** Strategist  
 **I want to** track competitor products' performance  
 **So that** I can benchmark against the market  
@@ -156,7 +158,7 @@
 
 ---
 
-### US-2.6: Order Data Extraction
+### US-2.6: [DONE] Order Data Extraction
 **As a** Data Analyst  
 **I want to** extract order-level data  
 **So that** I can analyze purchasing patterns  
@@ -191,7 +193,7 @@
 
 ---
 
-### US-3.2: Period-Over-Period Comparison
+### US-3.2: [DONE] Period-Over-Period Comparison
 **As a** Data Analyst  
 **I want to** compare metrics across different time periods  
 **So that** I can measure growth and identify trends  
@@ -226,7 +228,7 @@
 
 ## Epic 4: KPI Dashboard & Visualization
 
-### US-4.1: Unified Performance Dashboard
+### US-4.1: [DONE] Unified Performance Dashboard
 **As an** Account Manager  
 **I want to** see all account performance in one aggregated view  
 **So that** I can quickly assess overall business health  
@@ -243,7 +245,7 @@
 
 ---
 
-### US-4.2: Client vs Competitor View
+### US-4.2: [DONE] Client vs Competitor View
 **As a** Strategist  
 **I want to** compare client performance against competitors  
 **So that** I can identify competitive gaps and opportunities  
@@ -294,7 +296,7 @@
 
 ## Epic 5: Export & Reporting
 
-### US-5.1: Excel Export
+### US-5.1: [DONE] Excel Export
 **As a** Data Analyst  
 **I want to** export data to Excel format  
 **So that** I can perform custom analysis and share with stakeholders  
@@ -311,7 +313,7 @@
 
 ---
 
-### US-5.2: Google Sheets Integration
+### US-5.2: [DONE] Google Sheets Integration
 **As a** Data Analyst  
 **I want to** push data directly to Google Sheets  
 **So that** I can collaborate with team members in real-time  
@@ -327,7 +329,7 @@
 
 ---
 
-### US-5.3: PowerPoint Report Generation
+### US-5.3: [DONE] PowerPoint Report Generation
 **As a** Data Analyst  
 **I want to** generate presentation-ready reports automatically  
 **So that** I don't have to manually format data for client meetings  
@@ -448,7 +450,7 @@
 
 ---
 
-### US-7.2: Product Trend Prediction
+### US-7.2: [DONE] Product Trend Prediction
 **As a** Strategist  
 **I want to** identify which products are trending up or down  
 **So that** I can adjust strategy accordingly  
@@ -464,7 +466,7 @@
 
 ---
 
-### US-7.3: Listing Optimization Suggestions
+### US-7.3: [DONE] Listing Optimization Suggestions
 **As an** Account Manager  
 **I want to** receive AI-powered suggestions for listing improvements  
 **So that** I can optimize content without manual analysis  
@@ -481,7 +483,7 @@
 
 ---
 
-### US-7.4: Image Quality Assessment
+### US-7.4: [DONE] Image Quality Assessment
 **As an** Account Manager  
 **I want to** receive feedback on product image quality  
 **So that** I can identify images that need improvement  
@@ -497,7 +499,7 @@
 
 ---
 
-### US-7.5: Strategy Recommendations
+### US-7.5: [DONE] Strategy Recommendations
 **As a** Strategist  
 **I want to** receive actionable strategy recommendations  
 **So that** I can make data-driven decisions faster  
@@ -533,7 +535,7 @@
 
 ---
 
-### US-8.2: Daily Summary Digest
+### US-8.2: [DONE] Daily Summary Digest
 **As an** Account Manager  
 **I want to** receive a daily summary of key metrics and events  
 **So that** I stay informed without checking the platform constantly  

@@ -17,11 +17,13 @@ class SalesData(Base):
         UniqueConstraint("account_id", "date", "asin", name="uq_sales_data_account_date_asin"),
     )
 
+    # Composite primary key (id, date) — table is RANGE-partitioned on `date`
+    # (migration 023); PostgreSQL requires the partition key in the PK.
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("amazon_accounts.id", ondelete="CASCADE"), index=True
     )
-    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    date: Mapped[date] = mapped_column(Date, primary_key=True, nullable=False, index=True)
     asin: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     sku: Mapped[str] = mapped_column(String(100), nullable=True)
 

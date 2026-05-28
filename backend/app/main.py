@@ -1,18 +1,22 @@
 """Main FastAPI application entry point."""
 from contextlib import asynccontextmanager
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import logging
+from sqlalchemy import text
 
 from app.config import settings
 from app.api.v1.router import api_router
 from app.db.session import engine
+from app.middleware.request_id import RequestIdMiddleware
+from app.observability import configure_logging, init_sentry
 
-logging.basicConfig(
-    level=logging.DEBUG if settings.APP_DEBUG else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Logging + error tracking must be set up before any other module emits records.
+configure_logging("inthezon-api")
+init_sentry("inthezon-api")
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,7 +75,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Add CORS middleware
+# Request ID middleware must be added BEFORE CORS so the request_id context
+# is set for every dispatched route, including preflight responses.
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -96,15 +102,59 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(api_router, prefix="/api/v1")
 
 
-# Health check endpoint
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Liveness probe — returns 200 as long as the process is up.
+
+    Does NOT verify external dependencies; use /health/ready for that.
+    """
     return {
-        "status": "healthy",
+        "status": "ok",
         "version": "1.0.0",
         "environment": settings.APP_ENV,
     }
+
+
+@app.get("/health/ready")
+async def readiness_check():
+    """Readiness probe — verifies DB and (when configured) Redis are reachable.
+
+    Returns 200 with per-dependency status when all checks pass. Returns 503
+    with the same payload (so callers can introspect which dependency is
+    failing) when at least one check fails.
+    """
+    checks: dict[str, dict[str, str]] = {}
+    overall_ok = True
+
+    # Database
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+        checks["database"] = {"status": "ok"}
+    except Exception as exc:  # broad: any failure is a readiness signal
+        overall_ok = False
+        checks["database"] = {"status": "error", "detail": str(exc)[:200]}
+
+    # Redis (best-effort — skipped if no URL configured)
+    redis_url = settings.REDIS_URL or settings.CELERY_BROKER_URL
+    if redis_url:
+        try:
+            import redis.asyncio as redis_asyncio  # lazy import; not in hot path
+
+            redis_client = redis_asyncio.from_url(redis_url, socket_timeout=2.0)
+            try:
+                await redis_client.ping()
+                checks["redis"] = {"status": "ok"}
+            finally:
+                await redis_client.aclose()
+        except Exception as exc:
+            overall_ok = False
+            checks["redis"] = {"status": "error", "detail": str(exc)[:200]}
+    else:
+        checks["redis"] = {"status": "skipped", "detail": "no REDIS_URL configured"}
+
+    body = {"status": "ok" if overall_ok else "error", "checks": checks}
+    return JSONResponse(status_code=200 if overall_ok else 503, content=body)
 
 
 @app.get("/")

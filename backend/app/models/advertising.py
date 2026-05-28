@@ -43,11 +43,13 @@ class AdvertisingMetrics(Base):
         UniqueConstraint("campaign_id", "date", name="uq_ad_metrics_campaign_date"),
     )
 
+    # Composite primary key (id, date) — table is RANGE-partitioned on `date`
+    # (migration 023); PostgreSQL requires the partition key in the PK.
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     campaign_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("advertising_campaigns.id", ondelete="CASCADE"), index=True
     )
-    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    date: Mapped[date] = mapped_column(Date, primary_key=True, nullable=False, index=True)
 
     # Performance Metrics
     impressions: Mapped[int] = mapped_column(Integer, default=0)
@@ -81,6 +83,8 @@ class AdvertisingMetricsByAsin(Base):
         UniqueConstraint("campaign_id", "asin", "date", name="uq_ad_asin_metrics_campaign_asin_date"),
     )
 
+    # Composite primary key (id, date) — table is RANGE-partitioned on `date`
+    # (migration 023); PostgreSQL requires the partition key in the PK.
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     account_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("amazon_accounts.id", ondelete="CASCADE"), index=True
@@ -89,7 +93,7 @@ class AdvertisingMetricsByAsin(Base):
         UUID(as_uuid=True), ForeignKey("advertising_campaigns.id", ondelete="CASCADE"), nullable=False, index=True
     )
     asin: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    date: Mapped[date] = mapped_column(Date, primary_key=True, nullable=False, index=True)
 
     impressions: Mapped[int] = mapped_column(Integer, default=0)
     clicks: Mapped[int] = mapped_column(Integer, default=0)

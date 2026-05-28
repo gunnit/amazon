@@ -101,11 +101,14 @@ class Settings(BaseSettings):
     DATA_RETENTION_MONTHS: int = 24
     DATA_ARCHIVE_ENABLED: bool = False
     PARTITION_FUTURE_MONTHS: int = 3
+    # Only tables actually converted by migration 023_partition_ts_tables.
+    # inventory_data and orders are NOT partitioned (different access
+    # patterns); they remain row-deleted by manage_data_retention.
     PARTITION_MANAGED_TABLES: List[str] = [
         "sales_data",
-        "inventory_data",
         "advertising_metrics",
-        "orders",
+        "advertising_metrics_by_asin",
+        "bsr_history",
     ]
 
     # In-process scheduler (replaces Celery beat on free tier / no-Redis deploys)
@@ -115,6 +118,17 @@ class Settings(BaseSettings):
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+
+    # Observability
+    # When SENTRY_DSN is empty the SDK is not initialized at all — the app
+    # starts and runs normally without error tracking.
+    SENTRY_DSN: Optional[str] = None
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.1
+    LOG_LEVEL: str = "INFO"
+    # "json" → structured logs (one line per record, suitable for Render's
+    # log aggregator and Sentry breadcrumbs). "text" → human-readable for
+    # local dev. Anything else falls back to "text".
+    LOG_FORMAT: str = "json"
 
     class Config:
         env_file = ".env"
