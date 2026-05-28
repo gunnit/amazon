@@ -2,7 +2,7 @@
 
 > **Updated 2026-05-28.** Aligned with `docs/planning/Avanzamento tool Niuexa new.xlsx` (last updated by product 2026-05-21).
 >
-> **Post-merge state (after PR #1 + PR #2 land):** `26 🟢 / 6 🟡 / 0 🔴`. The 6 remaining 🟡 are all blocked externally — see _External blockers register_ at the bottom.
+> **Current state on master:** `26 🟢 / 5 🟡 / 0 🔴`. The 5 remaining 🟡 are all blocked externally — see _External blockers register_ at the bottom.
 
 ## How to read this document
 
@@ -31,7 +31,7 @@ Status legend:
 | 7 | Monitoraggio BSR | 🟢 | |
 | 8 | Raccolta Dati sui Competitori | 🟢 | Resilient discovery; per-ASIN errors preserved in `fetch_errors` |
 | 9 | Estrazione Dati sugli Ordini | 🟢 | Headers + items on `orders`/`order_items`; `/reports/orders` paginated |
-| 10 | Conservazione a Lungo Periodo dei Dati | 🟢 (post-merge) | Auto-partitioning via migration 023 + `manage_partitions` task (Wave C). Until PR #1 merges, Excel still shows 🟡 |
+| 10 | Conservazione a Lungo Periodo dei Dati | 🟢 | Auto-partitioning via migration 023 + `manage_partitions` task (Wave C) |
 | 11 | Confronto Periodo su Periodo | 🟢 | Uses SOT `DAILY_TOTAL_ASIN`; deterministic tests cover 2025 |
 | 12 | Dashboard di Performance Unificata | 🟢 | |
 | 13 | Confronto Cliente vs Competitor | 🟢 | Tolerates partial data; `overall_score=None` when uncomparable |
@@ -40,10 +40,10 @@ Status legend:
 | 16 | Integrazione con Google Sheets | 🟢 | Existing endpoints + UI; needs end-to-end revalidation post-deploy |
 | 17 | Generazione di Report in PowerPoint | 🟢 | Double-count bug fixed; i18n it/en; AOV/ASP/ASIN scope in deck |
 | 18 | Consegna dei Rapporti Programmata | 🟡 | **Blocked**: SendGrid not configured ops-side. Errors distinguish missing key vs. empty recipients vs. SendGrid reject |
-| 19 | Aggiornamenti in Massa delle Liste di Prodotti | 🟢 (post-merge) | Delivered by PR #2: `POST /catalog/bulk-update` with per-row `BulkResult` |
-| 20 | Gestione dei Prezzi | 🟢 (post-merge) | Delivered by PR #2: `POST /catalog/prices` with audit log |
-| 21 | Aggiornamenti sulla Disponibilità/Inventario | 🟢 (post-merge) | Delivered by PR #2: `PATCH /catalog/products/{asin}/availability` |
-| 22 | Gestione delle Immagini | 🟢 (post-merge) | Delivered by PR #2: `POST /catalog/products/{asin}/images` (S3 + SP-API patch) |
+| 19 | Aggiornamenti in Massa delle Liste di Prodotti | 🟢 | `POST /catalog/bulk-update` with per-row `BulkResult` + audit log |
+| 20 | Gestione dei Prezzi | 🟢 | `POST /catalog/prices` with audit log |
+| 21 | Aggiornamenti sulla Disponibilità/Inventario | 🟢 | `PATCH /catalog/products/{asin}/availability` |
+| 22 | Gestione delle Immagini | 🟢 | `POST /catalog/products/{asin}/images` (S3 + SP-API patch) |
 | 23 | Previsione delle Vendite | 🟡 | Prophet + horizon caps + MAPE/RMSE present; forecast now labeled revenue (not units). Excel note: "non è realistico" — accuracy improvement pending |
 | 24 | Previsione delle Tendenze dei Prodotti | 🟢 | 9 tests; sales/units/BSR score + deterministic fallback; `declining_fast` alert |
 | 25 | Suggerimenti per l'Ottimizzazione delle Inserzioni | 🟢 | |
@@ -54,10 +54,9 @@ Status legend:
 | 30 | Nomina account | 🟡 | **Blocked**: real customer names needed. UI flags placeholders; rename via PUT or `backend/scripts/rename_amazon_account.py` |
 | 31 | Brand Analysis | 🟢 | 16-slide PPTX validated; `/brand-analysis/{id}/download`; e2e covered |
 
-**Current Excel:** 25 🟢 / 6 🟡 / 0 🔴 (after PR #2 + 1-line update lands item 10).
-**Post-merge target:** 26 🟢 / 6 🟡 / 0 🔴.
+**Current Excel on master:** 26 🟢 / 5 🟡 / 0 🔴.
 
-The 6 remaining 🟡 are externally blocked (see register below). No engineering 🔴 left.
+The 5 remaining 🟡 are externally blocked (see register below). No engineering 🔴 left.
 
 ---
 
