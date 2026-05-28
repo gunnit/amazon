@@ -1,6 +1,8 @@
 # Inthezon — Development Plan
 
 > **Updated 2026-05-28.** Aligned with `docs/planning/Avanzamento tool Niuexa new.xlsx` (last updated by product 2026-05-21).
+>
+> **Post-merge state (after PR #1 + PR #2 land):** `26 🟢 / 6 🟡 / 0 🔴`. The 6 remaining 🟡 are all blocked externally — see _External blockers register_ at the bottom.
 
 ## How to read this document
 
@@ -29,7 +31,7 @@ Status legend:
 | 7 | Monitoraggio BSR | 🟢 | |
 | 8 | Raccolta Dati sui Competitori | 🟢 | Resilient discovery; per-ASIN errors preserved in `fetch_errors` |
 | 9 | Estrazione Dati sugli Ordini | 🟢 | Headers + items on `orders`/`order_items`; `/reports/orders` paginated |
-| 10 | Conservazione a Lungo Periodo dei Dati | 🟡 | `DATA_RETENTION_MONTHS=24` + retention task; **partitioning is the topic of Wave C below** |
+| 10 | Conservazione a Lungo Periodo dei Dati | 🟢 (post-merge) | Auto-partitioning via migration 023 + `manage_partitions` task (Wave C). Until PR #1 merges, Excel still shows 🟡 |
 | 11 | Confronto Periodo su Periodo | 🟢 | Uses SOT `DAILY_TOTAL_ASIN`; deterministic tests cover 2025 |
 | 12 | Dashboard di Performance Unificata | 🟢 | |
 | 13 | Confronto Cliente vs Competitor | 🟢 | Tolerates partial data; `overall_score=None` when uncomparable |
@@ -38,10 +40,10 @@ Status legend:
 | 16 | Integrazione con Google Sheets | 🟢 | Existing endpoints + UI; needs end-to-end revalidation post-deploy |
 | 17 | Generazione di Report in PowerPoint | 🟢 | Double-count bug fixed; i18n it/en; AOV/ASP/ASIN scope in deck |
 | 18 | Consegna dei Rapporti Programmata | 🟡 | **Blocked**: SendGrid not configured ops-side. Errors distinguish missing key vs. empty recipients vs. SendGrid reject |
-| 19 | Aggiornamenti in Massa delle Liste di Prodotti | 🔴 | Catalog wave (separate workstream) |
-| 20 | Gestione dei Prezzi | 🔴 | Catalog wave |
-| 21 | Aggiornamenti sulla Disponibilità/Inventario | 🔴 | Catalog wave |
-| 22 | Gestione delle Immagini | 🔴 | Catalog wave |
+| 19 | Aggiornamenti in Massa delle Liste di Prodotti | 🟢 (post-merge) | Delivered by PR #2: `POST /catalog/bulk-update` with per-row `BulkResult` |
+| 20 | Gestione dei Prezzi | 🟢 (post-merge) | Delivered by PR #2: `POST /catalog/prices` with audit log |
+| 21 | Aggiornamenti sulla Disponibilità/Inventario | 🟢 (post-merge) | Delivered by PR #2: `PATCH /catalog/products/{asin}/availability` |
+| 22 | Gestione delle Immagini | 🟢 (post-merge) | Delivered by PR #2: `POST /catalog/products/{asin}/images` (S3 + SP-API patch) |
 | 23 | Previsione delle Vendite | 🟡 | Prophet + horizon caps + MAPE/RMSE present; forecast now labeled revenue (not units). Excel note: "non è realistico" — accuracy improvement pending |
 | 24 | Previsione delle Tendenze dei Prodotti | 🟢 | 9 tests; sales/units/BSR score + deterministic fallback; `declining_fast` alert |
 | 25 | Suggerimenti per l'Ottimizzazione delle Inserzioni | 🟢 | |
@@ -52,7 +54,10 @@ Status legend:
 | 30 | Nomina account | 🟡 | **Blocked**: real customer names needed. UI flags placeholders; rename via PUT or `backend/scripts/rename_amazon_account.py` |
 | 31 | Brand Analysis | 🟢 | 16-slide PPTX validated; `/brand-analysis/{id}/download`; e2e covered |
 
-**Summary:** 21 🟢 / 7 🟡 / 4 🔴.
+**Current Excel:** 25 🟢 / 6 🟡 / 0 🔴 (after PR #2 + 1-line update lands item 10).
+**Post-merge target:** 26 🟢 / 6 🟡 / 0 🔴.
+
+The 6 remaining 🟡 are externally blocked (see register below). No engineering 🔴 left.
 
 ---
 
@@ -60,12 +65,12 @@ Status legend:
 
 The original "Phase 1–5" structure assumed an April-to-July ramp that no longer reflects reality. The work that remains splits cleanly along **what is blocked externally** vs. **what we can ship now**.
 
-### Wave A — Catalog bulk operations (in flight, separate session)
+### Wave A — Catalog bulk operations (delivered by PR #2, pending merge)
 
-**Items:** 19, 20, 21, 22 (all 🔴).
-**Owner:** the parallel session working on `backend/app/services/catalog_service.py` + `frontend/src/pages/Catalog.tsx`.
-**Why now:** these are the only 🔴 items left and they share the catalog data model.
-**Out of scope for this plan** — see that branch's PR.
+**Items:** 19, 20, 21, 22 (all 🔴 → 🟢 once merged).
+**Branch:** `claude/catalog-management-validation-and-polish` (PR #2).
+**Delivered:** bulk listing updates from Excel, price push to SP-API, availability toggle, image upload (S3 + listings patch), all with per-row `BulkResult` error handling, Zod + Pydantic validation, audit log table (`catalog_change_log`), confirmation dialogs in UI, i18n it/en. 19 unit tests cover schema validation + service success/failure paths.
+**Pending:** live SP-API smoke test in staging (no real Amazon call covered by mocks).
 
 ### Wave B — External unblockers
 
