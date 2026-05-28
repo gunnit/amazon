@@ -30,11 +30,9 @@ from alembic import op
 
 
 revision = "023_partition_ts_tables"
-# `down_revision` targets the current head on master. The parallel catalog
-# branch introduces a 022_catalog_change_log migration; whichever branch
-# merges last is responsible for rebasing its migration to land downstream
-# of the other (single-head policy in this repo).
-down_revision = "021_ba_capabilities"
+# Lands downstream of the catalog audit-log migration so the Alembic chain
+# stays single-head once both PRs merge.
+down_revision = "022_catalog_change_log"
 branch_labels = None
 depends_on = None
 
