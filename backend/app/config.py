@@ -102,6 +102,8 @@ class Settings(BaseSettings):
         "sales_data",
         "inventory_data",
         "advertising_metrics",
+        "advertising_metrics_by_asin",
+        "bsr_history",
         "orders",
     ]
 
