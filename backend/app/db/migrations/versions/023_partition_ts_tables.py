@@ -21,7 +21,7 @@ coordinated change to `order_items.order_id` (composite FK), which warrants
 operator review.
 
 Revision ID: 023_partition_ts_tables
-Revises: 022_catalog_change_log
+Revises: 021_ba_capabilities
 Create Date: 2026-05-28
 """
 from __future__ import annotations
@@ -30,7 +30,11 @@ from alembic import op
 
 
 revision = "023_partition_ts_tables"
-down_revision = "022_catalog_change_log"
+# `down_revision` targets the current head on master. The parallel catalog
+# branch introduces a 022_catalog_change_log migration; whichever branch
+# merges last is responsible for rebasing its migration to land downstream
+# of the other (single-head policy in this repo).
+down_revision = "021_ba_capabilities"
 branch_labels = None
 depends_on = None
 
