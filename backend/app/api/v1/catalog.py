@@ -4,12 +4,21 @@ from uuid import UUID
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.deps import CurrentOrganization, CurrentUser, DbSession
 from app.models.amazon_account import AmazonAccount
+from app.models.catalog_change_log import CatalogChangeLog
 from app.models.product import Product
+from app.schemas.catalog import (
+    AvailabilityResult,
+    AvailabilityUpdateRequest,
+    BulkListingUpdateResult,
+    BulkPriceUpdateRequest,
+    BulkResult,
+    CatalogChangeLogEntry,
+    PriceUpdateResult,
+)
 from app.schemas.report import ProductResponse
 from app.services.catalog_service import CatalogOperationError, CatalogService
 from app.services.image_service import (
@@ -20,25 +29,6 @@ from app.services.image_service import (
 )
 
 router = APIRouter()
-
-
-class PriceUpdate(BaseModel):
-    asin: Optional[str] = None
-    sku: Optional[str] = None
-    price: float
-
-
-class BulkPriceUpdateRequest(BaseModel):
-    account_id: UUID
-    updates: List[PriceUpdate] = Field(default_factory=list)
-    product_type: str = "PRODUCT"
-
-
-class AvailabilityUpdateRequest(BaseModel):
-    account_id: UUID
-    is_available: bool
-    quantity: Optional[int] = None
-    product_type: str = "PRODUCT"
 
 
 async def _verify_account_in_org(db, organization_id: UUID, account_id: UUID) -> None:
@@ -179,7 +169,7 @@ async def download_bulk_template(
     )
 
 
-@router.post("/bulk-update")
+@router.post("/bulk-update", response_model=BulkResult[BulkListingUpdateResult])
 async def bulk_update_products(
     current_user: CurrentUser,
     organization: CurrentOrganization,
@@ -198,14 +188,14 @@ async def bulk_update_products(
     await _verify_account_in_org(db, organization.id, account_id)
 
     contents = await file.read()
-    service = CatalogService(db)
+    service = CatalogService(db, user_id=current_user.id)
     try:
         return await service.bulk_update_from_excel(account_id, contents, product_type=product_type)
     except CatalogOperationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-@router.post("/prices")
+@router.post("/prices", response_model=BulkResult[PriceUpdateResult])
 async def update_prices(
     payload: BulkPriceUpdateRequest,
     current_user: CurrentUser,
@@ -215,18 +205,18 @@ async def update_prices(
     """Push SKU prices to Amazon SP-API and mirror them locally."""
     await _verify_account_in_org(db, organization.id, payload.account_id)
 
-    service = CatalogService(db)
+    service = CatalogService(db, user_id=current_user.id)
     try:
         return await service.update_prices_bulk(
             payload.account_id,
-            [u.model_dump() for u in payload.updates],
+            payload.updates,
             product_type=payload.product_type,
         )
     except CatalogOperationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-@router.patch("/products/{asin}/availability")
+@router.patch("/products/{asin}/availability", response_model=AvailabilityResult)
 async def update_availability(
     asin: str,
     payload: AvailabilityUpdateRequest,
@@ -237,7 +227,7 @@ async def update_availability(
     """Enable or disable a product on Amazon by adjusting its fulfillment quantity."""
     await _verify_account_in_org(db, organization.id, payload.account_id)
 
-    service = CatalogService(db)
+    service = CatalogService(db, user_id=current_user.id)
     try:
         return await service.toggle_availability(
             account_id=payload.account_id,
@@ -248,6 +238,33 @@ async def update_availability(
         )
     except CatalogOperationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get(
+    "/products/{asin}/history",
+    response_model=List[CatalogChangeLogEntry],
+)
+async def get_product_history(
+    asin: str,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: UUID = Query(...),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Return audit-log entries for the given ASIN in chronological reverse order."""
+    await _verify_account_in_org(db, organization.id, account_id)
+
+    result = await db.execute(
+        select(CatalogChangeLog)
+        .where(
+            CatalogChangeLog.account_id == account_id,
+            CatalogChangeLog.asin == asin,
+        )
+        .order_by(CatalogChangeLog.created_at.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
 
 
 # ---------------------------------------------------------------------
@@ -318,7 +335,7 @@ async def upload_product_images(
             )
         )
 
-    service = ImageService(db)
+    service = ImageService(db, user_id=current_user.id)
     try:
         result = await service.upload_images(
             account_id=account_id,

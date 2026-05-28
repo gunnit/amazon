@@ -561,6 +561,14 @@ export const forecastsApi = {
 }
 
 // Catalog API
+import type {
+  AvailabilityResult,
+  BulkListingUpdateResult,
+  BulkResult,
+  CatalogChangeLogEntry,
+  PriceUpdateResult,
+} from '@/components/catalog/types'
+
 export const catalogApi = {
   getProducts: async (params?: {
     search?: string
@@ -600,7 +608,7 @@ export const catalogApi = {
     account_id: string
     product_type?: string
     file: File
-  }): Promise<Record<string, unknown>> => {
+  }): Promise<BulkResult<BulkListingUpdateResult>> => {
     const form = new FormData()
     form.append('file', params.file)
     const response = await api.post('/catalog/bulk-update', form, {
@@ -617,7 +625,7 @@ export const catalogApi = {
     account_id: string
     product_type?: string
     updates: Array<{ asin?: string; sku?: string; price: number }>
-  }): Promise<Record<string, unknown>> => {
+  }): Promise<BulkResult<PriceUpdateResult>> => {
     const response = await api.post('/catalog/prices', {
       account_id: payload.account_id,
       product_type: payload.product_type ?? 'PRODUCT',
@@ -634,12 +642,22 @@ export const catalogApi = {
       quantity?: number
       product_type?: string
     },
-  ): Promise<Record<string, unknown>> => {
+  ): Promise<AvailabilityResult> => {
     const response = await api.patch(`/catalog/products/${asin}/availability`, {
       account_id: payload.account_id,
       is_available: payload.is_available,
       quantity: payload.quantity,
       product_type: payload.product_type ?? 'PRODUCT',
+    })
+    return response.data
+  },
+
+  getProductHistory: async (
+    asin: string,
+    params: { account_id: string; limit?: number },
+  ): Promise<CatalogChangeLogEntry[]> => {
+    const response = await api.get(`/catalog/products/${asin}/history`, {
+      params: { account_id: params.account_id, limit: params.limit ?? 50 },
     })
     return response.data
   },
