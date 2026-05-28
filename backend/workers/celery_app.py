@@ -1,11 +1,28 @@
 """Celery application configuration."""
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import setup_logging
 import os
 
 # Get Redis URL from environment
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/2")
+
+
+@setup_logging.connect
+def _configure_worker_logging(**kwargs):
+    """Install JSON-structured logging + Sentry on Celery workers.
+
+    Celery normally clobbers logging config after worker boot; the
+    `setup_logging` signal is the documented way to take over fully.
+    Imports are lazy so commands that introspect celery_app (e.g.
+    `celery -A workers.celery_app inspect ...`) without a configured
+    `DATABASE_URL` still work for ops debugging.
+    """
+    from app.observability import configure_logging, init_sentry
+
+    configure_logging("inthezon-worker")
+    init_sentry("inthezon-worker")
 
 # Create Celery app
 celery_app = Celery(

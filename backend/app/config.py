@@ -115,6 +115,17 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    # Observability
+    # When SENTRY_DSN is empty the SDK is not initialized at all — the app
+    # starts and runs normally without error tracking.
+    SENTRY_DSN: Optional[str] = None
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.1
+    LOG_LEVEL: str = "INFO"
+    # "json" → structured logs (one line per record, suitable for Render's
+    # log aggregator and Sentry breadcrumbs). "text" → human-readable for
+    # local dev. Anything else falls back to "text".
+    LOG_FORMAT: str = "json"
+
     class Config:
         env_file = ".env"
         case_sensitive = True
