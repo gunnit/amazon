@@ -742,6 +742,23 @@ See `render.yaml` in project root.
 - Indexes on frequently queried columns
 - Connection pooling (PgBouncer if needed)
 
+#### Partitioning — implementation status (2026-05-28)
+`sales_data`, `advertising_metrics`, `advertising_metrics_by_asin`, and `bsr_history`
+are partitioned by `RANGE (date)` with one partition per month. The composite
+primary key is `(date, id)` (PostgreSQL requires the partition key in the PK).
+`workers/tasks/maintenance.py::manage_partitions` runs daily and:
+
+- creates partitions for the next `PARTITION_FUTURE_MONTHS` months (default 3)
+  via the `public.ensure_monthly_partition(table, year, month)` UDF;
+- drops partitions whose range falls entirely outside `DATA_RETENTION_MONTHS`
+  (default 24), replacing the prior row-level `DELETE` strategy for these
+  four tables — DDL-level drop is constant-time and avoids vacuum overhead.
+
+Adding a new time-series table: extend `PARTITION_MANAGED_TABLES` in
+`backend/app/config.py` and write an Alembic migration that mirrors
+`019_partition_timeseries_tables.py` (idempotent conversion via `relkind`
+check, partitions for past 24 + future 24 months, data copy, rename).
+
 ### Background Jobs
 - Celery with multiple queues (high, default, low priority)
 - Concurrency configurable per worker
@@ -766,6 +783,19 @@ See `render.yaml` in project root.
 - **APM:** Sentry for error tracking
 - **Metrics:** Prometheus + Grafana (or Render metrics)
 - **Uptime:** UptimeRobot / Better Uptime
+
+### Implementation status (2026-05-28)
+
+| Capability | Status | Notes |
+|---|---|---|
+| Structured JSON logs | ✅ | `python-json-logger` configured in `backend/app/main.py` and `backend/workers/celery_app.py`. Service field: `inthezon-api` / `inthezon-worker`. Fields: `timestamp`, `level`, `service`, `name`, `message`, `request_id`. |
+| Request / correlation ID | ✅ | Middleware in `backend/app/middleware/request_id.py`. Reads `X-Request-ID` header or generates UUID4. Propagated to logs via `contextvars`. Returned on the response. |
+| Sentry error tracking | ✅ ready, ❌ not yet activated | SDK initialized only when `SENTRY_DSN` env var is set; otherwise startup logs "Sentry DSN not set; error tracking disabled". FastAPI + Celery integrations wired. |
+| Liveness probe | ✅ | `GET /health` — static 200, no dependencies. |
+| Readiness probe | ✅ | `GET /health/ready` — pings DB (`SELECT 1`) and Redis. 200 if both pass, 503 with per-dependency detail otherwise. |
+| Prometheus metrics | ❌ | Not implemented. Next step: `prometheus-fastapi-instrumentator` + scrape endpoint on Render. |
+| Grafana dashboards | ❌ | Pending Prometheus. |
+| Uptime monitoring | ❌ | Set up UptimeRobot to ping `/health/ready` once a minute. |
 
 ### Key Metrics to Track
 - API response times (p50, p95, p99)
@@ -819,5 +849,5 @@ celery -A workers.celery_app beat --loglevel=info
 
 ---
 
-*Document Version: 1.0*  
-*Last Updated: January 2026*
+*Document Version: 1.1*  
+*Last Updated: 2026-05-28*
