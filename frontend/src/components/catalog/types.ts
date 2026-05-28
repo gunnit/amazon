@@ -21,6 +21,7 @@ export interface BulkResult<T> {
   total: number
   succeeded: number
   failed: number
+  skipped?: number
   successes: T[]
   errors: BulkRowError[]
 }

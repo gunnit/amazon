@@ -157,15 +157,18 @@ class CatalogService:
 
         successes: List[BulkListingUpdateResult] = []
         errors: List[BulkRowError] = []
+        skipped = 0
 
         for row_idx, row in df.iterrows():
             row_number = int(row_idx) + 2  # +1 for 0-based, +1 for header
             sku = str(row.get("sku") or "").strip()
             if not sku:
+                skipped += 1
                 continue
 
             attributes = _row_to_listing_attributes(row)
             if not attributes:
+                skipped += 1
                 continue
 
             old_snapshot = await self._product_snapshot_by_sku(account_id, sku)
@@ -231,6 +234,7 @@ class CatalogService:
             total=int(len(df)),
             succeeded=len(successes),
             failed=len(errors),
+            skipped=skipped,
             successes=successes,
             errors=errors,
         )

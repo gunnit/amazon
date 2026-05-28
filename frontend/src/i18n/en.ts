@@ -1294,6 +1294,7 @@ const en: Record<string, string> = {
   'catalog.availability.errorTitle': 'Availability update failed',
   'catalog.result.ok': 'OK',
   'catalog.result.failed': 'Failed',
+  'catalog.result.skipped': 'Skipped',
   'catalog.result.total': '{n} total',
   'catalog.result.status': 'Status',
   'catalog.result.rowNumber': 'Row',

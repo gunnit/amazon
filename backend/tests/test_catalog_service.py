@@ -451,6 +451,7 @@ async def test_bulk_update_from_excel_mixed_results(monkeypatch):
 
     assert result.succeeded == 1
     assert result.failed == 1
+    assert result.skipped == 1
     assert result.total == 3
     successes_skus = {s.sku for s in result.successes}
     assert successes_skus == {"SKU-OK"}
@@ -604,3 +605,32 @@ async def test_image_service_upload_records_sp_api_failure(monkeypatch):
     assert len(audit) == 1
     assert audit[0].sp_api_status == CatalogChangeStatus.FAILED.value
     assert audit[0].sp_api_error == "Image too big"
+
+
+@pytest.mark.asyncio
+async def test_image_service_delete_writes_audit_row(monkeypatch):
+    account = _account()
+    product = _product(asin="B0IMG00003", sku="SKU-IMG3")
+    session = FakeAsyncSession([])
+    svc = ImageService(db=session, user_id=uuid4())
+
+    async def _req(*_a, **_kw):
+        return account
+
+    async def _load_product(_self, _account_id, _asin):
+        return product
+
+    monkeypatch.setattr(svc, "_require_seller_account", _req)
+    monkeypatch.setattr(ImageService, "_load_product", _load_product)
+    monkeypatch.setattr(svc, "_delete_key", lambda _key: None)
+
+    key = f"catalog/{account.organization_id}/{account.id}/B0IMG00003/old.png"
+    result = await svc.delete_image(account.id, "B0IMG00003", key)
+
+    assert result == {"deleted": key, "amazon_listing_updated": False}
+    audit = [o for o in session.added if o.__class__.__name__ == "CatalogChangeLog"]
+    assert len(audit) == 1
+    assert audit[0].sp_api_status == CatalogChangeStatus.SUCCESS.value
+    assert audit[0].field == CatalogChangeField.IMAGE.value
+    assert audit[0].old_value["key"] == key
+    assert audit[0].new_value is None

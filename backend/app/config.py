@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     AWS_S3_REGION: str = "eu-south-1"
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
+    # Empty string means no ACL header — required for buckets with
+    # BlockPublicAccess enabled (default on new AWS accounts).
+    CATALOG_IMAGE_S3_ACL: str = "public-read"
 
     # SendGrid
     SENDGRID_API_KEY: Optional[str] = None

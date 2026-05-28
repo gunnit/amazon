@@ -86,15 +86,17 @@ class ImageService:
     ) -> str:
         ext = _ext_for(upload.content_type, upload.filename)
         key = f"{self._prefix(organization_id, account_id, asin)}/{uuid.uuid4().hex}{ext}"
+        put_kwargs: Dict[str, Any] = {
+            "Bucket": settings.AWS_S3_BUCKET,
+            "Key": key,
+            "Body": upload.data,
+            "ContentType": upload.content_type,
+            "CacheControl": "public, max-age=31536000, immutable",
+        }
+        if settings.CATALOG_IMAGE_S3_ACL:
+            put_kwargs["ACL"] = settings.CATALOG_IMAGE_S3_ACL
         try:
-            self._s3.put_object(
-                Bucket=settings.AWS_S3_BUCKET,
-                Key=key,
-                Body=upload.data,
-                ContentType=upload.content_type,
-                ACL="public-read",
-                CacheControl="public, max-age=31536000, immutable",
-            )
+            self._s3.put_object(**put_kwargs)
         except (BotoCoreError, ClientError) as exc:
             logger.exception("Failed to upload image to S3: %s", key)
             raise CatalogOperationError(f"S3 upload failed: {exc}") from exc
@@ -312,9 +314,39 @@ class ImageService:
         self.db.add(entry)
 
     async def delete_image(self, account_id: UUID, asin: str, key: str) -> Dict[str, Any]:
+        """Delete an image object from S3.
+
+        Does NOT re-patch the Amazon listing. The image stays visible on
+        Seller Central until the next ``upload_images(push_to_amazon=True)``
+        call rewrites the gallery.
+        """
         account = await self._require_seller_account(account_id)
         expected_prefix = self._prefix(account.organization_id, account_id, asin) + "/"
         if not key.startswith(expected_prefix):
             raise CatalogOperationError("Image key does not belong to this product")
-        self._delete_key(key)
-        return {"deleted": key}
+        product = await self._load_product(account_id, asin)
+
+        try:
+            self._delete_key(key)
+            status = CatalogChangeStatus.SUCCESS
+            error_message: Optional[str] = None
+        except CatalogOperationError as exc:
+            status = CatalogChangeStatus.FAILED
+            error_message = str(exc)
+
+        self._audit(
+            organization_id=account.organization_id,
+            account_id=account_id,
+            asin=asin,
+            sku=product.sku if product else None,
+            field=CatalogChangeField.IMAGE,
+            old_value={"key": key, "url": self._public_url(key)},
+            new_value=None,
+            status=status,
+            sp_api_error=error_message,
+        )
+        await self.db.flush()
+
+        if status == CatalogChangeStatus.FAILED:
+            raise CatalogOperationError(error_message or "S3 delete failed")
+        return {"deleted": key, "amazon_listing_updated": False}

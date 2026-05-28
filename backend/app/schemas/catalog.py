@@ -37,6 +37,7 @@ class BulkResult(BaseModel, Generic[T]):
     total: int
     succeeded: int
     failed: int
+    skipped: int = 0
     successes: List[T] = Field(default_factory=list)
     errors: List[BulkRowError] = Field(default_factory=list)
 

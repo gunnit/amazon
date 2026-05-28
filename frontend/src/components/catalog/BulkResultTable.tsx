@@ -43,6 +43,11 @@ export function BulkResultTable<T>({ result, t, successLabel }: Props<T>) {
         <Badge variant="destructive">
           {t('catalog.result.failed')}: {result.failed}
         </Badge>
+        {result.skipped ? (
+          <Badge variant="outline">
+            {t('catalog.result.skipped')}: {result.skipped}
+          </Badge>
+        ) : null}
         <span className="text-muted-foreground">
           {t('catalog.result.total', { n: result.total })}
         </span>
