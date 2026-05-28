@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Image as ImageIcon, Loader2, Star, Trash2, Upload, X } from 'lucide-react'
+import { AlertTriangle, Image as ImageIcon, Loader2, Star, Trash2, Upload, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -11,9 +11,14 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { imagesApi, type ProductImage } from '@/services/api'
+import { imagesApi, type ProductImage, type UploadImagesResponse } from '@/services/api'
 import { AccountPicker } from './AccountPicker'
+import { ConfirmDialog } from './ConfirmDialog'
 import type { TabProps } from './types'
+
+const ASIN_REGEX = /^[A-Z0-9]{10}$/
+const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+const MAX_BYTES = 10 * 1024 * 1024
 
 export function ImagesCard(props: TabProps) {
   const { accountId, toast, t } = props
@@ -23,10 +28,13 @@ export function ImagesCard(props: TabProps) {
   const [stagedFiles, setStagedFiles] = useState<File[]>([])
   const [mainIndex, setMainIndex] = useState<number>(0)
   const [pushToAmazon, setPushToAmazon] = useState(true)
-  const [lastResult, setLastResult] = useState<unknown>(null)
+  const [lastResult, setLastResult] = useState<UploadImagesResponse | null>(null)
+  const [fileErrors, setFileErrors] = useState<string[]>([])
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const canQuery = Boolean(accountId && asin)
+  const validAsin = ASIN_REGEX.test(asin)
+  const canQuery = Boolean(accountId && validAsin)
 
   const imagesQuery = useQuery({
     queryKey: ['catalog', 'images', accountId, asin],
@@ -53,13 +61,15 @@ export function ImagesCard(props: TabProps) {
         description: data.sp_api_error
           ? t('catalog.images.uploadedS3Only')
           : t('catalog.images.uploadedSuccess'),
+        variant: data.sp_api_error ? 'destructive' : 'default',
       })
       queryClient.invalidateQueries({ queryKey: ['catalog', 'images', accountId, asin] })
     },
     onError: (err: unknown) => {
-      const message = err && typeof err === 'object' && 'response' in err
-        ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
-        : 'Error'
+      const message =
+        err && typeof err === 'object' && 'response' in err
+          ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
+          : 'Error'
       toast({ variant: 'destructive', title: 'Error', description: String(message) })
     },
   })
@@ -70,17 +80,32 @@ export function ImagesCard(props: TabProps) {
       queryClient.invalidateQueries({ queryKey: ['catalog', 'images', accountId, asin] })
     },
     onError: (err: unknown) => {
-      const message = err && typeof err === 'object' && 'response' in err
-        ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
-        : 'Error'
+      const message =
+        err && typeof err === 'object' && 'response' in err
+          ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
+          : 'Error'
       toast({ variant: 'destructive', title: 'Error', description: String(message) })
     },
   })
 
   const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? [])
-    setStagedFiles(files)
+    const all = Array.from(event.target.files ?? [])
+    const errors: string[] = []
+    const accepted: File[] = []
+    for (const file of all) {
+      if (!ALLOWED_TYPES.has(file.type)) {
+        errors.push(`${file.name}: ${t('catalog.images.invalidType')}`)
+        continue
+      }
+      if (file.size > MAX_BYTES) {
+        errors.push(`${file.name}: ${t('catalog.images.tooLarge')}`)
+        continue
+      }
+      accepted.push(file)
+    }
+    setStagedFiles(accepted)
     setMainIndex(0)
+    setFileErrors(errors)
   }
 
   const removeStaged = (idx: number) => {
@@ -109,6 +134,9 @@ export function ImagesCard(props: TabProps) {
               value={asin}
               onChange={(e) => setAsin(e.target.value.trim().toUpperCase())}
             />
+            {asin && !validAsin && (
+              <p className="text-xs text-destructive mt-1">{t('catalog.prices.invalidAsin')}</p>
+            )}
           </div>
         </div>
 
@@ -121,6 +149,16 @@ export function ImagesCard(props: TabProps) {
             multiple
             onChange={handleFilesSelected}
           />
+          {fileErrors.length > 0 && (
+            <div className="text-xs text-destructive space-y-0.5">
+              {fileErrors.map((err, i) => (
+                <div key={i} className="flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  {err}
+                </div>
+              ))}
+            </div>
+          )}
           {stagedFiles.length > 0 && (
             <div className="grid gap-2 grid-cols-2 md:grid-cols-4">
               {stagedFiles.map((file, idx) => {
@@ -176,9 +214,15 @@ export function ImagesCard(props: TabProps) {
               {t('catalog.images.pushToAmazon')}
             </label>
             <Button
-              onClick={() => uploadMutation.mutate()}
+              onClick={() => {
+                if (pushToAmazon) {
+                  setConfirmOpen(true)
+                } else {
+                  uploadMutation.mutate()
+                }
+              }}
               disabled={
-                !accountId || !asin || stagedFiles.length === 0 || uploadMutation.isPending
+                !accountId || !validAsin || stagedFiles.length === 0 || uploadMutation.isPending
               }
             >
               {uploadMutation.isPending ? (
@@ -190,6 +234,32 @@ export function ImagesCard(props: TabProps) {
             </Button>
           </div>
         </div>
+
+        <ConfirmDialog
+          open={confirmOpen}
+          onOpenChange={setConfirmOpen}
+          title={t('catalog.images.confirmPushTitle')}
+          description={t('catalog.images.confirmPushBody', {
+            n: stagedFiles.length,
+            asin,
+          })}
+          confirmLabel={t('catalog.images.upload')}
+          cancelLabel={t('common.cancel')}
+          onConfirm={() => {
+            setConfirmOpen(false)
+            uploadMutation.mutate()
+          }}
+        />
+
+        {lastResult?.sp_api_error && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+            <div className="flex items-center gap-2 font-medium text-destructive">
+              <AlertTriangle className="h-4 w-4" />
+              {t('catalog.images.uploadedS3Only')}
+            </div>
+            <p className="text-xs mt-1">{lastResult.sp_api_error}</p>
+          </div>
+        )}
 
         <div>
           <p className="text-sm font-medium mb-2">{t('catalog.images.existing')}</p>
@@ -229,12 +299,6 @@ export function ImagesCard(props: TabProps) {
             </div>
           )}
         </div>
-
-        {lastResult !== null && (
-          <pre className="text-xs bg-muted rounded p-3 overflow-x-auto max-h-64">
-            {JSON.stringify(lastResult, null, 2)}
-          </pre>
-        )}
       </CardContent>
     </Card>
   )

@@ -11,7 +11,9 @@ import {
 } from '@/components/ui/card'
 import { catalogApi } from '@/services/api'
 import { AccountPicker } from './AccountPicker'
-import type { TabProps } from './types'
+import { BulkResultTable } from './BulkResultTable'
+import { ConfirmDialog } from './ConfirmDialog'
+import type { BulkListingUpdateResult, BulkResult, TabProps } from './types'
 
 export function BulkUpdateCard({
   onSuccess,
@@ -20,7 +22,8 @@ export function BulkUpdateCard({
   const { t, toast, accountId } = props
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
-  const [lastResult, setLastResult] = useState<Record<string, unknown> | null>(null)
+  const [lastResult, setLastResult] = useState<BulkResult<BulkListingUpdateResult> | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const downloadMutation = useMutation({
     mutationFn: () => catalogApi.downloadBulkTemplate(),
@@ -38,14 +41,25 @@ export function BulkUpdateCard({
     mutationFn: () => catalogApi.bulkUpdate({ account_id: accountId, file: file! }),
     onSuccess: (data) => {
       setLastResult(data)
-      toast({ title: t('catalog.bulk.successTitle'), description: t('catalog.bulk.successDesc') })
+      toast({
+        title: t('catalog.bulk.successTitle'),
+        description: t('catalog.result.successCount', {
+          succeeded: data.succeeded,
+          failed: data.failed,
+        }),
+      })
       onSuccess()
     },
     onError: (err: unknown) => {
-      const message = err && typeof err === 'object' && 'response' in err
-        ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
-        : 'Error'
-      toast({ variant: 'destructive', title: 'Error', description: String(message) })
+      const message =
+        err && typeof err === 'object' && 'response' in err
+          ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
+          : 'Error'
+      toast({
+        variant: 'destructive',
+        title: t('catalog.bulk.errorTitle'),
+        description: String(message),
+      })
     },
   })
 
@@ -79,7 +93,7 @@ export function BulkUpdateCard({
             {file ? file.name : t('catalog.bulk.selectFile')}
           </Button>
           <Button
-            onClick={() => uploadMutation.mutate()}
+            onClick={() => setConfirmOpen(true)}
             disabled={!file || !accountId || uploadMutation.isPending}
           >
             {uploadMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -87,11 +101,24 @@ export function BulkUpdateCard({
           </Button>
         </div>
 
-        {lastResult && (
-          <pre className="text-xs bg-muted rounded p-3 overflow-x-auto max-h-64">
-            {JSON.stringify(lastResult, null, 2)}
-          </pre>
-        )}
+        <ConfirmDialog
+          open={confirmOpen}
+          onOpenChange={setConfirmOpen}
+          title={t('catalog.bulk.confirmTitle')}
+          description={t('catalog.bulk.confirmBody', { name: file?.name ?? '' })}
+          confirmLabel={t('catalog.bulk.submit')}
+          cancelLabel={t('common.cancel')}
+          onConfirm={() => {
+            setConfirmOpen(false)
+            uploadMutation.mutate()
+          }}
+        />
+
+        <BulkResultTable<BulkListingUpdateResult>
+          result={lastResult}
+          t={t}
+          successLabel={(r) => `${r.sku} (${r.fields.join(', ')})`}
+        />
       </CardContent>
     </Card>
   )
