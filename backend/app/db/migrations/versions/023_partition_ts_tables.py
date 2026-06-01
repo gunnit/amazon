@@ -92,8 +92,8 @@ BEGIN
     CREATE INDEX IF NOT EXISTS ix_sales_data_account_id ON sales_data (account_id);
     CREATE INDEX IF NOT EXISTS ix_sales_data_date ON sales_data (date);
     CREATE INDEX IF NOT EXISTS ix_sales_data_asin ON sales_data (asin);
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_sales_data_account_date_asin
-        ON sales_data (account_id, date, asin);
+    ALTER TABLE sales_data
+        ADD CONSTRAINT uq_sales_data_account_date_asin UNIQUE (account_id, date, asin);
 END $$;
 """
 
@@ -149,8 +149,8 @@ BEGIN
 
     CREATE INDEX IF NOT EXISTS ix_advertising_metrics_campaign_id ON advertising_metrics (campaign_id);
     CREATE INDEX IF NOT EXISTS ix_advertising_metrics_date ON advertising_metrics (date);
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_ad_metrics_campaign_date
-        ON advertising_metrics (campaign_id, date);
+    ALTER TABLE advertising_metrics
+        ADD CONSTRAINT uq_ad_metrics_campaign_date UNIQUE (campaign_id, date);
 END $$;
 """
 
@@ -211,8 +211,8 @@ BEGIN
     CREATE INDEX IF NOT EXISTS ix_advertising_metrics_by_asin_campaign_id ON advertising_metrics_by_asin (campaign_id);
     CREATE INDEX IF NOT EXISTS ix_advertising_metrics_by_asin_asin ON advertising_metrics_by_asin (asin);
     CREATE INDEX IF NOT EXISTS ix_advertising_metrics_by_asin_date ON advertising_metrics_by_asin (date);
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_ad_asin_metrics_campaign_asin_date
-        ON advertising_metrics_by_asin (campaign_id, asin, date);
+    ALTER TABLE advertising_metrics_by_asin
+        ADD CONSTRAINT uq_ad_asin_metrics_campaign_asin_date UNIQUE (campaign_id, asin, date);
 END $$;
 """
 
@@ -268,8 +268,8 @@ BEGIN
 
     CREATE INDEX IF NOT EXISTS ix_bsr_history_product_id ON bsr_history (product_id);
     CREATE INDEX IF NOT EXISTS ix_bsr_history_date ON bsr_history (date);
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_bsr_product_date_category
-        ON bsr_history (product_id, date, category);
+    ALTER TABLE bsr_history
+        ADD CONSTRAINT uq_bsr_product_date_category UNIQUE (product_id, date, category);
 END $$;
 """
 
