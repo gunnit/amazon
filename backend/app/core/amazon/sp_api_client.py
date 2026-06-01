@@ -148,11 +148,6 @@ def with_throttle_retry(max_retries: int = 3, base_delay: float = 2.0):
                     if attempt == max_retries:
                         break
                     backoff = base_delay * (2 ** attempt)
-                except SellingApiException as e:
-                    raise AmazonAPIError(
-                        f"SP-API error on {func.__name__}: {e}",
-                        error_code=getattr(e, "code", None) or "SP_API_ERROR",
-                    ) from e
                     # Respect Retry-After header if present
                     headers = getattr(e, "headers", None) or {}
                     retry_after = headers.get("Retry-After") if isinstance(headers, dict) else None
@@ -168,6 +163,11 @@ def with_throttle_retry(max_retries: int = 3, base_delay: float = 2.0):
                         f"retrying in {backoff:.1f}s"
                     )
                     time.sleep(backoff)
+                except SellingApiException as e:
+                    raise AmazonAPIError(
+                        f"SP-API error on {func.__name__}: {e}",
+                        error_code=getattr(e, "code", None) or "SP_API_ERROR",
+                    ) from e
             raise AmazonAPIError(
                 f"SP-API throttled after {max_retries} retries on {func.__name__}: {last_exc}",
                 error_code="THROTTLED",

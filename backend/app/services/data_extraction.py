@@ -4,6 +4,7 @@ from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 from decimal import Decimal
+import asyncio
 import logging
 import time
 
@@ -41,6 +42,10 @@ VENDOR_SALES_FALLBACK_MESSAGE = (
 # Vendor sales data settles with a few days of lag; the current (incomplete)
 # reporting period is never requested.
 VENDOR_REPORT_LAG_DAYS = 4
+
+# Pause between months during a historical backfill to avoid throttling the
+# vendor sales report API with rapid back-to-back requests.
+VENDOR_BACKFILL_MONTH_PAUSE_SECONDS = 3.0
 
 
 def _settled_month_windows(start_date: date, end_date: date) -> List[tuple]:
@@ -657,32 +662,6 @@ class DataExtractionService:
 
         client = self._create_sp_api_client(account, organization)
 
-        # Clear existing vendor sales rows in the window before repopulating.
-        # The report (monthly, rows on the 1st) and the PO fallback (daily rows)
-        # use different date layouts, so without this a switch between sources —
-        # or a granularity change — would leave stale rows that double-count in
-        # dashboard totals. Align the floor to the first of the month so whole
-        # requested months are cleaned, not just from a mid-month start date.
-        clear_from = start_date.replace(day=1)
-        await self.db.execute(
-            delete(SalesData).where(
-                SalesData.account_id == account.id,
-                SalesData.date >= clear_from,
-                SalesData.date <= end_date,
-            )
-        )
-
-        # Returns are derived from the same report rows; clear the window first
-        # so an ASIN whose returns dropped to zero in a re-sync does not leave a
-        # stale row behind.
-        await self.db.execute(
-            delete(ReturnData).where(
-                ReturnData.account_id == account.id,
-                ReturnData.return_date >= clear_from,
-                ReturnData.return_date <= end_date,
-            )
-        )
-
         # Reset the fallback flag on every run so a successful report sync clears
         # the previous warning state.
         self.vendor_sales_used_po_fallback = False
@@ -706,6 +685,12 @@ class DataExtractionService:
                 }
 
         # Request the Vendor Sales report one settled calendar month at a time.
+        # Each month is handled fetch-first / replace-only-on-success: the report
+        # is fetched before any delete, and the month's existing rows are only
+        # cleared and repopulated once we actually hold fresh data. A failed or
+        # empty fetch (FATAL, deprecated, not-yet-settled, throttle-exhausted) is
+        # logged and skipped, leaving the existing rows for that month intact so a
+        # transient Amazon error can never wipe a populated month.
         count = 0
         months = _settled_month_windows(start_date, end_date)
         report_rows_seen = False
@@ -715,15 +700,45 @@ class DataExtractionService:
                 report = client.get_vendor_sales_report(month_start, month_end)
             except AmazonAPIError as exc:
                 # A single month failing (e.g. not yet settled, or no data) must
-                # not abort the others; only an all-months failure triggers the
-                # PO fallback below.
+                # not abort the others, and must not delete that month's rows;
+                # only an all-months failure triggers the PO fallback below.
                 logger.warning(
-                    "Vendor sales report unavailable for %s %s..%s: %s",
+                    "Vendor sales report unavailable for %s %s..%s, leaving existing rows untouched: %s",
                     account.account_name, month_start, month_end, exc,
                 )
                 continue
 
             sales_by_asin = report.get("salesByAsin", []) or []
+            if not sales_by_asin:
+                # No data for the month: do not delete; a previously populated
+                # month must survive an empty re-fetch.
+                logger.warning(
+                    "Vendor sales report returned no salesByAsin for %s %s..%s, leaving existing rows untouched",
+                    account.account_name, month_start, month_end,
+                )
+                continue
+
+            # We have fresh data for this month — replace its rows atomically.
+            # Align the floor to the first of the month so the whole settled
+            # month is cleaned, then repopulated from the report below.
+            await self.db.execute(
+                delete(SalesData).where(
+                    SalesData.account_id == account.id,
+                    SalesData.date >= month_start,
+                    SalesData.date <= month_end,
+                )
+            )
+            # Returns are derived from the same report rows; clear the same
+            # window so an ASIN whose returns dropped to zero in a re-sync does
+            # not leave a stale row behind.
+            await self.db.execute(
+                delete(ReturnData).where(
+                    ReturnData.account_id == account.id,
+                    ReturnData.return_date >= month_start,
+                    ReturnData.return_date <= month_end,
+                )
+            )
+
             for entry in sales_by_asin:
                 asin = entry.get("asin")
                 entry_date_str = entry.get("startDate")
@@ -800,7 +815,17 @@ class DataExtractionService:
             # multiple POs can contain the same ASIN on the same day.
             # NOTE: netCost is the vendor's per-unit cost, not Amazon's shipped
             # revenue to customers. Treat downstream totals as estimated.
-            orders = client.get_vendor_purchase_orders(start_date, end_date)
+            try:
+                orders = client.get_vendor_purchase_orders(start_date, end_date)
+            except AmazonAPIError as exc:
+                # PO fetch failed too: leave any existing rows in place rather
+                # than wiping the window with nothing to replace it.
+                logger.warning(
+                    "Vendor purchase-order fallback unavailable for %s %s..%s, "
+                    "leaving existing rows untouched: %s",
+                    account.account_name, start_date, end_date, exc,
+                )
+                orders = []
             aggregated: Dict[tuple, dict] = {}
 
             for order in orders:
@@ -842,6 +867,29 @@ class DataExtractionService:
                             "total_order_items": qty,
                             "currency": currency,
                         }
+
+            if aggregated:
+                # Only now that we hold fresh PO data do we clear the window and
+                # repopulate, so a re-sync replaces rather than double-counts and
+                # an empty fallback never wipes existing rows. The report
+                # (monthly) and PO fallback (daily) use different date layouts,
+                # so clearing the whole window prevents stale rows from a prior
+                # source lingering. Align the floor to the first of the month.
+                clear_from = start_date.replace(day=1)
+                await self.db.execute(
+                    delete(SalesData).where(
+                        SalesData.account_id == account.id,
+                        SalesData.date >= clear_from,
+                        SalesData.date <= end_date,
+                    )
+                )
+                await self.db.execute(
+                    delete(ReturnData).where(
+                        ReturnData.account_id == account.id,
+                        ReturnData.return_date >= clear_from,
+                        ReturnData.return_date <= end_date,
+                    )
+                )
 
             for values in aggregated.values():
                 await self._upsert_sales_record(values)
@@ -896,7 +944,11 @@ class DataExtractionService:
         untouched."""
         months = _settled_month_windows(start_date, end_date)
         total = 0
-        for month_start, month_end in months:
+        for index, (month_start, month_end) in enumerate(months):
+            if index > 0:
+                # Pause between months so a long historical backfill does not
+                # hammer Amazon's report API and trigger throttling.
+                await asyncio.sleep(VENDOR_BACKFILL_MONTH_PAUSE_SECONDS)
             count = await self.sync_vendor_sales_data(
                 account, organization, month_start, month_end
             )
