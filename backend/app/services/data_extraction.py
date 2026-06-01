@@ -8,7 +8,7 @@ import logging
 import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.amazon_account import AmazonAccount, SyncStatus
@@ -672,6 +672,17 @@ class DataExtractionService:
             )
         )
 
+        # Returns are derived from the same report rows; clear the window first
+        # so an ASIN whose returns dropped to zero in a re-sync does not leave a
+        # stale row behind.
+        await self.db.execute(
+            delete(ReturnData).where(
+                ReturnData.account_id == account.id,
+                ReturnData.return_date >= clear_from,
+                ReturnData.return_date <= end_date,
+            )
+        )
+
         # Reset the fallback flag on every run so a successful report sync clears
         # the previous warning state.
         self.vendor_sales_used_po_fallback = False
@@ -742,6 +753,25 @@ class DataExtractionService:
                 })
                 count += 1
                 report_rows_seen = True
+
+                # The vendor sales report carries returned units per ASIN per
+                # month in the same row. Persist them to returns_data so the
+                # returns analytics endpoint can aggregate real vendor returns.
+                # The report does not expose return reasons, so reason/disposition
+                # stay null. Skip zero-return ASINs to avoid empty noise rows.
+                returned_units = self._parse_int(entry.get("customerReturns"))
+                if returned_units > 0:
+                    await self._upsert_return_record({
+                        "account_id": account.id,
+                        "amazon_order_id": None,
+                        "asin": asin,
+                        "sku": None,
+                        "return_date": entry_date,
+                        "quantity": returned_units,
+                        "reason": None,
+                        "disposition": None,
+                        "detailed_disposition": None,
+                    })
 
             # Use Amazon's own period aggregate for the daily-total sentinel so
             # the dashboard total matches the report (no per-ASIN re-summing).
@@ -975,17 +1005,22 @@ class DataExtractionService:
 
     async def _upsert_return_record(self, values: dict) -> None:
         """Insert or update a return event using a stable event identity."""
+        # The COALESCE fallbacks must be inlined SQL literals (not bind params)
+        # so the ON CONFLICT inference matches the uq_returns_data_account_event
+        # expression index; a bound '' renders as a parameter that Postgres will
+        # not match against the index expression.
+        empty = text("''")
         stmt = pg_insert(ReturnData).values(**values)
         stmt = stmt.on_conflict_do_update(
             index_elements=[
                 ReturnData.account_id,
                 ReturnData.return_date,
-                func.coalesce(ReturnData.amazon_order_id, ""),
-                func.coalesce(ReturnData.asin, ""),
-                func.coalesce(ReturnData.sku, ""),
-                func.coalesce(ReturnData.reason, ""),
-                func.coalesce(ReturnData.disposition, ""),
-                func.coalesce(ReturnData.detailed_disposition, ""),
+                func.coalesce(ReturnData.amazon_order_id, empty),
+                func.coalesce(ReturnData.asin, empty),
+                func.coalesce(ReturnData.sku, empty),
+                func.coalesce(ReturnData.reason, empty),
+                func.coalesce(ReturnData.disposition, empty),
+                func.coalesce(ReturnData.detailed_disposition, empty),
             ],
             set_={
                 "quantity": stmt.excluded.quantity,
