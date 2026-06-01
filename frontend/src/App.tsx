@@ -6,6 +6,8 @@ import Layout from '@/components/Layout'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
+import ForgotPassword from '@/pages/ForgotPassword'
+import ResetPassword from '@/pages/ResetPassword'
 import Dashboard from '@/pages/Dashboard'
 import Reports from '@/pages/Reports'
 import Analytics from '@/pages/Analytics'
@@ -81,6 +83,12 @@ function App() {
         } />
         <Route path="/register" element={
           isAuthenticated ? <Navigate to="/" replace /> : <Register />
+        } />
+        <Route path="/forgot-password" element={
+          isAuthenticated ? <Navigate to="/" replace /> : <ForgotPassword />
+        } />
+        <Route path="/reset-password" element={
+          isAuthenticated ? <Navigate to="/" replace /> : <ResetPassword />
         } />
 
         <Route path="/" element={

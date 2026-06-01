@@ -11,14 +11,18 @@ from app.models.user import User, Organization, OrganizationMember, UserRole
 from app.schemas.user import (
     UserCreate, UserUpdate, UserResponse, UserLogin, Token,
     PasswordChange, NotificationPreferences,
+    ForgotPasswordRequest, ResetPasswordRequest,
     OrganizationCreate, OrganizationResponse,
     OrganizationApiKeysUpdate, OrganizationApiKeysResponse,
 )
 from app.core.security import (
     verify_password, get_password_hash,
     create_access_token, create_refresh_token, decode_token,
+    create_password_reset_token,
     encrypt_value, decrypt_value,
 )
+from app.config import settings
+from app.services.notification_service import NotificationService
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 
 router = APIRouter()
@@ -128,6 +132,67 @@ async def refresh_token(refresh_token: str, db: DbSession):
         refresh_token=new_refresh_token,
         token_type="bearer"
     )
+
+
+@router.post("/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest, db: DbSession):
+    """Request a password reset link. Always returns 200 to avoid user enumeration."""
+    result = await db.execute(select(User).where(User.email == request.email))
+    user = result.scalar_one_or_none()
+
+    if user and user.is_active:
+        token = create_password_reset_token(user.id)
+        reset_link = f"{settings.APP_FRONTEND_URL}/reset-password?token={token}"
+        html_content = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif;">
+            <h2 style="color: #4472C4;">Reset your password</h2>
+            <p>We received a request to reset your Inthezon password.
+            Click the link below to choose a new one. This link expires in 30 minutes.</p>
+            <p><a href="{reset_link}"
+                style="display: inline-block; padding: 10px 18px; background-color: #4472C4;
+                color: white; text-decoration: none; border-radius: 4px;">Reset password</a></p>
+            <p style="color: #666; font-size: 12px;">
+                If you didn't request this, you can safely ignore this email.
+            </p>
+        </body>
+        </html>
+        """
+        service = NotificationService(settings.SENDGRID_API_KEY)
+        await service.send_email(
+            to_emails=[user.email],
+            subject="Reset your Inthezon password",
+            html_content=html_content,
+            from_email=settings.SENDGRID_FROM_EMAIL,
+        )
+
+    return {"message": "If an account exists for that email, a reset link has been sent."}
+
+
+@router.post("/reset-password")
+async def reset_password(request: ResetPasswordRequest, db: DbSession):
+    """Reset a password using a valid reset token."""
+    payload = decode_token(request.token)
+
+    if payload is None or payload.get("type") != "password_reset":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
+    user_id = payload.get("sub")
+    result = await db.execute(select(User).where(User.id == UUID(user_id)))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
+    user.hashed_password = get_password_hash(request.new_password)
+    await db.flush()
+    return {"message": "Password has been reset successfully"}
 
 
 @router.get("/me", response_model=UserResponse)
