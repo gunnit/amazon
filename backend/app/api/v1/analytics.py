@@ -839,22 +839,61 @@ async def get_returns_analysis(
         ).scalar()
         or 0
     )
+
+    sales_filters = [
+        SalesData.account_id.in_(accounts_query),
+        SalesData.asin != DAILY_TOTAL_ASIN,
+    ]
+    if date_from:
+        sales_filters.append(SalesData.date >= date_from)
+    if date_to:
+        sales_filters.append(SalesData.date <= date_to)
+    if asin:
+        sales_filters.append(SalesData.asin == asin)
+
+    # Vendor accounts have no Order/OrderItem rows; their sold units live in
+    # sales_data.units_ordered. Fall back to that denominator whenever the
+    # order-based source yields nothing for the scope.
+    use_sales_denominator = ordered_units_total == 0
+    if use_sales_denominator:
+        ordered_units_total = int(
+            (
+                await db.execute(
+                    select(func.sum(SalesData.units_ordered)).where(*sales_filters)
+                )
+            ).scalar()
+            or 0
+        )
+
     return_rate_available = ordered_units_total > 0
 
-    order_day_expr = cast(func.date_trunc("day", Order.purchase_date), Date)
-    ordered_trend_rows = (
-        await db.execute(
-            select(
-                order_day_expr.label("period_date"),
-                func.sum(OrderItem.quantity).label("ordered_units"),
+    if use_sales_denominator:
+        ordered_trend_rows = (
+            await db.execute(
+                select(
+                    SalesData.date.label("period_date"),
+                    func.sum(SalesData.units_ordered).label("ordered_units"),
+                )
+                .where(*sales_filters)
+                .group_by(SalesData.date)
+                .order_by(SalesData.date)
             )
-            .select_from(OrderItem)
-            .join(Order, Order.id == OrderItem.order_id)
-            .where(*order_filters)
-            .group_by(order_day_expr)
-            .order_by(order_day_expr)
-        )
-    ).all()
+        ).all()
+    else:
+        order_day_expr = cast(func.date_trunc("day", Order.purchase_date), Date)
+        ordered_trend_rows = (
+            await db.execute(
+                select(
+                    order_day_expr.label("period_date"),
+                    func.sum(OrderItem.quantity).label("ordered_units"),
+                )
+                .select_from(OrderItem)
+                .join(Order, Order.id == OrderItem.order_id)
+                .where(*order_filters)
+                .group_by(order_day_expr)
+                .order_by(order_day_expr)
+            )
+        ).all()
     ordered_units_by_date = {
         row.period_date: int(row.ordered_units or 0)
         for row in ordered_trend_rows
@@ -876,23 +915,35 @@ async def get_returns_analysis(
     return_asins = [row.asin for row in returns_asin_rows if row.asin]
     ordered_units_by_asin: dict[str, int] = {}
     if return_asins:
-        ordered_asin_rows = (
-            await db.execute(
-                select(
-                    OrderItem.asin,
-                    func.sum(OrderItem.quantity).label("ordered_units"),
+        if use_sales_denominator:
+            ordered_asin_rows = (
+                await db.execute(
+                    select(
+                        SalesData.asin,
+                        func.sum(SalesData.units_ordered).label("ordered_units"),
+                    )
+                    .where(*sales_filters, SalesData.asin.in_(return_asins))
+                    .group_by(SalesData.asin)
                 )
-                .select_from(OrderItem)
-                .join(Order, Order.id == OrderItem.order_id)
-                .where(
-                    *order_filters,
-                    OrderItem.asin.is_not(None),
-                    OrderItem.asin != "",
-                    OrderItem.asin.in_(return_asins),
+            ).all()
+        else:
+            ordered_asin_rows = (
+                await db.execute(
+                    select(
+                        OrderItem.asin,
+                        func.sum(OrderItem.quantity).label("ordered_units"),
+                    )
+                    .select_from(OrderItem)
+                    .join(Order, Order.id == OrderItem.order_id)
+                    .where(
+                        *order_filters,
+                        OrderItem.asin.is_not(None),
+                        OrderItem.asin != "",
+                        OrderItem.asin.in_(return_asins),
+                    )
+                    .group_by(OrderItem.asin)
                 )
-                .group_by(OrderItem.asin)
-            )
-        ).all()
+            ).all()
         ordered_units_by_asin = {
             row.asin: int(row.ordered_units or 0)
             for row in ordered_asin_rows

@@ -185,6 +185,8 @@ const en: Record<string, string> = {
   'dashboard.unitsEmptyDesc': 'Connect an account or wait for the next data refresh to see unit volume.',
   'dashboard.accountUnitsEmptyTitle': 'No unit data for this account in the selected period.',
   'dashboard.accountUnitsEmptyDesc': 'Try a wider date range or return to the all-accounts overview to compare {accountName}.',
+  'dashboard.kpiLoadError': "Couldn't load performance metrics.",
+  'dashboard.kpiLoadErrorDesc': 'Something went wrong fetching your KPIs. Refresh the page or try again in a moment.',
   'dashboard.vendorDataNoteTitle': 'Monthly vendor data',
   'dashboard.vendorDataNote': 'Vendor data is monthly and only updates once a month has closed (~4-day lag). Recent periods may show 0 until Amazon settles the month.',
   'dashboard.accounts': 'Accounts',

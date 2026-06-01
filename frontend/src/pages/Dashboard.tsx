@@ -15,6 +15,7 @@ import {
   Megaphone,
   Target,
   Info,
+  AlertCircle,
 } from 'lucide-react'
 import {
   LineChart,
@@ -28,6 +29,7 @@ import {
   Area,
 } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { analyticsApi, accountsApi } from '@/services/api'
@@ -57,6 +59,7 @@ function KPICard({
   trend,
   icon: Icon,
   format = 'number',
+  currency = 'EUR',
   emphasis = 'secondary',
   className,
 }: {
@@ -66,56 +69,68 @@ function KPICard({
   trend?: 'up' | 'down' | 'stable'
   icon: React.ElementType
   format?: 'number' | 'currency' | 'percent'
+  currency?: string
   emphasis?: 'primary' | 'secondary'
   className?: string
 }) {
   const { t } = useTranslation()
   const formattedValue =
     format === 'currency'
-      ? formatCurrency(value)
+      ? formatCurrency(value, currency)
       : format === 'percent'
       ? `${value.toFixed(1)}%`
       : formatNumber(value)
 
+  const isPrimary = emphasis === 'primary'
+
   return (
     <Card
       className={cn(
-        emphasis === 'primary'
-          ? "border-border/70"
+        isPrimary
+          ? "relative overflow-hidden border-0 bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 text-white shadow-md"
           : "border-border/60",
         className
       )}
     >
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+      {isPrimary && (
+        <div className="pointer-events-none absolute -right-12 -top-16 h-48 w-48 rounded-full bg-white/5 blur-3xl" />
+      )}
+      <CardHeader className="relative flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle
           className={cn(
             "uppercase tracking-wide",
-            emphasis === 'primary'
-              ? "text-xs font-semibold text-foreground"
+            isPrimary
+              ? "text-xs font-semibold text-white/70"
               : "text-[11px] font-medium text-muted-foreground"
           )}
         >
           {title}
         </CardTitle>
-        <Icon className="h-3.5 w-3.5 text-muted-foreground/70" />
+        <Icon className={cn("h-3.5 w-3.5", isPrimary ? "text-white/40" : "text-muted-foreground/70")} />
       </CardHeader>
-      <CardContent>
-        <div className={cn(emphasis === 'primary' ? "text-3xl font-semibold" : "text-2xl font-semibold")}>
+      <CardContent className="relative">
+        <div className={cn(isPrimary ? "text-3xl font-semibold" : "text-2xl font-semibold")}>
           {formattedValue}
         </div>
         {change !== null && change !== undefined && (
-          <div className="flex items-center text-xs text-muted-foreground mt-2">
+          <div className={cn("flex items-center text-xs mt-2", isPrimary ? "text-white/60" : "text-muted-foreground")}>
             {trend === 'up' ? (
-              <TrendingUp className="h-3 w-3 mr-1 text-emerald-500" />
+              <TrendingUp className={cn("h-3 w-3 mr-1", isPrimary ? "text-emerald-400" : "text-emerald-500")} />
             ) : trend === 'down' ? (
-              <TrendingDown className="h-3 w-3 mr-1 text-rose-500" />
+              <TrendingDown className={cn("h-3 w-3 mr-1", isPrimary ? "text-rose-400" : "text-rose-500")} />
             ) : null}
             <span
-              className={trend === 'up' ? 'text-emerald-500' : trend === 'down' ? 'text-rose-500' : ''}
+              className={cn(
+                trend === 'up'
+                  ? isPrimary ? 'text-emerald-400' : 'text-emerald-500'
+                  : trend === 'down'
+                  ? isPrimary ? 'text-rose-400' : 'text-rose-500'
+                  : ''
+              )}
             >
               {formatPercent(change)}
             </span>
-            <span className="ml-1">{t('common.vsPreviousPeriod')}</span>
+            <span className={cn("ml-1", isPrimary && "text-white/50")}>{t('common.vsPreviousPeriod')}</span>
           </div>
         )}
       </CardContent>
@@ -340,7 +355,7 @@ export default function Dashboard() {
     return vendors.some((v) => effectiveAccountIds.includes(v.id))
   })()
 
-  const { data: kpis, isLoading: kpisLoading } = useQuery<DashboardKPIs>({
+  const { data: kpis, isLoading: kpisLoading, isError: kpisError } = useQuery<DashboardKPIs>({
     queryKey: ['dashboard-kpis', dateRange, effectiveAccountIds],
     queryFn: () => analyticsApi.getDashboard({
       start_date: dateRange.start,
@@ -447,6 +462,14 @@ export default function Dashboard() {
   const revenueTrend = trends?.find((t) => t.metric_name === 'revenue')
   const unitsTrend = trends?.find((t) => t.metric_name === 'units')
 
+  const currency = kpis?.currency || 'EUR'
+  const compactCurrency = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  })
+
   const days = datePreset === 'custom' ? t('common.selectedPeriod') : t('common.lastNDays', { n: datePreset })
   const revenueTrendDescription =
     scope.mode === 'account'
@@ -471,40 +494,66 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      {scope.mode === 'account' && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/30 px-4 py-3">
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted-foreground">{t('dashboard.breadcrumbOverview')}</span>
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-            <span className="font-medium text-foreground">{scope.accountName}</span>
-            <Badge variant="outline">{scope.marketplace}</Badge>
-            <Badge variant="secondary">{t('dashboard.scopedToSingleAccount')}</Badge>
-            <ScopeStatusBadge status={scope.status} />
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleExitAccountView}
-            className="gap-1.5"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            {t('dashboard.backToOverview')}
-          </Button>
-        </div>
-      )}
-
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
+      {/* Branded hero header — mirrors the login brand panel */}
+      <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 px-6 py-6 text-white shadow-sm">
+        <div className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-white/5 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-28 -left-16 h-72 w-72 rounded-full bg-indigo-400/10 blur-3xl" />
+        <div className="relative space-y-4">
           {scope.mode === 'account' && (
-            <p className="text-sm font-medium text-muted-foreground">{t('dashboard.title')}</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm text-white/70">
+                <span>{t('dashboard.breadcrumbOverview')}</span>
+                <ChevronRight className="h-4 w-4 text-white/40" />
+                <span className="font-medium text-white">{scope.accountName}</span>
+                <Badge variant="outline" className="border-white/30 text-white">
+                  {scope.marketplace}
+                </Badge>
+                <ScopeStatusBadge status={scope.status} />
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleExitAccountView}
+                className="gap-1.5 text-white/80 hover:bg-white/10 hover:text-white"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                {t('dashboard.backToOverview')}
+              </Button>
+            </div>
           )}
-          <h1 className="text-3xl font-bold tracking-tight">
-            {scope.mode === 'account' ? scope.accountName : t('dashboard.title')}
-          </h1>
-          <p className="text-muted-foreground">
-            {headerSubtitle}
-          </p>
+
+          <div>
+            {scope.mode === 'account' && (
+              <p className="text-sm font-medium text-white/60">{t('dashboard.title')}</p>
+            )}
+            <h1 className="text-3xl font-bold tracking-tight">
+              {scope.mode === 'account' ? scope.accountName : t('dashboard.title')}
+            </h1>
+            <p className="mt-1 text-white/70">{headerSubtitle}</p>
+          </div>
+
+          {scope.mode !== 'account' && (
+            <div className="flex flex-wrap gap-2">
+              <Badge className="border-white/20 bg-white/10 text-white hover:bg-white/15">
+                {accountSummary?.active_accounts || 0} {t('dashboard.activeAccounts')}
+              </Badge>
+              {accountSummary?.syncing_accounts ? (
+                <Badge className="border-white/20 bg-white/10 text-white hover:bg-white/15">
+                  {accountSummary.syncing_accounts} {t('dashboard.syncing')}
+                </Badge>
+              ) : null}
+              {accountSummary?.error_accounts ? (
+                <Badge className="border-rose-300/30 bg-rose-500/20 text-rose-100 hover:bg-rose-500/25">
+                  {accountSummary.error_accounts} {t('dashboard.errors')}
+                </Badge>
+              ) : null}
+            </div>
+          )}
         </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex justify-end">
         <FilterBar onReset={handleReset}>
           <DateRangeFilter />
           {scope.mode === 'account' ? (
@@ -521,25 +570,6 @@ export default function Dashboard() {
         </FilterBar>
       </div>
 
-      {/* Account Status */}
-      {scope.mode !== 'account' && (
-        <div className="flex gap-4 flex-wrap">
-          <Badge variant="success" className="text-sm py-1 px-3">
-            {accountSummary?.active_accounts || 0} {t('dashboard.activeAccounts')}
-          </Badge>
-          {accountSummary?.syncing_accounts ? (
-            <Badge variant="secondary" className="text-sm py-1 px-3">
-              {accountSummary.syncing_accounts} {t('dashboard.syncing')}
-            </Badge>
-          ) : null}
-          {accountSummary?.error_accounts ? (
-            <Badge variant="destructive" className="text-sm py-1 px-3">
-              {accountSummary.error_accounts} {t('dashboard.errors')}
-            </Badge>
-          ) : null}
-        </div>
-      )}
-
       {/* Vendor settlement-lag note */}
       {vendorSelected && (
         <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/30 px-4 py-3 text-sm">
@@ -552,6 +582,14 @@ export default function Dashboard() {
       )}
 
       {/* KPI Cards */}
+      {kpisError ? (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>{t('dashboard.kpiLoadError')}</AlertTitle>
+          <AlertDescription>{t('dashboard.kpiLoadErrorDesc')}</AlertDescription>
+        </Alert>
+      ) : (
+      <>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <KPICard
           title={t('dashboard.totalRevenue')}
@@ -560,6 +598,7 @@ export default function Dashboard() {
           trend={kpis?.total_revenue.trend}
           icon={DollarSign}
           format="currency"
+          currency={currency}
           emphasis="primary"
           className="md:col-span-2"
         />
@@ -589,6 +628,7 @@ export default function Dashboard() {
             trend={kpis?.total_ad_spend.trend}
             icon={DollarSign}
             format="currency"
+            currency={currency}
           />
           <KPICard
             title="ROAS"
@@ -607,6 +647,8 @@ export default function Dashboard() {
             format="percent"
           />
         </div>
+      )}
+      </>
       )}
 
       <PeriodComparisonCard
@@ -634,9 +676,9 @@ export default function Dashboard() {
                       dataKey="date"
                       tickFormatter={(value) => new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     />
-                    <YAxis tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`} />
+                    <YAxis tickFormatter={(value) => compactCurrency.format(value)} />
                     <Tooltip
-                      formatter={(value: number) => [formatCurrency(value), t('common.revenue')]}
+                      formatter={(value: number) => [formatCurrency(value, currency), t('common.revenue')]}
                       labelFormatter={(label) => new Date(label + 'T00:00:00').toLocaleDateString()}
                     />
                     <Area

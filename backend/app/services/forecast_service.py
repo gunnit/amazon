@@ -21,6 +21,11 @@ class ForecastService:
     MIN_RELIABLE_HISTORY_DAYS = 28
     RECOMMENDED_HISTORY_DAYS = 90
 
+    # Minimum number of distinct data points (periods) required regardless of
+    # cadence. Vendor sales arrive as one row per month, so calendar-day gates
+    # would reject years of valid monthly history; gate on periods instead.
+    MIN_HISTORY_POINTS = 12
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -32,57 +37,74 @@ class ForecastService:
         model: str = "prophet",
     ) -> Forecast:
         """Generate a sales forecast using the specified model."""
-        historical_data = await self._get_historical_data(account_id, asin, days=90)
+        # Pull the full available span (no calendar cutoff) so monthly vendor
+        # series with years of history are not discarded by a rolling window.
+        historical_data = await self._get_historical_data(account_id, asin)
 
-        # Product-level series are often sparse in the most recent 90 days even when
-        # the account has enough older data to build a forecast.
-        if asin and len(historical_data) < self.MIN_HISTORY_DAYS:
-            historical_data = await self._get_historical_data(account_id, asin, days=365)
-
-        if len(historical_data) < self.MIN_HISTORY_DAYS:
+        if not self._has_sufficient_history(historical_data):
             raise ValueError(
                 f"Insufficient historical data for forecasting "
-                f"(need at least {self.MIN_HISTORY_DAYS} days)"
+                f"(need at least {self.MIN_HISTORY_POINTS} data points)"
             )
 
-        # Fill date gaps with zeros for a continuous time series
-        historical_data = self._fill_date_gaps(historical_data)
-        n_days = len(historical_data)
+        cadence = self._detect_cadence(historical_data)
 
-        # Choose strategy based on data availability
-        strategy = self._choose_strategy(n_days)
-        chosen_model = strategy["model"] if model == "prophet" else model
-
-        # Cap horizon: strict cap for Prophet, relaxed for simple model
-        max_horizon = strategy["max_horizon"]
-        effective_horizon = min(horizon_days, max_horizon)
-        # Simple model (weighted averages) can safely predict up to 90 days
-        simple_horizon = min(horizon_days, 90)
-
-        logger.info(
-            f"Forecast strategy: {strategy['label']} | "
-            f"{n_days} data points | model={chosen_model} | "
-            f"horizon={effective_horizon}d (requested {horizon_days}d)"
-        )
-
-        if chosen_model == "prophet":
-            predictions = await self._prophet_forecast(
-                historical_data, effective_horizon, strategy,
-                fallback_horizon=simple_horizon,
+        if cadence == "monthly":
+            # Keep the monthly series intact; daily gap-filling would bury the
+            # signal under thousands of zeros and break the model.
+            n_points = len(historical_data)
+            strategy = self._choose_monthly_strategy(n_points)
+            chosen_model = strategy["model"]
+            horizon_months = max(1, round(horizon_days / 30))
+            logger.info(
+                f"Forecast strategy: {strategy['label']} | {n_points} monthly points | "
+                f"model={chosen_model} | horizon={horizon_months}mo (requested {horizon_days}d)"
             )
+            predictions = self._monthly_forecast(historical_data, horizon_months)
+            mape, rmse = self._monthly_metrics(historical_data)
+            confidence_level = self._determine_confidence_level(
+                mape, n_points=n_points, values=[d["value"] for d in historical_data]
+            )
+            data_quality_notes = self._build_monthly_quality_notes(historical_data, mape)
+            # Predictions are calendar months (see quality note), but the stored
+            # horizon mirrors the requested span so the UI label stays meaningful.
+            horizon_days_stored = horizon_days
         else:
-            predictions = self._simple_forecast(historical_data, simple_horizon)
+            # Daily cadence: fill gaps for a continuous series, then use Prophet.
+            historical_data = self._fill_date_gaps(historical_data)
+            n_days = len(historical_data)
 
-        # Metrics via holdout validation
-        mape, rmse = await self._calculate_metrics(historical_data, chosen_model, strategy)
-        confidence_level = self._determine_confidence_level(mape)
-        data_quality_notes = self._build_data_quality_notes(historical_data, strategy, mape)
+            strategy = self._choose_strategy(n_days)
+            chosen_model = strategy["model"] if model == "prophet" else model
+
+            max_horizon = strategy["max_horizon"]
+            effective_horizon = min(horizon_days, max_horizon)
+            simple_horizon = min(horizon_days, 90)
+
+            logger.info(
+                f"Forecast strategy: {strategy['label']} | "
+                f"{n_days} data points | model={chosen_model} | "
+                f"horizon={effective_horizon}d (requested {horizon_days}d)"
+            )
+
+            if chosen_model == "prophet":
+                predictions = await self._prophet_forecast(
+                    historical_data, effective_horizon, strategy,
+                    fallback_horizon=simple_horizon,
+                )
+            else:
+                predictions = self._simple_forecast(historical_data, simple_horizon)
+
+            mape, rmse = await self._calculate_metrics(historical_data, chosen_model, strategy)
+            confidence_level = self._determine_confidence_level(mape)
+            data_quality_notes = self._build_data_quality_notes(historical_data, strategy, mape)
+            horizon_days_stored = len(predictions)
 
         forecast = Forecast(
             account_id=account_id,
             asin=asin,
             forecast_type="sales",
-            forecast_horizon_days=len(predictions),
+            forecast_horizon_days=horizon_days_stored,
             model_used=chosen_model,
             confidence_interval=0.95,
             predictions=predictions,
@@ -141,6 +163,122 @@ class ForecastService:
         }
 
     # ------------------------------------------------------------------
+    # Monthly (vendor) forecast
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _choose_monthly_strategy(n_points: int) -> Dict[str, Any]:
+        """Strategy for monthly vendor series. Daily Prophet is unsuitable here;
+        a seasonal monthly average with trend keeps predictions coherent."""
+        if n_points >= 24:
+            return {"label": "monthly_full", "model": "monthly", "use_seasonality": True}
+        return {"label": "monthly_limited", "model": "monthly", "use_seasonality": False}
+
+    @staticmethod
+    def _add_month(d: date, months: int) -> date:
+        """Return the first day of the month ``months`` after ``d``'s month."""
+        month_index = (d.year * 12 + (d.month - 1)) + months
+        return date(month_index // 12, month_index % 12 + 1, 1)
+
+    def _monthly_forecast(
+        self,
+        historical_data: List[Dict],
+        horizon_months: int,
+    ) -> List[Dict]:
+        """Forecast a monthly series via month-of-year seasonal averages with a
+        damped level adjustment. Predictions stay in the ballpark of recent
+        monthly sales and never go negative."""
+        # Normalize to one value per calendar month (last 24 months matter most).
+        by_month: Dict[date, float] = {}
+        for d in historical_data:
+            key = date(d["date"].year, d["date"].month, 1)
+            by_month[key] = by_month.get(key, 0.0) + d["value"]
+        months_sorted = sorted(by_month)
+        recent = months_sorted[-24:]
+
+        moy_values: Dict[int, List[float]] = {m: [] for m in range(1, 13)}
+        for key in recent:
+            moy_values[key.month].append(by_month[key])
+        moy_avg = {
+            m: (sum(v) / len(v) if v else None) for m, v in moy_values.items()
+        }
+        overall_avg = sum(by_month[k] for k in recent) / len(recent) if recent else 0.0
+
+        # Level offset: how recent months compare to their seasonal baseline,
+        # damped so a single spike/dip does not dominate the forecast.
+        tail = recent[-3:]
+        offsets = [
+            by_month[k] - (moy_avg[k.month] or overall_avg) for k in tail
+        ]
+        level_offset = (sum(offsets) / len(offsets)) if offsets else 0.0
+
+        values = [by_month[k] for k in recent]
+        mean_val = sum(values) / len(values) if values else 0.0
+        std_dev = (
+            (sum((v - mean_val) ** 2 for v in values) / len(values)) ** 0.5
+            if values
+            else 0.0
+        )
+
+        last_month = months_sorted[-1] if months_sorted else date.today().replace(day=1)
+        predictions = []
+        for i in range(1, horizon_months + 1):
+            pred_date = self._add_month(last_month, i)
+            base = moy_avg.get(pred_date.month) or overall_avg
+            value = max(0.0, base + level_offset * (0.6 ** (i - 1)))
+            predictions.append({
+                "date": pred_date.isoformat(),
+                "value": round(value, 2),
+                "lower": round(max(0.0, value - 1.96 * std_dev), 2),
+                "upper": round(value + 1.96 * std_dev, 2),
+            })
+        return predictions
+
+    def _monthly_metrics(
+        self,
+        historical_data: List[Dict],
+    ) -> Tuple[Optional[float], float]:
+        """Holdout validation for the monthly model: predict the last month from
+        the rest and compare. Returns (None, rmse) when there is nothing to
+        validate against (e.g. last actual is zero)."""
+        by_month: Dict[date, float] = {}
+        for d in historical_data:
+            key = date(d["date"].year, d["date"].month, 1)
+            by_month[key] = by_month.get(key, 0.0) + d["value"]
+        months_sorted = sorted(by_month)
+        if len(months_sorted) < 6:
+            return self._variance_metrics([{"value": by_month[k]} for k in months_sorted])
+
+        holdout = min(3, len(months_sorted) // 4)
+        train_keys = months_sorted[:-holdout]
+        train = [{"date": k, "value": by_month[k]} for k in train_keys]
+        preds = self._monthly_forecast(train, holdout)
+        actuals = [by_month[k] for k in months_sorted[-holdout:]]
+        pred_vals = [p["value"] for p in preds]
+
+        ape_sum = sum(abs(a - p) / a for a, p in zip(actuals, pred_vals) if a != 0)
+        non_zero = sum(1 for a in actuals if a != 0)
+        mape = round(ape_sum / non_zero * 100, 4) if non_zero else None
+
+        mse = sum((a - p) ** 2 for a, p in zip(actuals, pred_vals)) / len(actuals)
+        return mape, round(mse ** 0.5, 4)
+
+    def _build_monthly_quality_notes(
+        self,
+        historical_data: List[Dict],
+        mape: Optional[float],
+    ) -> List[str]:
+        notes: List[str] = ["Monthly vendor data — values represent calendar months, not days"]
+        n_points = len(historical_data)
+        if n_points < 24:
+            notes.append("Less than 24 months of history")
+        if mape is None:
+            notes.append("Historical validation unavailable")
+        elif mape >= 30:
+            notes.append("Historical validation error is high")
+        return list(dict.fromkeys(notes))
+
+    # ------------------------------------------------------------------
     # Historical data
     # ------------------------------------------------------------------
 
@@ -148,23 +286,26 @@ class ForecastService:
         self,
         account_id: UUID,
         asin: Optional[str],
-        days: int = 90,
+        days: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Get historical sales data for forecasting."""
-        start_date = date.today() - timedelta(days=days)
+        """Get historical sales data for forecasting.
 
+        ``days=None`` (default) returns the full available span. A daily series
+        loses nothing, while a monthly vendor series keeps all its periods that
+        a rolling 365-day window would otherwise discard.
+        """
         query = (
             select(
                 SalesData.date,
                 func.sum(SalesData.ordered_product_sales).label("value"),
             )
-            .where(
-                SalesData.account_id == account_id,
-                SalesData.date >= start_date,
-            )
+            .where(SalesData.account_id == account_id)
             .group_by(SalesData.date)
             .order_by(SalesData.date)
         )
+
+        if days is not None:
+            query = query.where(SalesData.date >= date.today() - timedelta(days=days))
 
         if asin:
             query = query.where(SalesData.asin == asin)
@@ -178,6 +319,21 @@ class ForecastService:
             {"date": row.date, "value": float(row.value or 0)}
             for row in rows
         ]
+
+    @staticmethod
+    def _detect_cadence(data: List[Dict[str, Any]]) -> str:
+        """Detect series cadence ('monthly' or 'daily') from date spacing."""
+        dates = sorted(d["date"] for d in data)
+        if len(dates) < 3:
+            return "daily"
+        gaps = sorted((dates[i + 1] - dates[i]).days for i in range(len(dates) - 1))
+        median_gap = gaps[len(gaps) // 2]
+        return "monthly" if median_gap >= 20 else "daily"
+
+    @classmethod
+    def _has_sufficient_history(cls, data: List[Dict[str, Any]]) -> bool:
+        """Sufficiency gated on number of distinct periods, not calendar days."""
+        return len(data) >= cls.MIN_HISTORY_POINTS
 
     @staticmethod
     def _fill_date_gaps(data: List[Dict]) -> List[Dict]:
@@ -325,7 +481,7 @@ class ForecastService:
         historical_data: List[Dict],
         model: str,
         strategy: Dict[str, Any],
-    ) -> Tuple[float, float]:
+    ) -> Tuple[Optional[float], float]:
         """Calculate MAPE/RMSE via holdout: train on all-but-last-7, predict 7, compare."""
         holdout_size = min(7, len(historical_data) // 3)
         if holdout_size < 3:
@@ -347,16 +503,17 @@ class ForecastService:
         if len(preds) < holdout_size:
             return self._variance_metrics(historical_data)
 
-        # MAPE (skip zero actuals)
+        # MAPE (skip zero actuals). With no non-zero holdout there is nothing to
+        # validate, so MAPE is UNKNOWN (None) rather than a misleading 0.0.
         ape_sum = sum(abs(a - p) / a for a, p in zip(actuals, preds) if a != 0)
         non_zero = sum(1 for a in actuals if a != 0)
-        mape = (ape_sum / non_zero * 100) if non_zero else 0
+        mape = round(ape_sum / non_zero * 100, 4) if non_zero else None
 
         # RMSE
         mse = sum((a - p) ** 2 for a, p in zip(actuals, preds)) / holdout_size
         rmse = mse ** 0.5
 
-        return round(mape, 4), round(rmse, 4)
+        return mape, round(rmse, 4)
 
     @staticmethod
     def _variance_metrics(data: List[Dict]) -> Tuple[float, float]:
@@ -369,10 +526,29 @@ class ForecastService:
         return round(mape, 4), round(rmse, 4)
 
     @staticmethod
-    def _determine_confidence_level(mape: Optional[float]) -> Optional[str]:
-        """Map validation error to a confidence label."""
+    def _determine_confidence_level(
+        mape: Optional[float],
+        n_points: Optional[int] = None,
+        values: Optional[List[float]] = None,
+    ) -> Optional[str]:
+        """Map validation error to a confidence label.
+
+        When there is no validatable MAPE (None), confidence must not be
+        reported as 'high' on the basis of an unvalidatable metric. Fall back
+        to a data-driven level from history length and variance instead.
+        """
         if mape is None:
-            return None
+            if not n_points:
+                return None
+            cv = 0.0
+            if values:
+                mean_val = sum(values) / len(values)
+                if mean_val:
+                    std_dev = (sum((v - mean_val) ** 2 for v in values) / len(values)) ** 0.5
+                    cv = std_dev / mean_val
+            if n_points >= 24 and cv < 0.5:
+                return "medium"
+            return "low"
         if mape < 15:
             return "high"
         if mape < 30:

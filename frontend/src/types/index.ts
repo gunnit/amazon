@@ -130,6 +130,7 @@ export interface DashboardKPIs {
   accounts_synced: number
   period_start: string
   period_end: string
+  currency: string
 }
 
 export interface TrendDataPoint {

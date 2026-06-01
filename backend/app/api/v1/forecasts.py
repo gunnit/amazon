@@ -26,11 +26,16 @@ async def _fetch_historical(
     asin: Optional[str],
     days: int = 30,
 ) -> List[ForecastHistoricalPoint]:
-    """Fetch recent sales history to display alongside the forecast chart."""
-    start_date = date.today() - timedelta(days=days)
+    """Fetch sales history to display alongside the forecast chart.
+
+    Monthly vendor series store one sparse row per month, so a rolling daily
+    window would return nothing; for those we return the full monthly span so
+    the chart can compare history against the monthly predictions. Daily
+    (seller) series keep the recent-window behaviour.
+    """
     query = (
         select(SalesData.date, func.sum(SalesData.ordered_product_sales).label("value"))
-        .where(SalesData.account_id == account_id, SalesData.date >= start_date)
+        .where(SalesData.account_id == account_id)
         .group_by(SalesData.date)
         .order_by(SalesData.date)
     )
@@ -38,11 +43,26 @@ async def _fetch_historical(
         query = query.where(SalesData.asin == asin)
     else:
         query = query.where(SalesData.asin == DAILY_TOTAL_ASIN)
-    result = await db.execute(query)
+    rows = (await db.execute(query)).all()
+
+    dates = [row.date for row in rows]
+    if not _is_monthly(dates):
+        start_date = date.today() - timedelta(days=days)
+        rows = [row for row in rows if row.date >= start_date]
+
     return [
         ForecastHistoricalPoint(date=row.date, value=float(row.value or 0))
-        for row in result.all()
+        for row in rows
     ]
+
+
+def _is_monthly(dates: List[date]) -> bool:
+    """Detect a monthly cadence from date spacing (mirrors the forecast model)."""
+    if len(dates) < 3:
+        return False
+    ordered = sorted(dates)
+    gaps = sorted((ordered[i + 1] - ordered[i]).days for i in range(len(ordered) - 1))
+    return gaps[len(gaps) // 2] >= 20
 
 
 def _build_response(f, historical: List[ForecastHistoricalPoint]) -> ForecastResponse:
@@ -66,8 +86,8 @@ def _build_response(f, historical: List[ForecastHistoricalPoint]) -> ForecastRes
             for p in (f.predictions or [])
         ],
         historical_data=historical,
-        mape=float(f.mape) if f.mape else None,
-        rmse=float(f.rmse) if f.rmse else None,
+        mape=float(f.mape) if f.mape is not None else None,
+        rmse=float(f.rmse) if f.rmse is not None else None,
         confidence_level=f.confidence_level,
         data_quality_notes=list(f.data_quality_notes) if isinstance(f.data_quality_notes, list) else None,
     )
@@ -115,7 +135,7 @@ async def list_forecast_available_products(
     current_user: CurrentUser,
     organization: CurrentOrganization,
     db: DbSession,
-    lookback_days: int = Query(default=365, ge=30, le=730),
+    lookback_days: int = Query(default=730, ge=30, le=1825),
     min_history_days: int = Query(default=ForecastService.MIN_HISTORY_DAYS, ge=1, le=30),
     limit: int = Query(default=1000, ge=1, le=5000),
     include_ineligible: bool = Query(
@@ -148,11 +168,14 @@ async def list_forecast_available_products(
         )
 
     start_date = date.today() - timedelta(days=lookback_days)
-    base = (
+    distinct_dates = func.count(func.distinct(SalesData.date))
+    distinct_months = func.count(func.distinct(func.date_trunc("month", SalesData.date)))
+    query = (
         select(
             SalesData.asin,
             func.max(Product.title).label("title"),
-            func.count(func.distinct(SalesData.date)).label("history_days"),
+            distinct_dates.label("history_days"),
+            distinct_months.label("history_months"),
             func.max(SalesData.date).label("last_sale_date"),
         )
         .select_from(SalesData)
@@ -169,29 +192,28 @@ async def list_forecast_available_products(
             SalesData.date >= start_date,
         )
         .group_by(SalesData.asin)
+        .order_by(func.max(SalesData.date).desc(), SalesData.asin)
+        .limit(limit)
     )
 
-    if include_ineligible:
-        query = base.order_by(
-            (func.count(func.distinct(SalesData.date)) >= min_history_days).desc(),
-            func.max(SalesData.date).desc(),
-            SalesData.asin,
-        ).limit(limit)
-    else:
-        query = (
-            base.having(func.count(func.distinct(SalesData.date)) >= min_history_days)
-            .order_by(func.max(SalesData.date).desc(), SalesData.asin)
-            .limit(limit)
-        )
-
     result = await db.execute(query)
+    min_points = ForecastService.MIN_HISTORY_POINTS
     options: list[ForecastProductOption] = []
     for row in result.all():
         history_days = int(row.history_days or 0)
-        is_eligible = history_days >= min_history_days
-        reason = None
-        if not is_eligible:
-            reason = (
+        history_months = int(row.history_months or 0)
+        # Monthly vendor series store one row per month, so distinct days equal
+        # distinct months — gate those on period count, daily series on days.
+        is_monthly = history_days == history_months and history_months >= 2
+        if is_monthly:
+            is_eligible = history_months >= min_points
+            reason = None if is_eligible else (
+                f"Only {history_months} month{'s' if history_months != 1 else ''} of "
+                f"sales history (need at least {min_points})."
+            )
+        else:
+            is_eligible = history_days >= min_history_days
+            reason = None if is_eligible else (
                 f"Only {history_days} day{'s' if history_days != 1 else ''} of "
                 f"sales history in the last {lookback_days} days "
                 f"(need at least {min_history_days})."
@@ -206,6 +228,13 @@ async def list_forecast_available_products(
                 ineligible_reason=reason,
             )
         )
+
+    if not include_ineligible:
+        options = [o for o in options if o.is_eligible]
+    options.sort(
+        key=lambda o: (o.is_eligible, o.last_sale_date or date.min, o.asin),
+        reverse=True,
+    )
     return options
 
 

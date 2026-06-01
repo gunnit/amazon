@@ -548,6 +548,68 @@ async def export_forecast_excel(
     )
 
 
+@router.post("/forecast-csv")
+async def export_forecast_csv(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    forecast_id: UUID = Query(...),
+):
+    """Generate a CSV export for a single forecast (history + predictions)."""
+    import csv
+
+    service = ForecastExportService(db)
+    try:
+        context = await service._get_forecast_context(
+            org_id=organization.id,
+            forecast_id=forecast_id,
+            template="corporate",
+            language="en",
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Forecast not found",
+        )
+
+    forecast = context.forecast
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["segment", "date", "predicted_value", "lower_bound", "upper_bound", "currency"])
+
+    for point in context.historical:
+        writer.writerow([
+            "historical",
+            point.date.isoformat(),
+            round(point.value, 2),
+            "",
+            "",
+            "EUR",
+        ])
+
+    for p in (forecast.predictions or []):
+        pred_date = p["date"]
+        value = p["value"]
+        writer.writerow([
+            "forecast",
+            pred_date if isinstance(pred_date, str) else pred_date.isoformat(),
+            round(value, 2),
+            round(p.get("lower", value * 0.8), 2),
+            round(p.get("upper", value * 1.2), 2),
+            "EUR",
+        ])
+
+    safe_name = context.account_name.replace(" ", "_")[:30]
+    horizon = forecast.forecast_horizon_days or 30
+    filename = f"inthezon_forecast_{safe_name}_{forecast.forecast_type or 'sales'}_{horizon}d_{date.today().isoformat()}.csv"
+
+    return StreamingResponse(
+        io.BytesIO(buffer.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/forecast-package", response_model=ForecastExportJobResponse)
 async def create_forecast_export_package(
     request: ForecastExportCreate,
