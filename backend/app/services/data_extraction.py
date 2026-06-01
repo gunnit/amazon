@@ -878,6 +878,36 @@ class DataExtractionService:
         )
         return count
 
+    async def backfill_vendor_sales_data(
+        self,
+        account: AmazonAccount,
+        organization=None,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        """Backfill historical vendor sales over an explicit date range.
+
+        Reuses sync_vendor_sales_data one settled calendar month at a time so a
+        long history can be rebuilt without holding a single large transaction.
+        Each month reuses the same upsert and DAILY_TOTAL sentinel logic, so the
+        operation is idempotent: re-running clears and repopulates each month's
+        rows rather than double-counting. The default daily sync window is left
+        untouched."""
+        months = _settled_month_windows(start_date, end_date)
+        total = 0
+        for month_start, month_end in months:
+            count = await self.sync_vendor_sales_data(
+                account, organization, month_start, month_end
+            )
+            await self.db.commit()
+            total += count
+            logger.info(
+                "Backfilled vendor sales for %s %s..%s: %d records",
+                account.account_name, month_start, month_end, count,
+            )
+        return total
+
     # ---- Orders ----
 
     async def sync_orders(
