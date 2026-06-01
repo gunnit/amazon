@@ -34,9 +34,36 @@ DAILY_TOTAL_ASIN = "__DAILY_TOTAL__"
 VENDOR_SALES_FALLBACK_WARNING = "VENDOR_SALES_FROM_PO_FALLBACK"
 VENDOR_SALES_FALLBACK_MESSAGE = (
     "Vendor sales revenue is estimated from purchase-order netCost because the "
-    "Vendor Sales / Sales Diagnostic report was unavailable. Totals may differ "
+    "Vendor Sales report was unavailable. Totals may differ "
     "from Vendor Central shipped revenue."
 )
+
+# Vendor sales data settles with a few days of lag; the current (incomplete)
+# reporting period is never requested.
+VENDOR_REPORT_LAG_DAYS = 4
+
+
+def _settled_month_windows(start_date: date, end_date: date) -> List[tuple]:
+    """Return [(month_start, month_end), ...] for every complete calendar month
+    overlapping [start_date, end_date].
+
+    GET_VENDOR_SALES_REPORT with reportPeriod=MONTH only accepts windows aligned
+    to whole calendar months, and only settled months return data. We therefore
+    iterate one month at a time and exclude the current (incomplete) month."""
+    windows: List[tuple] = []
+    cursor = start_date.replace(day=1)
+    # Last fully-elapsed month relative to end_date: never include end_date's own
+    # month unless end_date is its final day.
+    while cursor <= end_date:
+        if cursor.month == 12:
+            next_month = cursor.replace(year=cursor.year + 1, month=1)
+        else:
+            next_month = cursor.replace(month=cursor.month + 1)
+        month_end = next_month - timedelta(days=1)
+        if month_end <= end_date:
+            windows.append((cursor, month_end))
+        cursor = next_month
+    return windows
 
 
 class DataExtractionService:
@@ -402,6 +429,30 @@ class DataExtractionService:
             if sp_api_available:
                 # Sync different data types based on account type
                 from app.models.amazon_account import AccountType
+
+                # Resolve the merchant token for seller accounts (needed for the
+                # Listings write API). Best-effort: never abort the sync on failure.
+                if account.account_type != AccountType.VENDOR and not account.seller_id:
+                    try:
+                        resolved = client.resolve_seller_id()
+                        if resolved:
+                            account.seller_id = resolved
+                            await self.db.flush()
+                            logger.info(
+                                "Resolved seller_id for %s: %s",
+                                account.account_name, resolved,
+                            )
+                        else:
+                            logger.info(
+                                "Could not resolve seller_id for %s from read APIs",
+                                account.account_name,
+                            )
+                    except Exception as exc:  # best-effort
+                        logger.warning(
+                            "seller_id resolution errored for %s: %s",
+                            account.account_name, exc,
+                        )
+
                 if account.account_type == AccountType.VENDOR:
                     sales_count = await self.sync_vendor_sales_data(account, organization)
                     if self.vendor_sales_used_po_fallback:
@@ -588,16 +639,41 @@ class DataExtractionService:
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
     ) -> int:
-        """Sync sales data from vendor purchase orders."""
+        """Sync vendor sales from the SP-API Vendor Sales report.
+
+        GET_VENDOR_SALES_REPORT only produces RETAIL sales at calendar-month
+        granularity and only for months that have fully settled (vendor data
+        lags by a few days). We therefore request one report per complete,
+        settled calendar month in the window and store one row per ASIN per
+        month. If no month yields real data we fall back to purchase-order
+        netCost as an estimated revenue proxy."""
         if not start_date:
-            start_date = date.today() - timedelta(days=30)
+            start_date = date.today() - timedelta(days=90)
         if not end_date:
             end_date = date.today()
 
+        # Vendor data settles with a few days of lag; never request up to today.
+        end_date = min(end_date, date.today() - timedelta(days=VENDOR_REPORT_LAG_DAYS))
+
         client = self._create_sp_api_client(account, organization)
 
-        # Reset the fallback flag on every run so a successful diagnostic-report
-        # sync clears the previous warning state.
+        # Clear existing vendor sales rows in the window before repopulating.
+        # The report (monthly, rows on the 1st) and the PO fallback (daily rows)
+        # use different date layouts, so without this a switch between sources —
+        # or a granularity change — would leave stale rows that double-count in
+        # dashboard totals. Align the floor to the first of the month so whole
+        # requested months are cleaned, not just from a mid-month start date.
+        clear_from = start_date.replace(day=1)
+        await self.db.execute(
+            delete(SalesData).where(
+                SalesData.account_id == account.id,
+                SalesData.date >= clear_from,
+                SalesData.date <= end_date,
+            )
+        )
+
+        # Reset the fallback flag on every run so a successful report sync clears
+        # the previous warning state.
         self.vendor_sales_used_po_fallback = False
 
         # Accumulate daily totals for DAILY_TOTAL_ASIN sentinel records.
@@ -618,14 +694,28 @@ class DataExtractionService:
                     "currency": currency,
                 }
 
-        # Try vendor sales diagnostic report first; fall back to purchase orders
+        # Request the Vendor Sales report one settled calendar month at a time.
         count = 0
-        try:
-            report = client.get_vendor_sales_report(start_date, end_date)
-            sales_data_rows = report.get("salesDiagnosticData", report.get("salesByAsin", []))
-            for entry in sales_data_rows:
+        months = _settled_month_windows(start_date, end_date)
+        report_rows_seen = False
+
+        for month_start, month_end in months:
+            try:
+                report = client.get_vendor_sales_report(month_start, month_end)
+            except AmazonAPIError as exc:
+                # A single month failing (e.g. not yet settled, or no data) must
+                # not abort the others; only an all-months failure triggers the
+                # PO fallback below.
+                logger.warning(
+                    "Vendor sales report unavailable for %s %s..%s: %s",
+                    account.account_name, month_start, month_end, exc,
+                )
+                continue
+
+            sales_by_asin = report.get("salesByAsin", []) or []
+            for entry in sales_by_asin:
                 asin = entry.get("asin")
-                entry_date_str = entry.get("date") or entry.get("startDate")
+                entry_date_str = entry.get("startDate")
                 if not asin or not entry_date_str:
                     continue
                 try:
@@ -636,7 +726,7 @@ class DataExtractionService:
                 ordered_revenue = entry.get("orderedRevenue", {})
                 amount = Decimal(str(ordered_revenue.get("amount", 0))) if isinstance(ordered_revenue, dict) else Decimal("0")
                 currency = ordered_revenue.get("currencyCode", "EUR") if isinstance(ordered_revenue, dict) else "EUR"
-                units = entry.get("orderedUnits", 0)
+                units = entry.get("orderedUnits", 0) or 0
 
                 await self._upsert_sales_record({
                     "account_id": account.id,
@@ -651,14 +741,30 @@ class DataExtractionService:
                     "currency": currency,
                 })
                 count += 1
-                _accumulate_daily(entry_date, units, amount, units, currency)
+                report_rows_seen = True
 
-        except AmazonAPIError:
+            # Use Amazon's own period aggregate for the daily-total sentinel so
+            # the dashboard total matches the report (no per-ASIN re-summing).
+            for agg in report.get("salesAggregate", []) or []:
+                agg_date_str = agg.get("startDate")
+                if not agg_date_str:
+                    continue
+                try:
+                    agg_date = date.fromisoformat(agg_date_str[:10])
+                except ValueError:
+                    continue
+                ordered_revenue = agg.get("orderedRevenue", {})
+                amount = Decimal(str(ordered_revenue.get("amount", 0))) if isinstance(ordered_revenue, dict) else Decimal("0")
+                currency = ordered_revenue.get("currencyCode", "EUR") if isinstance(ordered_revenue, dict) else "EUR"
+                units = agg.get("orderedUnits", 0) or 0
+                _accumulate_daily(agg_date, units, amount, units, currency)
+
+        if not report_rows_seen:
             self.vendor_sales_used_po_fallback = True
             logger.warning(
-                "Vendor Sales / Sales Diagnostic report not available for %s; "
+                "Vendor sales report returned no data for %s (%d month(s) attempted); "
                 "falling back to purchase-order netCost as an estimated revenue proxy",
-                account.account_name,
+                account.account_name, len(months),
             )
             # Fall back to purchase orders — aggregate by (date, asin) since
             # multiple POs can contain the same ASIN on the same day.

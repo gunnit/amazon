@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 from urllib.parse import quote, unquote
@@ -291,6 +291,30 @@ class SPAPIClient:
         """Download a report document and return the raw payload."""
         return api.get_report_document(document_id, download=True).payload
 
+    def _describe_failed_report(self, api: Reports, status_payload: Dict[str, Any]) -> str:
+        """Build a human-readable reason for a FATAL/CANCELLED report.
+
+        Amazon attaches the actual failure reason (e.g. "data not yet available")
+        to the report document even when processing ends in FATAL. Download it so
+        the reason shows up in logs/errors instead of an opaque status."""
+        document_id = status_payload.get("reportDocumentId")
+        if not document_id:
+            return ""
+        try:
+            payload = self._download_report_document(api, document_id)
+            text = self._extract_report_document_text(payload).strip()
+        except Exception as exc:  # best-effort: never mask the original failure
+            return f" (could not read failure document: {exc})"
+        if not text:
+            return ""
+        try:
+            parsed = json.loads(text)
+            detail = parsed.get("errorDetails") or parsed.get("messages") or parsed
+            text = json.dumps(detail) if not isinstance(detail, str) else detail
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return f" Reason: {text[:1000]}"
+
     @staticmethod
     def _normalize_report_key(value: Optional[str]) -> str:
         """Normalize report headers for easier lookups."""
@@ -512,8 +536,16 @@ class SPAPIClient:
                 # Download the report document
                 return self._download_report_document(api, doc_id)
             elif status in ("FATAL", "CANCELLED"):
+                reason = self._describe_failed_report(api, status_payload)
+                logger.warning(
+                    "Report %s (%s) ended with status %s.%s",
+                    report_id,
+                    report_type,
+                    status,
+                    reason,
+                )
                 raise AmazonAPIError(
-                    f"Report {report_id} ended with status {status}",
+                    f"Report {report_id} ended with status {status}.{reason}",
                     error_code=f"REPORT_{status}",
                 )
 
@@ -716,11 +748,15 @@ class SPAPIClient:
                 return []
 
             if status in ("FATAL", "CANCELLED"):
+                reason = self._describe_failed_report(api, status_payload)
+                logger.warning(
+                    "Inventory report %s ended with status %s.%s", report_id, status, reason
+                )
                 raise AmazonAPIError(
                     (
                         "Amazon did not generate the FBA inventory report "
                         f"GET_FBA_MYI_ALL_INVENTORY_DATA for marketplace {self.marketplace.marketplace_id}. "
-                        f"Report {report_id} ended with status {status}."
+                        f"Report {report_id} ended with status {status}.{reason}"
                     ),
                     error_code=f"INVENTORY_REPORT_{status}",
                 )
@@ -833,8 +869,12 @@ class SPAPIClient:
                 return []
 
             if status in ("FATAL", "CANCELLED"):
+                reason = self._describe_failed_report(api, status_payload)
+                logger.warning(
+                    "Returns report %s ended with status %s.%s", report_id, status, reason
+                )
                 raise AmazonAPIError(
-                    f"Returns report {report_id} ended with status {status}",
+                    f"Returns report {report_id} ended with status {status}.{reason}",
                     error_code=f"REPORT_{status}",
                 )
 
@@ -1630,14 +1670,24 @@ class SPAPIClient:
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_vendor_sales_report(self, start_date: date, end_date: date) -> Dict[str, Any]:
-        """Get vendor sales data via Reports API with vendor-specific report type."""
+        """Get vendor sales data via the Reports API.
+
+        Uses GET_VENDOR_SALES_REPORT (the live, non-deprecated report). The report
+        is requested with reportPeriod=MONTH because Amazon only generates vendor
+        retail sales at calendar-month granularity for this program; the window
+        passed in MUST be aligned to whole calendar months (first day .. last day)
+        or Amazon returns FATAL ("prohibited date range ... does not align with
+        the requirements for the specified reportPeriod"). Data also settles with
+        a few days of lag, so the most recent (incomplete) month should be
+        excluded by the caller."""
         report_data = self.request_and_download_report(
-            report_type="GET_VENDOR_SALES_DIAGNOSTIC_REPORT",
+            report_type="GET_VENDOR_SALES_REPORT",
             start_date=start_date,
             end_date=end_date,
             report_options={
-                "reportPeriod": "DAY",
+                "reportPeriod": "MONTH",
                 "sellingProgram": "RETAIL",
+                "distributorView": "MANUFACTURING",
             },
         )
 
@@ -1658,6 +1708,72 @@ class SPAPIClient:
     # ------------------------------------------------------------------
     # Listings Items API — write operations
     # ------------------------------------------------------------------
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def resolve_seller_id(self) -> Optional[str]:
+        """Resolve the concrete merchant (seller) token for a seller account.
+
+        The token (format ``A`` + ~13 uppercase alphanumerics) is required by the
+        Listings Items write API. SP-API does not expose it from a single
+        dedicated endpoint, so we probe the read sources that can carry it:
+
+        1. A column on the merchant listings report (``seller-id`` / ``merchant-id``).
+        2. The ``SellerId`` field on recent orders.
+
+        Returns the token if found, otherwise ``None`` (best-effort)."""
+        if self.is_vendor:
+            return None
+
+        token_pattern = re.compile(r"^A[A-Z0-9]{12,18}$")
+
+        # 1) Merchant listings report — some marketplaces include a seller/merchant id column.
+        try:
+            api = self._reports_api()
+            create_payload = self._create_report_request(
+                api,
+                reportType="GET_MERCHANT_LISTINGS_ALL_DATA",
+                marketplaceIds=[self.marketplace.marketplace_id],
+            )
+            report_id = create_payload.get("reportId")
+            if report_id:
+                delay = 2.0
+                for _ in range(settings.SP_API_REPORT_POLL_MAX_ATTEMPTS):
+                    time.sleep(delay)
+                    status_payload = self._get_report_status(api, report_id)
+                    status = status_payload.get("processingStatus")
+                    if status == "DONE":
+                        document_id = status_payload.get("reportDocumentId")
+                        if document_id:
+                            text = self._extract_report_document_text(
+                                self._download_report_document(api, document_id)
+                            )
+                            for row in self._parse_delimited_report_rows(text):
+                                candidate = self._pick_report_value(
+                                    row, "seller-id", "merchant-id", "merchant-identifier"
+                                )
+                                if candidate and token_pattern.match(str(candidate).strip()):
+                                    return str(candidate).strip()
+                        break
+                    if status in ("FATAL", "CANCELLED", "DONE_NO_DATA"):
+                        break
+                    delay = min(delay * 2, float(max(settings.SP_API_REPORT_POLL_INTERVAL_SECONDS, 2)))
+        except Exception as exc:  # best-effort
+            logger.info("Seller id resolution via listings report failed: %s", exc)
+
+        # 2) Recent orders — the SellerId travels on the order object in some regions.
+        try:
+            orders = self.fetch_orders(
+                datetime.utcnow() - timedelta(days=30),
+                datetime.utcnow(),
+            )
+            for order in orders:
+                candidate = order.get("SellerId") or order.get("sellerId")
+                if candidate and token_pattern.match(str(candidate).strip()):
+                    return str(candidate).strip()
+        except Exception as exc:  # best-effort
+            logger.info("Seller id resolution via orders failed: %s", exc)
+
+        return None
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_listing(self, seller_id: str, sku: str, included_data: Optional[List[str]] = None) -> Dict[str, Any]:
