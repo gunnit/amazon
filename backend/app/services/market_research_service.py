@@ -8,18 +8,49 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sp_api.base.exceptions import (
-    SellingApiBadRequestException,
-    SellingApiForbiddenException,
-    SellingApiGatewayTimeoutException,
-    SellingApiNotFoundException,
-    SellingApiRequestThrottledException,
-    SellingApiServerException,
-    SellingApiStateConflictException,
-    SellingApiTemporarilyUnavailableException,
-    SellingApiTooLargeException,
-    SellingApiUnsupportedFormatException,
-)
+try:
+    from sp_api.base.exceptions import (
+        SellingApiBadRequestException,
+        SellingApiForbiddenException,
+        SellingApiGatewayTimeoutException,
+        SellingApiNotFoundException,
+        SellingApiRequestThrottledException,
+        SellingApiServerException,
+        SellingApiStateConflictException,
+        SellingApiTemporarilyUnavailableException,
+        SellingApiTooLargeException,
+        SellingApiUnsupportedFormatException,
+    )
+except ImportError:  # pragma: no cover - keeps pure unit tests independent of SP-API package
+    class SellingApiBadRequestException(Exception):
+        pass
+
+    class SellingApiForbiddenException(Exception):
+        pass
+
+    class SellingApiGatewayTimeoutException(Exception):
+        pass
+
+    class SellingApiNotFoundException(Exception):
+        pass
+
+    class SellingApiRequestThrottledException(Exception):
+        pass
+
+    class SellingApiServerException(Exception):
+        pass
+
+    class SellingApiStateConflictException(Exception):
+        pass
+
+    class SellingApiTemporarilyUnavailableException(Exception):
+        pass
+
+    class SellingApiTooLargeException(Exception):
+        pass
+
+    class SellingApiUnsupportedFormatException(Exception):
+        pass
 
 from app.models.market_research import MarketResearchReport
 from app.models.amazon_account import AmazonAccount

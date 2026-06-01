@@ -670,8 +670,14 @@ async def export_market_research_pdf(
             detail=f"PDF generation failed: {str(e)[:200]}",
         )
 
-    # Build filename
-    safe_title = (report.title or "report").replace(" ", "_").replace(":", "")[:60]
+    # Build filename. The title may contain non-ASCII characters (e.g. the
+    # narrow no-break space U+202F from Amazon listings) which break the
+    # latin-1-only HTTP Content-Disposition header, so reduce it to safe ASCII.
+    raw_title = (report.title or "report").replace(":", "")
+    safe_title = "".join(
+        ch if (ch.isascii() and (ch.isalnum() or ch in "-_")) else "_"
+        for ch in raw_title
+    )[:60].strip("_") or "report"
     filename = f"inthezon_{safe_title}_{date.today()}.pdf"
 
     return StreamingResponse(

@@ -80,8 +80,10 @@ BEGIN
     EXECUTE 'CREATE TABLE sales_data_default PARTITION OF sales_data_new DEFAULT';
 
     INSERT INTO sales_data_new SELECT * FROM sales_data;
+    ALTER SEQUENCE sales_data_id_seq OWNED BY NONE;
     DROP TABLE sales_data;
     ALTER TABLE sales_data_new RENAME TO sales_data;
+    ALTER SEQUENCE sales_data_id_seq OWNED BY sales_data.id;
 
     ALTER TABLE sales_data
         ADD CONSTRAINT sales_data_account_id_fkey
@@ -136,8 +138,10 @@ BEGIN
     EXECUTE 'CREATE TABLE advertising_metrics_default PARTITION OF advertising_metrics_new DEFAULT';
 
     INSERT INTO advertising_metrics_new SELECT * FROM advertising_metrics;
+    ALTER SEQUENCE advertising_metrics_id_seq OWNED BY NONE;
     DROP TABLE advertising_metrics;
     ALTER TABLE advertising_metrics_new RENAME TO advertising_metrics;
+    ALTER SEQUENCE advertising_metrics_id_seq OWNED BY advertising_metrics.id;
 
     ALTER TABLE advertising_metrics
         ADD CONSTRAINT advertising_metrics_campaign_id_fkey
@@ -191,8 +195,10 @@ BEGIN
     EXECUTE 'CREATE TABLE advertising_metrics_by_asin_default PARTITION OF advertising_metrics_by_asin_new DEFAULT';
 
     INSERT INTO advertising_metrics_by_asin_new SELECT * FROM advertising_metrics_by_asin;
+    ALTER SEQUENCE advertising_metrics_by_asin_id_seq OWNED BY NONE;
     DROP TABLE advertising_metrics_by_asin;
     ALTER TABLE advertising_metrics_by_asin_new RENAME TO advertising_metrics_by_asin;
+    ALTER SEQUENCE advertising_metrics_by_asin_id_seq OWNED BY advertising_metrics_by_asin.id;
 
     ALTER TABLE advertising_metrics_by_asin
         ADD CONSTRAINT advertising_metrics_by_asin_account_id_fkey
@@ -251,8 +257,10 @@ BEGIN
     EXECUTE 'CREATE TABLE bsr_history_default PARTITION OF bsr_history_new DEFAULT';
 
     INSERT INTO bsr_history_new SELECT * FROM bsr_history;
+    ALTER SEQUENCE bsr_history_id_seq OWNED BY NONE;
     DROP TABLE bsr_history;
     ALTER TABLE bsr_history_new RENAME TO bsr_history;
+    ALTER SEQUENCE bsr_history_id_seq OWNED BY bsr_history.id;
 
     ALTER TABLE bsr_history
         ADD CONSTRAINT bsr_history_product_id_fkey

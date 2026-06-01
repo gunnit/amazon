@@ -36,7 +36,6 @@ import {
   FilterBar,
   DateRangeFilter,
   AccountFilter,
-  CategoryFilter,
   GroupByFilter,
 } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
@@ -48,7 +47,6 @@ import { PerProductPerformanceTable } from '@/components/analytics/PerProductPer
 import type {
   AdsVsOrganicAsinBreakdownItem,
   AdsVsOrganicResponse,
-  CategorySalesData,
   HourlyOrdersData,
   MetricValue,
   Product,
@@ -272,9 +270,7 @@ export default function Analytics() {
     customStartDate,
     customEndDate,
     accountIds,
-    analyticsCategory,
     analyticsGroupBy,
-    setAnalyticsCategory,
     setAnalyticsGroupBy,
     resetAnalytics,
     resetDashboard,
@@ -327,17 +323,6 @@ export default function Analytics() {
       end_date: dateRange.end,
       limit: 10,
       account_ids: trendAccountIds.length > 0 ? trendAccountIds : undefined,
-    }),
-    enabled: activeTab === 'overview',
-  })
-
-  const { data: salesByCategory, isLoading: categoryLoading } = useQuery<CategorySalesData[]>({
-    queryKey: ['sales-by-category', dateRange, trendAccountIds],
-    queryFn: () => analyticsApi.getSalesByCategory({
-      start_date: dateRange.start,
-      end_date: dateRange.end,
-      account_ids: trendAccountIds.length > 0 ? trendAccountIds : undefined,
-      limit: 12,
     }),
     enabled: activeTab === 'overview',
   })
@@ -473,7 +458,6 @@ export default function Analytics() {
 
   const overviewLoadingStates = [
     topPerformersLoading,
-    categoryLoading,
     hourlyLoading,
     kpisLoading,
     productTrendsLoading,
@@ -499,25 +483,12 @@ export default function Analytics() {
     )
   }
 
-  const categoryOptions = Array.from(
-    new Set((salesByCategory || []).map((row) => row.category).filter(Boolean))
-  )
-  const categoryChartData = analyticsCategory
-    ? (salesByCategory || []).filter((row) => row.category === analyticsCategory)
-    : (salesByCategory || [])
   const topProductsChartData = (topPerformers?.by_revenue || []).slice(0, 5).map((product) => ({
     ...product,
     displayLabel: truncateLabel(product.title || product.asin, 22),
   }))
-  const categoryRevenueChartData = categoryChartData.slice(0, 8).map((row) => ({
-    ...row,
-    displayCategory: truncateLabel(row.category, 14),
-  }))
   const topProductsAxisMax = getChartAxisMax(
     topProductsChartData.map((product) => Number(product.total_revenue) || 0)
-  )
-  const categoryRevenueAxisMax = getChartAxisMax(
-    categoryRevenueChartData.map((row) => Number(row.total_revenue) || 0)
   )
 
   const adsChartData = (adsVsOrganicData?.time_series || []).map((point) => ({
@@ -557,13 +528,7 @@ export default function Analytics() {
         <FilterBar onReset={handleResetAll}>
           <DateRangeFilter />
           <AccountFilter />
-          {activeTab === 'overview' ? (
-            <CategoryFilter
-              value={analyticsCategory}
-              onChange={setAnalyticsCategory}
-              options={categoryOptions}
-            />
-          ) : activeTab === 'ads-vs-organic' ? (
+          {activeTab === 'ads-vs-organic' ? (
             <>
               <GroupByFilter value={analyticsGroupBy} onChange={setAnalyticsGroupBy} />
               <Select value={selectedAsin} onValueChange={setSelectedAsin}>
@@ -601,7 +566,7 @@ export default function Analytics() {
 
         <TabsContent value="overview" className="space-y-6">
           <div className="grid gap-4 md:grid-cols-2">
-            <Card className="col-span-2 md:col-span-1">
+            <Card className="col-span-2">
               <CardHeader>
                 <CardTitle>{t('analytics.topProducts')}</CardTitle>
                 <CardDescription>{t('analytics.topProductsDesc')}</CardDescription>
@@ -655,57 +620,6 @@ export default function Analytics() {
                   ) : (
                     <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                       {t('analytics.topProductsDesc')}
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="col-span-2 md:col-span-1">
-              <CardHeader>
-                <CardTitle>{t('analytics.salesByCategory')}</CardTitle>
-                <CardDescription>
-                  {analyticsCategory
-                    ? t('analytics.showing', { category: analyticsCategory })
-                    : t('analytics.salesByCategoryDesc')}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[300px]">
-                  {categoryRevenueChartData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={categoryRevenueChartData} margin={{ top: 8, right: 12, left: 8, bottom: 12 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis
-                          dataKey="displayCategory"
-                          interval={0}
-                          angle={-18}
-                          height={74}
-                          textAnchor="end"
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          domain={[0, categoryRevenueAxisMax]}
-                          tickCount={6}
-                          axisLine={false}
-                          tickLine={false}
-                          tickFormatter={(value) => formatAxisCurrency(Number(value))}
-                        />
-                        <Tooltip
-                          labelFormatter={(_label, payload) => payload?.[0]?.payload?.category || ''}
-                          formatter={(value: number) => [formatCurrency(Number(value)), t('common.revenue')]}
-                        />
-                        <Bar
-                          dataKey="total_revenue"
-                          fill="hsl(var(--primary))"
-                          radius={[4, 4, 0, 0]}
-                        />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                      {t('analytics.salesByCategoryDesc')}
                     </div>
                   )}
                 </div>

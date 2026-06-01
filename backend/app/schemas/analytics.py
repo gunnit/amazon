@@ -31,6 +31,7 @@ class DashboardKPIs(BaseModel):
     accounts_synced: int
     period_start: date
     period_end: date
+    currency: str = "EUR"
 
 
 class TrendDataPoint(BaseModel):

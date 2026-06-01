@@ -606,6 +606,17 @@ async def get_dashboard_kpis(
     )
     accounts_synced = account_count.scalar() or 0
 
+    currency_result = await db.execute(
+        select(func.distinct(SalesData.currency))
+        .where(
+            SalesData.account_id.in_(accounts_query),
+            SalesData.date >= start_date,
+            SalesData.date <= end_date,
+        )
+    )
+    currencies = [c for c in currency_result.scalars().all() if c]
+    currency = currencies[0] if len(currencies) == 1 else "EUR"
+
     return DashboardKPIs(
         total_revenue=_metric_value_from_comparison(revenue_metric),
         total_units=_metric_value_from_comparison(units_metric),
@@ -625,6 +636,7 @@ async def get_dashboard_kpis(
         accounts_synced=accounts_synced,
         period_start=start_date,
         period_end=end_date,
+        currency=currency,
     )
 
 

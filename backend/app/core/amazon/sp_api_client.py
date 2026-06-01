@@ -13,15 +13,59 @@ from decimal import Decimal
 from typing import Optional, List, Dict, Any
 from urllib.parse import quote, unquote
 
-from sp_api.base import Marketplaces, SellingApiRequestThrottledException
-from sp_api.api import (
-    Reports,
-    Inventories,
-    CatalogItems,
-    Products,
-    Orders,
-    VendorOrders,
-)
+try:
+    from sp_api.base import (
+        Marketplaces,
+        SellingApiException,
+        SellingApiRequestThrottledException,
+    )
+    from sp_api.api import (
+        Reports,
+        Inventories,
+        CatalogItems,
+        Products,
+        Orders,
+        VendorOrders,
+    )
+except ImportError:  # pragma: no cover - supports local tests without python-amazon-sp-api
+    class SellingApiException(Exception):
+        pass
+
+    class SellingApiRequestThrottledException(SellingApiException):
+        pass
+
+    class _MarketplaceValue:
+        def __init__(self, code: str, marketplace_id: str):
+            self.code = code
+            self.marketplace_id = marketplace_id
+
+    class Marketplaces:
+        IT = _MarketplaceValue("IT", "APJ6JRA9NG5V4")
+        DE = _MarketplaceValue("DE", "A1PA6795UKMFR9")
+        FR = _MarketplaceValue("FR", "A13V1IB3VIYZZH")
+        ES = _MarketplaceValue("ES", "A1RKKUPIHCS9HS")
+        UK = _MarketplaceValue("UK", "A1F83G8C2ARO7P")
+        US = _MarketplaceValue("US", "ATVPDKIKX0DER")
+        CA = _MarketplaceValue("CA", "A2EUQ1WTGCTBG2")
+        MX = _MarketplaceValue("MX", "A1AM78C64UM0Y8")
+        BR = _MarketplaceValue("BR", "A2Q3Y263D00KWC")
+        JP = _MarketplaceValue("JP", "A1VC38T7YXB528")
+        AU = _MarketplaceValue("AU", "A39IBJ37TRP1C6")
+        IN = _MarketplaceValue("IN", "A21TJRUUN4KGV")
+        AE = _MarketplaceValue("AE", "A2VIGQ35RCS4UG")
+        SG = _MarketplaceValue("SG", "A19VAU5U5O7RUS")
+        NL = _MarketplaceValue("NL", "A1805IZSGTT6HS")
+        SE = _MarketplaceValue("SE", "A2NODRKZP88ZB9")
+        PL = _MarketplaceValue("PL", "A1C3SOZRARQ6R3")
+        TR = _MarketplaceValue("TR", "A33AVAJ2PDY3EV")
+        BE = _MarketplaceValue("BE", "AMEN7PMS3EDWL")
+
+    Reports = None
+    Inventories = None
+    CatalogItems = None
+    Products = None
+    Orders = None
+    VendorOrders = None
 try:
     from sp_api.api import AplusContent, DataKiosk, Finances, ListingsItems, ProductFees
 except ImportError:  # pragma: no cover - supports tests with a minimal sp_api stub
@@ -104,6 +148,11 @@ def with_throttle_retry(max_retries: int = 3, base_delay: float = 2.0):
                     if attempt == max_retries:
                         break
                     backoff = base_delay * (2 ** attempt)
+                except SellingApiException as e:
+                    raise AmazonAPIError(
+                        f"SP-API error on {func.__name__}: {e}",
+                        error_code=getattr(e, "code", None) or "SP_API_ERROR",
+                    ) from e
                     # Respect Retry-After header if present
                     headers = getattr(e, "headers", None) or {}
                     retry_after = headers.get("Retry-After") if isinstance(headers, dict) else None
@@ -160,21 +209,33 @@ class SPAPIClient:
         return self.account_type == "vendor"
 
     def _reports_api(self) -> Reports:
+        if Reports is None:
+            raise AmazonAPIError("Reports API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
         return Reports(**self._api_kwargs)
 
     def _inventories_api(self) -> Inventories:
+        if Inventories is None:
+            raise AmazonAPIError("Inventories API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
         return Inventories(**self._api_kwargs)
 
     def _catalog_api(self, version: str = "2022-04-01") -> CatalogItems:
+        if CatalogItems is None:
+            raise AmazonAPIError("Catalog Items API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
         return CatalogItems(**self._api_kwargs, version=version)
 
     def _products_api(self) -> Products:
+        if Products is None:
+            raise AmazonAPIError("Products API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
         return Products(**self._api_kwargs)
 
     def _orders_api(self) -> Orders:
+        if Orders is None:
+            raise AmazonAPIError("Orders API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
         return Orders(**self._api_kwargs)
 
     def _vendor_orders_api(self) -> VendorOrders:
+        if VendorOrders is None:
+            raise AmazonAPIError("Vendor Orders API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
         return VendorOrders(**self._api_kwargs)
 
     def _listings_api(self) -> ListingsItems:

@@ -86,6 +86,38 @@ def _fmt_pct_diff(product_val: Optional[float], avg_val: Optional[float]) -> tup
     return f"{sign}{diff:.1f}%", "positive" if diff > 0 else "negative"
 
 
+# ReportLab's standard PDF fonts (Helvetica et al.) encode glyphs via latin-1.
+# Amazon product/competitor text routinely contains characters outside that
+# range (narrow no-break space U+202F, thin space, smart quotes, …) which raise
+# UnicodeEncodeError at render time. Map the common ones to safe equivalents and
+# drop anything else that cannot be encoded.
+_LATIN1_REPLACEMENTS = {
+    " ": " ",  # narrow no-break space
+    " ": " ",  # no-break space
+    " ": " ",  # figure space
+    " ": " ",  # thin space
+    " ": " ",  # hair space
+    "​": "",   # zero-width space
+    "‘": "'", "’": "'",  # smart single quotes
+    "“": '"', "”": '"',  # smart double quotes
+    "–": "-", "—": "-",  # en/em dash
+}
+
+
+def _latin1_safe(value: Any) -> Any:
+    """Recursively make strings safe for ReportLab's latin-1 PDF fonts."""
+    if isinstance(value, str):
+        for bad, good in _LATIN1_REPLACEMENTS.items():
+            if bad in value:
+                value = value.replace(bad, good)
+        return value.encode("latin-1", "replace").decode("latin-1")
+    if isinstance(value, dict):
+        return {k: _latin1_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_latin1_safe(v) for v in value]
+    return value
+
+
 def _truncate(text: Optional[str], max_len: int = 60) -> str:
     if not text:
         return "—"
@@ -106,10 +138,11 @@ class MarketResearchPdfBuilder:
         self.report = report
         self.chart_images = chart_images or {}
         self.lang = language
-        self.product: dict = report.product_snapshot or {}
-        self.competitors: list[dict] = report.competitor_data or []
-        self.ai: dict = report.ai_analysis or {}
+        self.product: dict = _latin1_safe(report.product_snapshot or {})
+        self.competitors: list[dict] = _latin1_safe(report.competitor_data or [])
+        self.ai: dict = _latin1_safe(report.ai_analysis or {})
         self.is_market_search = (report.title or "").startswith("Market Search:")
+        self.title = _latin1_safe(report.title or "")
         self._styles = self._build_styles()
 
     def _t(self, key: str) -> str:
@@ -232,7 +265,7 @@ class MarketResearchPdfBuilder:
 
     def _header_footer(self, canvas, doc):
         canvas.saveState()
-        title_text = _truncate(self.report.title, 70) or "Market Research Report"
+        title_text = _truncate(self.title, 70) or "Market Research Report"
         # Header
         canvas.setFont("Helvetica", 7.5)
         canvas.setFillColor(TEXT_MUTED)
@@ -295,7 +328,7 @@ class MarketResearchPdfBuilder:
         elements.append(Paragraph(report_type.upper(), badge_style))
 
         # Title
-        title = self.report.title or "Market Research Report"
+        title = self.title or "Market Research Report"
         elements.append(Paragraph(title, s["cover_title"]))
         elements.append(Spacer(1, 1 * cm))
 
@@ -810,7 +843,7 @@ class MarketResearchPdfBuilder:
             rightMargin=MARGIN,
             topMargin=MARGIN,
             bottomMargin=MARGIN,
-            title=self.report.title or "Market Research Report",
+            title=self.title or "Market Research Report",
             author="Inthezon",
         )
         doc.addPageTemplates([cover_template, body_template])
