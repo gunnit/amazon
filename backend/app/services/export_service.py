@@ -279,26 +279,58 @@ class ExportService:
     ) -> bytes:
         """Generate comprehensive Excel report."""
         from openpyxl import Workbook
-        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-        from openpyxl.utils.dataframe import dataframe_to_rows
-        import pandas as pd
+
+        from app.services.excel_templates import TEMPLATES, ExcelTemplateRenderer
+
+        lang: Language = "en"
+        renderer = ExcelTemplateRenderer(TEMPLATES["corporate"])
+
+        query = select(AmazonAccount).order_by(AmazonAccount.account_name)
+        if account_ids:
+            query = query.where(AmazonAccount.id.in_(account_ids))
+        result = await self.db.execute(query)
+        accounts = result.scalars().all()
+
+        report_types: list[ReportType] = []
+        if include_sales:
+            report_types.append("sales")
+        if include_inventory:
+            report_types.append("inventory")
+        if include_advertising:
+            report_types.append("advertising")
 
         wb = Workbook()
+        wb.remove(wb.active)
 
-        header_font = Font(bold=True, color="FFFFFF")
-        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-        thin_border = Border(
-            left=Side(style="thin"),
-            right=Side(style="thin"),
-            top=Side(style="thin"),
-            bottom=Side(style="thin"),
-        )
+        for report_type in report_types:
+            if report_type == "sales":
+                collected = await self._collect_sales_data(accounts, start_date, end_date, "day", lang, True)
+            elif report_type == "inventory":
+                collected = await self._collect_inventory_data(accounts, False, lang, True)
+            else:
+                collected = await self._collect_advertising_data(accounts, start_date, end_date, lang, True)
 
-        ws = wb.active
-        ws.title = "Summary"
-        ws["A1"] = "Inthezon Performance Report"
-        ws["A1"].font = Font(bold=True, size=16)
-        ws["A3"] = f"Report Period: {start_date} to {end_date}"
+            summary_columns = collected["summary_columns"]
+            summary_headers = [self._text(lang, c) for c in summary_columns]
+            ws_summary = wb.create_sheet(title=self._text(lang, f"{report_type}_report")[:31])
+            next_row = renderer.write_title_banner(
+                ws_summary,
+                title=self._text(lang, f"{report_type}_report"),
+                subtitle=f"{start_date.isoformat()} — {end_date.isoformat()}",
+                metadata_rows=[
+                    (self._text(lang, "account_name"), self._accounts_label(accounts, lang)),
+                    (self._text(lang, "generated_at"), datetime.utcnow().strftime("%Y-%m-%d %H:%M")),
+                ],
+            )
+            renderer.write_summary_sheet(
+                ws_summary, collected["summary_rows"], summary_columns, summary_headers, start_row=next_row
+            )
+
+            for sheet_info in collected["sheets"]:
+                ws = wb.create_sheet(title=sheet_info["name"][:31])
+                cols = sheet_info["columns"]
+                hdrs = [self._text(lang, c) for c in cols]
+                renderer.write_data_sheet(ws, sheet_info["rows"], cols, hdrs)
 
         output = io.BytesIO()
         wb.save(output)

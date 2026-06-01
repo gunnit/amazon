@@ -484,13 +484,120 @@ class CatalogService:
 
     @staticmethod
     def generate_template_bytes() -> bytes:
-        """Return an Excel template for bulk listing updates."""
+        """Return a styled Excel template for bulk listing updates.
+
+        The ``listings`` sheet (first sheet, parsed on re-upload) carries only
+        the header row in the exact order the importer expects. A sample row and
+        per-column guidance live on a separate ``Instructions`` sheet so they are
+        never picked up as a real update.
+        """
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.utils import get_column_letter
+
         columns = ["sku", "asin", "title", "bullet_1", "bullet_2", "bullet_3",
                    "bullet_4", "bullet_5", "description", "search_terms"]
-        df = pd.DataFrame(columns=columns)
+        widths = {
+            "sku": 20, "asin": 16, "title": 50,
+            "bullet_1": 40, "bullet_2": 40, "bullet_3": 40,
+            "bullet_4": 40, "bullet_5": 40,
+            "description": 60, "search_terms": 45,
+        }
+
+        header_fill = PatternFill("solid", fgColor="1F4E79")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "listings"
+        ws.append(columns)
+        for idx, column in enumerate(columns, start=1):
+            cell = ws.cell(row=1, column=idx)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_align
+            ws.column_dimensions[get_column_letter(idx)].width = widths[column]
+        ws.row_dimensions[1].height = 28
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}1"
+
+        guide = [
+            ("sku", "Required", "Seller SKU of the product to update. Rows without a SKU are ignored."),
+            ("asin", "Optional", "ASIN, for your reference only. Not modified by the import."),
+            ("title", "Optional", "Listing title. Max 200 characters."),
+            ("bullet_1", "Optional", "First bullet point. Max 255 characters each."),
+            ("bullet_2", "Optional", "Second bullet point."),
+            ("bullet_3", "Optional", "Third bullet point."),
+            ("bullet_4", "Optional", "Fourth bullet point."),
+            ("bullet_5", "Optional", "Fifth bullet point."),
+            ("description", "Optional", "Product description. Max 2000 characters."),
+            ("search_terms", "Optional", "Backend keywords, space-separated. Max 250 bytes."),
+        ]
+        example = {
+            "sku": "EXAMPLE-SKU-001",
+            "asin": "B08XXXXXXX",
+            "title": "Stainless Steel Water Bottle 750ml",
+            "bullet_1": "Keeps drinks cold for 24h and hot for 12h",
+            "bullet_2": "Leak-proof screw cap with carry loop",
+            "bullet_3": "BPA-free food-grade stainless steel",
+            "bullet_4": "Fits standard car cup holders",
+            "bullet_5": "Dishwasher safe",
+            "description": "Double-walled vacuum insulated bottle for everyday use.",
+            "search_terms": "water bottle insulated thermos flask reusable",
+        }
+
+        info = wb.create_sheet("Instructions")
+        thin = Side(style="thin", color="D0D7E2")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        wrap = Alignment(vertical="top", wrap_text=True)
+
+        info["A1"] = "Bulk Listing Update — Template Guide"
+        info["A1"].font = Font(bold=True, size=14, color="1F4E79")
+        info["A3"] = (
+            "Fill in the 'listings' sheet, one product per row. Only the SKU is "
+            "required; leave any field blank to keep its current value. Do not "
+            "rename the sheet or its column headers."
+        )
+        info["A3"].alignment = wrap
+        info.merge_cells("A3:C3")
+        info.row_dimensions[3].height = 45
+
+        head_row = 5
+        for idx, label in enumerate(("Column", "Required", "Description"), start=1):
+            cell = info.cell(row=head_row, column=idx, value=label)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_align
+        for offset, (name, requirement, desc) in enumerate(guide, start=1):
+            row = head_row + offset
+            for idx, value in enumerate((name, requirement, desc), start=1):
+                cell = info.cell(row=row, column=idx, value=value)
+                cell.border = border
+                cell.alignment = wrap
+
+        example_title = head_row + len(guide) + 2
+        info.cell(row=example_title, column=1, value="Example row (for reference only — do NOT paste into 'listings' as-is):")
+        info.cell(row=example_title, column=1).font = Font(bold=True, italic=True, color="7A7A7A")
+        info.merge_cells(start_row=example_title, start_column=1, end_row=example_title, end_column=3)
+
+        ex_head = example_title + 1
+        for idx, column in enumerate(columns, start=1):
+            cell = info.cell(row=ex_head, column=idx, value=column)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_align
+        for idx, column in enumerate(columns, start=1):
+            cell = info.cell(row=ex_head + 1, column=idx, value=example[column])
+            cell.border = border
+            cell.alignment = wrap
+
+        info.column_dimensions["A"].width = 18
+        info.column_dimensions["B"].width = 14
+        info.column_dimensions["C"].width = 70
+
         buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="listings")
+        wb.save(buffer)
         return buffer.getvalue()
 
 

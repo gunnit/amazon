@@ -190,9 +190,10 @@ async def export_to_excel(
     include_advertising: bool = Query(default=True),
 ):
     """Generate Excel export of data."""
-    import pandas as pd
+    from datetime import datetime
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+
+    from app.services.excel_templates import TEMPLATES, ExcelTemplateRenderer
 
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
@@ -200,26 +201,10 @@ async def export_to_excel(
     if account_ids:
         accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
 
-    # Create workbook
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Summary"
-
-    # Header styling
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-
-    # Summary sheet
-    ws["A1"] = "Inthezon Report"
-    ws["A1"].font = Font(bold=True, size=16)
-    ws["A3"] = f"Period: {start_date} to {end_date}"
-    ws["A4"] = f"Generated: {date.today()}"
+    sales_rows: List[Dict] = []
+    ads_rows: List[Dict] = []
 
     if include_sales:
-        # Sales data sheet
-        sales_ws = wb.create_sheet("Sales Data")
-
-        # Get sales data
         sales_query = (
             select(SalesData)
             .where(
@@ -231,33 +216,21 @@ async def export_to_excel(
             .order_by(SalesData.date.desc())
         )
         result = await db.execute(sales_query)
-        sales_data = result.scalars().all()
-
-        # Headers
-        headers = ["Date", "ASIN", "SKU", "Units Ordered", "Revenue", "Orders", "Currency"]
-        for col, header in enumerate(headers, 1):
-            cell = sales_ws.cell(row=1, column=col, value=header)
-            cell.font = header_font
-            cell.fill = header_fill
-
-        # Data rows
-        for row_num, sale in enumerate(sales_data, 2):
-            sales_ws.cell(row=row_num, column=1, value=sale.date.isoformat())
-            sales_ws.cell(row=row_num, column=2, value=sale.asin)
-            sales_ws.cell(row=row_num, column=3, value=sale.sku or "")
-            sales_ws.cell(row=row_num, column=4, value=sale.units_ordered)
-            sales_ws.cell(row=row_num, column=5, value=float(sale.ordered_product_sales))
-            sales_ws.cell(row=row_num, column=6, value=sale.total_order_items)
-            sales_ws.cell(row=row_num, column=7, value=sale.currency)
+        for sale in result.scalars().all():
+            sales_rows.append({
+                "date": sale.date.isoformat(),
+                "asin": sale.asin,
+                "sku": sale.sku or "",
+                "units_ordered": sale.units_ordered,
+                "revenue": float(sale.ordered_product_sales),
+                "orders": sale.total_order_items,
+                "currency": sale.currency,
+            })
 
     if include_advertising:
-        # Advertising data sheet
-        ads_ws = wb.create_sheet("Advertising")
-
         campaigns_query = select(AdvertisingCampaign.id).where(
             AdvertisingCampaign.account_id.in_(accounts_query)
         )
-
         ads_query = (
             select(AdvertisingMetrics, AdvertisingCampaign.campaign_name)
             .join(AdvertisingCampaign)
@@ -269,27 +242,71 @@ async def export_to_excel(
             .order_by(AdvertisingMetrics.date.desc())
         )
         result = await db.execute(ads_query)
-        ads_data = result.all()
+        for metric, campaign_name in result.all():
+            ads_rows.append({
+                "date": metric.date.isoformat(),
+                "campaign": campaign_name or "",
+                "impressions": metric.impressions,
+                "clicks": metric.clicks,
+                "cost": float(metric.cost),
+                "sales": float(metric.attributed_sales_7d),
+                "roas": float(metric.roas or 0),
+                "acos": float(metric.acos or 0),
+            })
 
-        # Headers
-        headers = ["Date", "Campaign", "Impressions", "Clicks", "Cost", "Sales", "ROAS", "ACoS"]
-        for col, header in enumerate(headers, 1):
-            cell = ads_ws.cell(row=1, column=col, value=header)
-            cell.font = header_font
-            cell.fill = header_fill
+    renderer = ExcelTemplateRenderer(TEMPLATES["corporate"])
+    wb = Workbook()
+    wb.remove(wb.active)
 
-        # Data rows
-        for row_num, (metric, campaign_name) in enumerate(ads_data, 2):
-            ads_ws.cell(row=row_num, column=1, value=metric.date.isoformat())
-            ads_ws.cell(row=row_num, column=2, value=campaign_name or "")
-            ads_ws.cell(row=row_num, column=3, value=metric.impressions)
-            ads_ws.cell(row=row_num, column=4, value=metric.clicks)
-            ads_ws.cell(row=row_num, column=5, value=float(metric.cost))
-            ads_ws.cell(row=row_num, column=6, value=float(metric.attributed_sales_7d))
-            ads_ws.cell(row=row_num, column=7, value=float(metric.roas or 0))
-            ads_ws.cell(row=row_num, column=8, value=float(metric.acos or 0))
+    # Summary / KPI sheet
+    summary_rows: List[Dict] = []
+    if include_sales:
+        summary_rows.append({"metric": "Units Ordered", "current_value": sum(r["units_ordered"] or 0 for r in sales_rows)})
+        summary_rows.append({"metric": "Revenue", "current_value": round(sum(r["revenue"] for r in sales_rows), 2)})
+        summary_rows.append({"metric": "Orders", "current_value": sum(r["orders"] or 0 for r in sales_rows)})
+    if include_advertising:
+        summary_rows.append({"metric": "Ad Impressions", "current_value": sum(r["impressions"] or 0 for r in ads_rows)})
+        summary_rows.append({"metric": "Ad Clicks", "current_value": sum(r["clicks"] or 0 for r in ads_rows)})
+        summary_rows.append({"metric": "Ad Spend", "current_value": round(sum(r["cost"] for r in ads_rows), 2)})
+        summary_rows.append({"metric": "Ad Sales", "current_value": round(sum(r["sales"] for r in ads_rows), 2)})
 
-    # Save to bytes
+    ws_summary = wb.create_sheet(title="Summary")
+    next_row = renderer.write_title_banner(
+        ws_summary,
+        title="Inthezon Report",
+        subtitle=f"{start_date.isoformat()} — {end_date.isoformat()}",
+        metadata_rows=[
+            ("Organization", organization.name),
+            ("Period", f"{start_date} to {end_date}"),
+            ("Generated at", datetime.utcnow().strftime("%Y-%m-%d %H:%M")),
+        ],
+    )
+    renderer.write_summary_sheet(
+        ws_summary,
+        summary_rows,
+        ["metric", "current_value"],
+        ["Metric", "Value"],
+        start_row=next_row,
+    )
+
+    if include_sales:
+        ws_sales = wb.create_sheet(title="Sales Data")
+        renderer.write_data_sheet(
+            ws_sales,
+            sales_rows,
+            ["date", "asin", "sku", "units_ordered", "revenue", "orders", "currency"],
+            ["Date", "ASIN", "SKU", "Units Ordered", "Revenue", "Orders", "Currency"],
+        )
+
+    if include_advertising:
+        ws_ads = wb.create_sheet(title="Advertising")
+        renderer.write_data_sheet(
+            ws_ads,
+            ads_rows,
+            ["date", "campaign", "impressions", "clicks", "cost", "sales", "roas", "acos"],
+            ["Date", "Campaign", "Impressions", "Clicks", "Cost", "Sales", "ROAS", "ACoS"],
+        )
+
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
