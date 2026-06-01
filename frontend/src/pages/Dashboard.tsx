@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Megaphone,
   Target,
+  Info,
 } from 'lucide-react'
 import {
   LineChart,
@@ -40,6 +41,7 @@ import { useFilterStore, getComparisonPeriods, getFilterDateRange } from '@/stor
 import { useTranslation } from '@/i18n'
 import { useToast } from '@/components/ui/use-toast'
 import type {
+  AmazonAccount,
   DashboardKPIs,
   TrendData,
   AccountSummary,
@@ -311,12 +313,32 @@ export default function Dashboard() {
     queryFn: () => accountsApi.getSummary(),
   })
 
+  const { data: accounts } = useQuery<AmazonAccount[]>({
+    queryKey: ['accounts'],
+    queryFn: () => accountsApi.list(),
+  })
+
   const scope = resolveDashboardScope(
     requestedAccountId,
     accountsLoading ? undefined : accountSummary?.accounts
   )
   const queriesEnabled = scope.mode !== 'resolving'
   const effectiveAccountIds = scope.mode === 'account' ? [scope.accountId] : accountIds
+
+  // Vendor accounts only get monthly, already-settled data, so a recent window can
+  // legitimately read 0. Surface a note whenever the current scope includes a vendor.
+  const vendorSelected = (() => {
+    if (!accounts) return false
+    const vendors = accounts.filter((a) => a.account_type === 'vendor')
+    if (vendors.length === 0) return false
+    if (scope.mode === 'account') {
+      return vendors.some((v) => v.id === scope.accountId)
+    }
+    if (effectiveAccountIds.length === 0) {
+      return true // "All accounts" selection includes the vendor(s)
+    }
+    return vendors.some((v) => effectiveAccountIds.includes(v.id))
+  })()
 
   const { data: kpis, isLoading: kpisLoading } = useQuery<DashboardKPIs>({
     queryKey: ['dashboard-kpis', dateRange, effectiveAccountIds],
@@ -515,6 +537,17 @@ export default function Dashboard() {
               {accountSummary.error_accounts} {t('dashboard.errors')}
             </Badge>
           ) : null}
+        </div>
+      )}
+
+      {/* Vendor settlement-lag note */}
+      {vendorSelected && (
+        <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/30 px-4 py-3 text-sm">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div>
+            <p className="font-medium text-foreground">{t('dashboard.vendorDataNoteTitle')}</p>
+            <p className="mt-0.5 text-muted-foreground">{t('dashboard.vendorDataNote')}</p>
+          </div>
         </div>
       )}
 
