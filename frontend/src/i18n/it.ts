@@ -151,6 +151,8 @@ const it: Record<string, string> = {
   'dashboard.unitsEmptyDesc': 'Collega un account o attendi il prossimo aggiornamento dati per vedere il volume delle unità.',
   'dashboard.accountUnitsEmptyTitle': 'Nessun dato di unità per questo account nel periodo selezionato.',
   'dashboard.accountUnitsEmptyDesc': "Prova ad ampliare l'intervallo di date o torna alla vista di tutti gli account per confrontare {accountName}.",
+  'dashboard.vendorDataNoteTitle': 'Dati vendor mensili',
+  'dashboard.vendorDataNote': 'I dati vendor sono mensili e si aggiornano solo a mese concluso (ritardo ~4 giorni). I periodi recenti possono apparire a 0 finché Amazon non consolida il mese.',
   'dashboard.accounts': 'Account',
   'dashboard.backToAll': 'Torna a tutti gli account',
   'dashboard.backToOverview': "Torna all'overview",
