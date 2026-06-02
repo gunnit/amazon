@@ -198,6 +198,8 @@ const it: Record<string, string> = {
   'dashboard.kpiLoadErrorDesc': 'Si è verificato un errore durante il recupero dei KPI. Aggiorna la pagina o riprova tra qualche istante.',
   'dashboard.vendorDataNoteTitle': 'Dati vendor mensili',
   'dashboard.vendorDataNote': 'I dati vendor sono mensili e si aggiornano solo a mese concluso (ritardo ~4 giorni). I periodi recenti possono apparire a 0 finché Amazon non consolida il mese.',
+  'dashboard.noDataTitle': 'Nessun dato di vendita in questo periodo',
+  'dashboard.noDataDesc': 'Non risultano vendite nell\'intervallo selezionato. Prova ad ampliare il periodo.',
   'dashboard.accounts': 'Account',
   'dashboard.backToAll': 'Torna a tutti gli account',
   'dashboard.backToOverview': "Torna all'overview",

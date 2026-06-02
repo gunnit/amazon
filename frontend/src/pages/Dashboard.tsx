@@ -505,6 +505,15 @@ export default function Dashboard() {
     )
   }
 
+  // The selected window genuinely has no sales (not a load error). Show an honest
+  // empty-state instead of alarming "-100%" deltas on the zeroed KPI cards.
+  const hasNoSalesData =
+    !kpisError &&
+    !!kpis &&
+    kpis.total_revenue.value === 0 &&
+    kpis.total_orders.value === 0 &&
+    kpis.total_units.value === 0
+
   const revenueTrend = trends?.find((t) => t.metric_name === 'revenue')
   const unitsTrend = trends?.find((t) => t.metric_name === 'units')
 
@@ -676,12 +685,21 @@ export default function Dashboard() {
         </Alert>
       ) : (
       <>
+      {hasNoSalesData && (
+        <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/30 px-4 py-3 text-sm">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div>
+            <p className="font-medium text-foreground">{t('dashboard.noDataTitle')}</p>
+            <p className="mt-0.5 text-muted-foreground">{t('dashboard.noDataDesc')}</p>
+          </div>
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <KPICard
           title={t('dashboard.totalRevenue')}
           value={kpis?.total_revenue.value || 0}
-          change={kpis?.total_revenue.change_percent}
-          trend={kpis?.total_revenue.trend}
+          change={hasNoSalesData ? undefined : kpis?.total_revenue.change_percent}
+          trend={hasNoSalesData ? undefined : kpis?.total_revenue.trend}
           icon={DollarSign}
           format="currency"
           currency={currency}
@@ -691,15 +709,15 @@ export default function Dashboard() {
         <KPICard
           title={t('dashboard.totalOrders')}
           value={kpis?.total_orders.value || 0}
-          change={kpis?.total_orders.change_percent}
-          trend={kpis?.total_orders.trend}
+          change={hasNoSalesData ? undefined : kpis?.total_orders.change_percent}
+          trend={hasNoSalesData ? undefined : kpis?.total_orders.trend}
           icon={ShoppingCart}
         />
         <KPICard
           title={t('dashboard.unitsSold')}
           value={kpis?.total_units.value || 0}
-          change={kpis?.total_units.change_percent}
-          trend={kpis?.total_units.trend}
+          change={hasNoSalesData ? undefined : kpis?.total_units.change_percent}
+          trend={hasNoSalesData ? undefined : kpis?.total_units.trend}
           icon={Package}
         />
       </div>
