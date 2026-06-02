@@ -24,7 +24,7 @@ from app.schemas.analytics import (
     DashboardKPIs, MetricValue, TrendData, TrendDataPoint,
     ComparisonDailyPoint, ComparisonMetric, ComparisonPeriod, ComparisonResponse,
     PaginatedProductPerformance, ProductPerformance, TopPerformers,
-    AdvertisingInsights, CategorySalesData, HourlyOrdersData, ProductTrendsResponse,
+    AdvertisingInsights, HourlyOrdersData, ProductTrendsResponse,
     ReturnAsinMetric, ReturnReasonBreakdown, ReturnsAnalyticsResponse, ReturnsSummary,
     ReturnsTrendPoint,
     AdsVsOrganicResponse,
@@ -100,6 +100,27 @@ def _accounts_query(organization_id: UUID, account_ids: Optional[List[UUID]]) ->
     if account_ids:
         query = query.where(AmazonAccount.id.in_(account_ids))
     return query
+
+
+async def _validate_account_ids(
+    db: DbSession,
+    organization_id: UUID,
+    account_ids: Optional[List[UUID]],
+) -> None:
+    """Ensure all requested account ids belong to the organization."""
+    if not account_ids:
+        return
+    rows = (
+        await db.execute(
+            select(AmazonAccount.id).where(
+                AmazonAccount.id.in_(account_ids),
+                AmazonAccount.organization_id == organization_id,
+            )
+        )
+    ).scalars().all()
+    missing = set(account_ids) - set(rows)
+    if missing:
+        raise HTTPException(status_code=404, detail="Account not found")
 
 
 def _resolve_optional_date_range(
@@ -550,6 +571,7 @@ async def get_dashboard_kpis(
     account_ids: Optional[List[UUID]] = Query(default=None),
 ):
     """Get dashboard KPIs with comparisons."""
+    await _validate_account_ids(db, organization.id, account_ids)
     _validate_period(start_date, end_date, "period")
     prev_start, prev_end = _previous_period(start_date, end_date)
     accounts_query = _accounts_query(organization.id, account_ids)
@@ -671,6 +693,7 @@ async def get_ads_vs_organic(
     """Get ad-attributed vs organic sales analytics."""
     _validate_period(date_from, date_to, "period")
     selected_account_ids = _merge_account_ids(account_id, account_ids)
+    await _validate_account_ids(db, organization.id, selected_account_ids)
     accounts_stmt = _accounts_query(organization.id, selected_account_ids)
     resolved_account_ids = list((await db.execute(accounts_stmt)).scalars().all())
     asin = _normalize_optional_asin(asin)
@@ -696,6 +719,7 @@ async def get_trends(
     account_ids: Optional[List[UUID]] = Query(default=None),
 ):
     """Get trend data for specified metrics."""
+    await _validate_account_ids(db, organization.id, account_ids)
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
@@ -778,6 +802,7 @@ async def get_returns_analysis(
         _validate_period(date_from, date_to, "period")
 
     selected_account_ids = _merge_account_ids(account_id, account_ids)
+    await _validate_account_ids(db, organization.id, selected_account_ids)
     accounts_query = _accounts_query(organization.id, selected_account_ids)
 
     returns_filters = [ReturnData.account_id.in_(accounts_query)]
@@ -1070,6 +1095,7 @@ async def get_comparison(
     preset: Optional[str] = Query(default=None),
 ):
     """Compare metrics between two periods."""
+    await _validate_account_ids(db, organization.id, account_ids)
     return await _build_period_comparison(
         db=db,
         organization_id=organization.id,
@@ -1094,6 +1120,7 @@ async def get_top_performers(
     limit: int = Query(default=10, le=50),
 ):
     """Get top performing products."""
+    await _validate_account_ids(db, organization.id, account_ids)
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
@@ -1235,6 +1262,7 @@ async def get_per_product_performance(
     Returns a flat, sortable, searchable list of every ASIN with sales in the
     range, joined left with ad metrics so products without ads still appear.
     """
+    await _validate_account_ids(db, organization.id, account_ids)
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
@@ -1396,6 +1424,8 @@ async def get_product_trends(
     if account_id and account_id not in scoped_account_ids:
         scoped_account_ids.append(account_id)
 
+    await _validate_account_ids(db, organization.id, scoped_account_ids)
+
     accounts_stmt = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
@@ -1446,69 +1476,6 @@ async def get_product_trends(
     )
 
 
-@router.get("/sales-by-category", response_model=List[CategorySalesData])
-async def get_sales_by_category(
-    current_user: CurrentUser,
-    organization: CurrentOrganization,
-    db: DbSession,
-    start_date: date = Query(default=date.today() - timedelta(days=30)),
-    end_date: date = Query(default=date.today()),
-    account_ids: Optional[List[UUID]] = Query(default=None),
-    category: Optional[str] = Query(default=None),
-    limit: int = Query(default=20, le=100),
-):
-    """Get sales aggregates grouped by product category."""
-    accounts_query = select(AmazonAccount.id).where(
-        AmazonAccount.organization_id == organization.id
-    )
-    if account_ids:
-        accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
-
-    category_expr = func.coalesce(Product.category, "Uncategorized")
-    query = (
-        select(
-            category_expr.label("category"),
-            func.sum(SalesData.ordered_product_sales).label("total_revenue"),
-            func.sum(SalesData.units_ordered).label("total_units"),
-            func.sum(SalesData.total_order_items).label("total_orders"),
-        )
-        .select_from(SalesData)
-        .outerjoin(
-            Product,
-            and_(
-                Product.account_id == SalesData.account_id,
-                Product.asin == SalesData.asin,
-            ),
-        )
-        .where(
-            SalesData.account_id.in_(accounts_query),
-            SalesData.asin != DAILY_TOTAL_ASIN,
-            SalesData.date >= start_date,
-            SalesData.date <= end_date,
-        )
-    )
-
-    if category:
-        query = query.where(Product.category == category)
-
-    query = (
-        query.group_by(category_expr)
-        .order_by(func.sum(SalesData.ordered_product_sales).desc())
-        .limit(limit)
-    )
-
-    rows = (await db.execute(query)).all()
-    return [
-        CategorySalesData(
-            category=row.category or "Uncategorized",
-            total_revenue=float(row.total_revenue or 0),
-            total_units=int(row.total_units or 0),
-            total_orders=int(row.total_orders or 0),
-        )
-        for row in rows
-    ]
-
-
 @router.get("/orders-by-hour", response_model=List[HourlyOrdersData])
 async def get_orders_by_hour(
     current_user: CurrentUser,
@@ -1520,6 +1487,7 @@ async def get_orders_by_hour(
     max_pages_per_account: int = Query(default=10, ge=1, le=50),
 ):
     """Get order counts by hour (UTC) from SP-API Orders endpoint."""
+    await _validate_account_ids(db, organization.id, account_ids)
     accounts_stmt = select(AmazonAccount).where(
         AmazonAccount.organization_id == organization.id,
         AmazonAccount.is_active == True,
@@ -1651,6 +1619,7 @@ async def get_advertising_insights(
     account_ids: Optional[List[UUID]] = Query(default=None),
 ):
     """Get advertising performance insights."""
+    await _validate_account_ids(db, organization.id, account_ids)
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )

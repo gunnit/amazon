@@ -560,8 +560,6 @@ const en: Record<string, string> = {
   'analytics.perProduct.showing': 'Showing {from}–{to} of {total}',
   'analytics.topProducts': 'Top Products by Revenue',
   'analytics.topProductsDesc': 'Best performing products this period',
-  'analytics.salesByCategory': 'Sales by Category',
-  'analytics.salesByCategoryDesc': 'Revenue distribution across categories',
   'analytics.showing': 'Showing: {category}',
   'analytics.ordersByHour': 'Orders by Hour',
   'analytics.ordersByHourDesc': 'When your customers are most active',

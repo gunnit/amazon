@@ -116,6 +116,15 @@ class ForecastExportContext:
     historical: List[ForecastHistoricalPoint]
 
 
+def _is_monthly(dates: List[date]) -> bool:
+    """Detect a monthly cadence from date spacing (mirrors the forecast model)."""
+    if len(dates) < 3:
+        return False
+    ordered = sorted(dates)
+    gaps = sorted((ordered[i + 1] - ordered[i]).days for i in range(len(ordered) - 1))
+    return gaps[len(gaps) // 2] >= 20
+
+
 class ForecastExportService:
     """Service for creating and tracking async forecast export jobs."""
 
@@ -208,18 +217,23 @@ class ForecastExportService:
         asin: Optional[str],
         days: int = 30,
     ) -> List[ForecastHistoricalPoint]:
-        start_date = date.today() - timedelta(days=days)
         query = (
             select(SalesData.date, func.sum(SalesData.ordered_product_sales).label("value"))
-            .where(SalesData.account_id == account_id, SalesData.date >= start_date)
+            .where(SalesData.account_id == account_id)
             .group_by(SalesData.date)
             .order_by(SalesData.date)
         )
         query = query.where(SalesData.asin == (asin or DAILY_TOTAL_ASIN))
-        result = await self.db.execute(query)
+        rows = (await self.db.execute(query)).all()
+
+        dates = [row.date for row in rows]
+        if not _is_monthly(dates):
+            start_date = date.today() - timedelta(days=days)
+            rows = [row for row in rows if row.date >= start_date]
+
         return [
             ForecastHistoricalPoint(date=row.date, value=float(row.value or 0))
-            for row in result.all()
+            for row in rows
         ]
 
 

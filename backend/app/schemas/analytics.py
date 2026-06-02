@@ -52,14 +52,6 @@ class TrendData(BaseModel):
     max_value: float
 
 
-class CategorySalesData(BaseModel):
-    """Sales aggregates by category."""
-    category: str
-    total_revenue: float
-    total_units: int
-    total_orders: int
-
-
 class HourlyOrdersData(BaseModel):
     """Orders count by hour of day (0-23, UTC)."""
     hour: int

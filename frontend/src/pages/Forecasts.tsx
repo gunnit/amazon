@@ -723,7 +723,7 @@ export default function Forecasts() {
                             {titleText}
                             {!eligible && (
                               <span className="ml-2 text-xs text-muted-foreground">
-                                \u00b7 {t('forecasts.notEnoughHistory', {
+                                {'\u00b7'} {t('forecasts.notEnoughHistory', {
                                   days: product.history_days,
                                 })}
                               </span>

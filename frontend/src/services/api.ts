@@ -4,7 +4,7 @@ import type {
   AmazonAccount, AccountSummary, AdvertisingProfile, AdvertisingProfilesRequest,
   DashboardKPIs, TrendData, SalesAggregated, ComparisonResponse,
   AdsVsOrganicResponse, AdvertisingInsights,
-  CategorySalesData, HourlyOrdersData, ProductTrendsResponse, ReturnsAnalyticsResponse, TopPerformersResponse,
+  HourlyOrdersData, ProductTrendsResponse, ReturnsAnalyticsResponse, TopPerformersResponse,
   PaginatedProductPerformance, PerProductSortKey,
   Forecast, Product,
   ForecastExportJob,
@@ -486,17 +486,6 @@ export const analyticsApi = {
     search?: string
   }): Promise<PaginatedProductPerformance> => {
     const response = await api.get('/analytics/per-product-performance', { params })
-    return response.data
-  },
-
-  getSalesByCategory: async (params: {
-    start_date: string
-    end_date: string
-    account_ids?: string[]
-    category?: string
-    limit?: number
-  }): Promise<CategorySalesData[]> => {
-    const response = await api.get('/analytics/sales-by-category', { params })
     return response.data
   },
 
