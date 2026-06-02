@@ -27,6 +27,10 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  ComposedChart,
+  BarChart,
+  Bar,
+  Legend,
 } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
@@ -355,6 +359,23 @@ export default function Dashboard() {
     return vendors.some((v) => effectiveAccountIds.includes(v.id))
   })()
 
+  // Split the in-scope accounts by type so we can plot seller (daily) and vendor
+  // (monthly) as separate series instead of fusing the vendor monthly lump into
+  // the seller daily line (which renders as a false spike on the 1st of a month).
+  // In "all" mode effectiveAccountIds is empty and means every account.
+  const inScopeAccounts = (accounts ?? []).filter((a) =>
+    effectiveAccountIds.length === 0 ? true : effectiveAccountIds.includes(a.id)
+  )
+  const sellerAccountIds = inScopeAccounts
+    .filter((a) => a.account_type === 'seller')
+    .map((a) => a.id)
+  const vendorAccountIds = inScopeAccounts
+    .filter((a) => a.account_type === 'vendor')
+    .map((a) => a.id)
+  const hasSeller = sellerAccountIds.length > 0
+  const hasVendor = vendorAccountIds.length > 0
+  const mixed = hasSeller && hasVendor
+
   const { data: kpis, isLoading: kpisLoading, isError: kpisError } = useQuery<DashboardKPIs>({
     queryKey: ['dashboard-kpis', dateRange, effectiveAccountIds],
     queryFn: () => analyticsApi.getDashboard({
@@ -374,6 +395,31 @@ export default function Dashboard() {
       account_ids: effectiveAccountIds.length > 0 ? effectiveAccountIds : undefined,
     }),
     enabled: queriesEnabled,
+  })
+
+  // When both seller and vendor accounts are in scope, fetch the seller-only series
+  // separately so we can render it as the daily Area/Line baseline.
+  const { data: sellerTrends } = useQuery<TrendData[]>({
+    queryKey: ['dashboard-trends-seller', dateRange, sellerAccountIds],
+    queryFn: () => analyticsApi.getTrends({
+      metrics: ['revenue', 'units'],
+      start_date: dateRange.start,
+      end_date: dateRange.end,
+      account_ids: sellerAccountIds,
+    }),
+    enabled: queriesEnabled && mixed && hasSeller,
+  })
+
+  // Vendor-only series, used both in the vendor-only path and the mixed path.
+  const { data: vendorTrends } = useQuery<TrendData[]>({
+    queryKey: ['dashboard-trends-vendor', dateRange, vendorAccountIds],
+    queryFn: () => analyticsApi.getTrends({
+      metrics: ['revenue', 'units'],
+      start_date: dateRange.start,
+      end_date: dateRange.end,
+      account_ids: vendorAccountIds,
+    }),
+    enabled: queriesEnabled && hasVendor,
   })
 
   const { data: trendingProducts, isLoading: trendingProductsLoading } = useQuery<ProductTrendsResponse>({
@@ -462,6 +508,38 @@ export default function Dashboard() {
   const revenueTrend = trends?.find((t) => t.metric_name === 'revenue')
   const unitsTrend = trends?.find((t) => t.metric_name === 'units')
 
+  // Per-type series for the vendor-only and mixed chart paths.
+  const sellerRevenue = sellerTrends?.find((t) => t.metric_name === 'revenue')
+  const sellerUnits = sellerTrends?.find((t) => t.metric_name === 'units')
+  const vendorRevenue = vendorTrends?.find((t) => t.metric_name === 'revenue')
+  const vendorUnits = vendorTrends?.find((t) => t.metric_name === 'units')
+
+  const vendorColor = '#f59e0b'
+
+  // Merge a seller daily series and a vendor monthly series into rows keyed by
+  // date. Missing values stay undefined so Recharts skips them instead of
+  // plotting a misleading 0.
+  const mergeSeries = (
+    seller: TrendData | undefined,
+    vendor: TrendData | undefined
+  ) => {
+    const byDate = new Map<string, { date: string; seller?: number; vendor?: number }>()
+    for (const point of seller?.data_points ?? []) {
+      byDate.set(point.date, { ...(byDate.get(point.date) ?? { date: point.date }), seller: point.value })
+    }
+    for (const point of vendor?.data_points ?? []) {
+      byDate.set(point.date, { ...(byDate.get(point.date) ?? { date: point.date }), vendor: point.value })
+    }
+    return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))
+  }
+
+  const revenueComposed = mergeSeries(sellerRevenue, vendorRevenue)
+  const unitsComposed = mergeSeries(sellerUnits, vendorUnits)
+
+  const tickFormatter = (value: string) =>
+    new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const labelFormatter = (label: string) => new Date(label + 'T00:00:00').toLocaleDateString()
+
   const currency = kpis?.currency || 'EUR'
   const compactCurrency = new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -472,13 +550,21 @@ export default function Dashboard() {
 
   const days = datePreset === 'custom' ? t('common.selectedPeriod') : t('common.lastNDays', { n: datePreset })
   const revenueTrendDescription =
-    scope.mode === 'account'
-      ? t('dashboard.revenueTrendDescAccount', { days, accountName: scope.accountName })
-      : t('dashboard.revenueTrendDesc', { days })
+    mixed
+      ? t('dashboard.trendDescMixed')
+      : hasVendor && !hasSeller
+        ? t('dashboard.revenueTrendDescVendor')
+        : scope.mode === 'account'
+          ? t('dashboard.revenueTrendDescAccount', { days, accountName: scope.accountName })
+          : t('dashboard.revenueTrendDesc', { days })
   const unitsTrendDescription =
-    scope.mode === 'account'
-      ? t('dashboard.unitsTrendDescAccount', { days, accountName: scope.accountName })
-      : t('dashboard.unitsTrendDesc', { days })
+    mixed
+      ? t('dashboard.trendDescMixed')
+      : hasVendor && !hasSeller
+        ? t('dashboard.unitsTrendDescVendor')
+        : scope.mode === 'account'
+          ? t('dashboard.unitsTrendDescAccount', { days, accountName: scope.accountName })
+          : t('dashboard.unitsTrendDesc', { days })
   const revenueEmptyTitle =
     scope.mode === 'account' ? t('dashboard.accountRevenueEmptyTitle') : t('dashboard.revenueEmptyTitle')
   const revenueEmptyDescription =
@@ -668,18 +754,55 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="h-[300px]">
-              {revenueTrend && revenueTrend.data_points.length > 0 ? (
+              {mixed && revenueComposed.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={revenueComposed}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="date" tickFormatter={tickFormatter} />
+                    <YAxis tickFormatter={(value) => compactCurrency.format(value)} />
+                    <Tooltip
+                      formatter={(value: number) => formatCurrency(value, currency)}
+                      labelFormatter={labelFormatter}
+                    />
+                    <Legend />
+                    <Bar
+                      dataKey="vendor"
+                      name={t('dashboard.seriesVendor')}
+                      fill={vendorColor}
+                      fillOpacity={0.8}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="seller"
+                      name={t('dashboard.seriesSeller')}
+                      stroke="hsl(var(--primary))"
+                      fill="hsl(var(--primary))"
+                      fillOpacity={0.2}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : hasVendor && !hasSeller && vendorRevenue && vendorRevenue.data_points.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={vendorRevenue.data_points}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="date" tickFormatter={tickFormatter} />
+                    <YAxis tickFormatter={(value) => compactCurrency.format(value)} />
+                    <Tooltip
+                      formatter={(value: number) => [formatCurrency(value, currency), t('dashboard.seriesVendor')]}
+                      labelFormatter={labelFormatter}
+                    />
+                    <Bar dataKey="value" fill={vendorColor} fillOpacity={0.8} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : revenueTrend && revenueTrend.data_points.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={revenueTrend.data_points}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(value) => new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    />
+                    <XAxis dataKey="date" tickFormatter={tickFormatter} />
                     <YAxis tickFormatter={(value) => compactCurrency.format(value)} />
                     <Tooltip
                       formatter={(value: number) => [formatCurrency(value, currency), t('common.revenue')]}
-                      labelFormatter={(label) => new Date(label + 'T00:00:00').toLocaleDateString()}
+                      labelFormatter={labelFormatter}
                     />
                     <Area
                       type="monotone"
@@ -709,18 +832,55 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="h-[300px]">
-              {unitsTrend && unitsTrend.data_points.length > 0 ? (
+              {mixed && unitsComposed.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={unitsComposed}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="date" tickFormatter={tickFormatter} />
+                    <YAxis />
+                    <Tooltip
+                      formatter={(value: number) => formatNumber(value)}
+                      labelFormatter={labelFormatter}
+                    />
+                    <Legend />
+                    <Bar
+                      dataKey="vendor"
+                      name={t('dashboard.seriesVendor')}
+                      fill={vendorColor}
+                      fillOpacity={0.8}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="seller"
+                      name={t('dashboard.seriesSeller')}
+                      stroke="hsl(var(--primary))"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : hasVendor && !hasSeller && vendorUnits && vendorUnits.data_points.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={vendorUnits.data_points}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="date" tickFormatter={tickFormatter} />
+                    <YAxis />
+                    <Tooltip
+                      formatter={(value: number) => [formatNumber(value), t('dashboard.seriesVendor')]}
+                      labelFormatter={labelFormatter}
+                    />
+                    <Bar dataKey="value" fill={vendorColor} fillOpacity={0.8} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : unitsTrend && unitsTrend.data_points.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={unitsTrend.data_points}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(value) => new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    />
+                    <XAxis dataKey="date" tickFormatter={tickFormatter} />
                     <YAxis />
                     <Tooltip
                       formatter={(value: number) => [formatNumber(value), t('common.units')]}
-                      labelFormatter={(label) => new Date(label + 'T00:00:00').toLocaleDateString()}
+                      labelFormatter={labelFormatter}
                     />
                     <Line
                       type="monotone"

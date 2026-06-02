@@ -26,6 +26,28 @@ export function AccountFilter() {
         ? accounts?.find((a) => a.id === accountIds[0])?.account_name || '1 account'
         : t('filter.nAccounts', { n: selectedCount })
 
+  const sellerAccounts = accounts?.filter((a) => a.account_type === 'seller') ?? []
+  const vendorAccounts = accounts?.filter((a) => a.account_type === 'vendor') ?? []
+
+  const renderAccountRow = (account: AmazonAccount, isVendor = false) => (
+    <label
+      key={account.id}
+      className="flex items-center gap-2 cursor-pointer rounded-sm px-1 py-1 hover:bg-accent"
+    >
+      <Checkbox
+        checked={accountIds.includes(account.id)}
+        onCheckedChange={() => toggleAccountId(account.id)}
+      />
+      <span className="text-sm flex-1 truncate">{account.account_name}</span>
+      <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+        {account.marketplace_country}
+      </Badge>
+      {isVendor && (
+        <span className="text-[10px] text-muted-foreground">· {t('filter.monthly')}</span>
+      )}
+    </label>
+  )
+
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -48,22 +70,23 @@ export function AccountFilter() {
               </button>
             )}
           </div>
-          <div className="space-y-2">
-            {accounts?.map((account) => (
-              <label
-                key={account.id}
-                className="flex items-center gap-2 cursor-pointer rounded-sm px-1 py-1 hover:bg-accent"
-              >
-                <Checkbox
-                  checked={accountIds.includes(account.id)}
-                  onCheckedChange={() => toggleAccountId(account.id)}
-                />
-                <span className="text-sm flex-1 truncate">{account.account_name}</span>
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                  {account.marketplace_country}
-                </Badge>
-              </label>
-            ))}
+          <div className="space-y-3">
+            {sellerAccounts.length > 0 && (
+              <div className="space-y-1">
+                <p className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t('filter.sellerGroup')}
+                </p>
+                {sellerAccounts.map((account) => renderAccountRow(account))}
+              </div>
+            )}
+            {vendorAccounts.length > 0 && (
+              <div className="space-y-1">
+                <p className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t('filter.vendorGroup')}
+                </p>
+                {vendorAccounts.map((account) => renderAccountRow(account, true))}
+              </div>
+            )}
             {(!accounts || accounts.length === 0) && (
               <p className="text-xs text-muted-foreground py-2">{t('filter.noAccountsFound')}</p>
             )}
