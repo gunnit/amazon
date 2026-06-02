@@ -1,4 +1,4 @@
-import { Minus, TrendingDown, TrendingUp } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Minus } from 'lucide-react'
 import {
   CartesianGrid,
   Legend,
@@ -11,7 +11,7 @@ import {
 } from 'recharts'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { formatCurrency, formatDate, formatNumber, formatPercent } from '@/lib/utils'
+import { cn, formatCurrency, formatDate, formatNumber } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 import type { ComparisonDailyPoint, ComparisonMetric, ComparisonResponse } from '@/types'
 
@@ -46,29 +46,25 @@ function MetricTrend({
     return null
   }
 
-  if (trend === 'up') {
-    return (
-      <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
-        <TrendingUp className="mr-1 h-3 w-3" />
-        {formatPercent(changePercent)}
-      </Badge>
-    )
-  }
-
-  if (trend === 'down') {
-    return (
-      <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700">
-        <TrendingDown className="mr-1 h-3 w-3" />
-        {formatPercent(changePercent)}
-      </Badge>
-    )
-  }
+  const isUp = trend === 'up'
+  const isDown = trend === 'down'
+  const Icon = isUp ? ArrowUpRight : isDown ? ArrowDownRight : Minus
+  const tone = isUp
+    ? 'text-emerald-600 bg-emerald-500/10 dark:text-emerald-400'
+    : isDown
+      ? 'text-rose-600 bg-rose-500/10 dark:text-rose-400'
+      : 'text-muted-foreground bg-muted/60'
 
   return (
-    <Badge variant="outline" className="text-muted-foreground">
-      <Minus className="mr-1 h-3 w-3" />
-      {formatPercent(changePercent)}
-    </Badge>
+    <span
+      className={cn(
+        'inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums',
+        tone,
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {Math.abs(changePercent).toFixed(1)}%
+    </span>
   )
 }
 
@@ -127,41 +123,30 @@ export function PeriodComparisonCard({
                 return (
                   <div
                     key={metric.metric_name}
-                    className="rounded-lg border border-border/60 bg-muted/20 p-4"
+                    className="rounded-xl border border-border/60 bg-muted/20 p-4 transition-colors hover:bg-muted/30"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                          {t(`comparison.metric.${metric.metric_name}`)}
-                        </p>
-                        <p className="mt-2 text-2xl font-semibold text-foreground">
-                          {metric.is_available
-                            ? formatMetricValue(metric, metric.current_value)
-                            : '—'}
-                        </p>
-                      </div>
-                      <MetricTrend trend={metric.trend} changePercent={metric.change_percent} />
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {t(`comparison.metric.${metric.metric_name}`)}
+                    </p>
+
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <p className="text-3xl font-semibold tracking-tight text-foreground tabular-nums">
+                        {metric.is_available ? formatMetricValue(metric, metric.current_value) : '—'}
+                      </p>
+                      {metric.is_available && (
+                        <MetricTrend trend={metric.trend} changePercent={metric.change_percent} />
+                      )}
                     </div>
 
                     {metric.is_available ? (
-                      <div className="mt-3 space-y-1 text-xs text-muted-foreground">
-                        <p>
-                          <span className="mr-1">{t('comparison.period1Label')}:</span>
-                          <span className="font-medium text-foreground/90">
-                            {formatMetricValue(metric, metric.current_value)}
-                          </span>
-                        </p>
-                        <p>
-                          <span className="mr-1">{t('comparison.period2Label')}:</span>
-                          <span className="font-medium text-foreground/90">
-                            {formatMetricValue(metric, metric.previous_value)}
-                          </span>
-                        </p>
-                      </div>
-                    ) : (
-                      <p className="mt-3 text-xs text-muted-foreground">
-                        {unavailableReason}
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {t('comparison.vsLabel')}{' '}
+                        <span className="font-medium text-foreground/80 tabular-nums">
+                          {formatMetricValue(metric, metric.previous_value)}
+                        </span>
                       </p>
+                    ) : (
+                      <p className="mt-2 text-xs text-muted-foreground">{unavailableReason}</p>
                     )}
                   </div>
                 )

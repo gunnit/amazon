@@ -65,6 +65,7 @@ const it: Record<string, string> = {
   'comparison.period2': 'Periodo B',
   'comparison.period1Label': 'Corrente',
   'comparison.period2Label': 'Confronto',
+  'comparison.vsLabel': 'vs',
   'comparison.mom': 'MoM',
   'comparison.qoq': 'QoQ',
   'comparison.yoy': 'YoY',
