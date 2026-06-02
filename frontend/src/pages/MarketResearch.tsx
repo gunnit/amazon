@@ -27,6 +27,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { marketResearchApi, accountsApi, catalogApi } from '@/services/api'
 import { cn, formatDate, formatNumber, formatPercent } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
+import { useLanguageStore } from '@/store/languageStore'
 import AsinInput from '@/components/market-research/AsinInput'
 import CompetitorTable from '@/components/market-research/CompetitorTable'
 import RadarComparison from '@/components/market-research/RadarComparison'
@@ -141,8 +142,9 @@ function opportunityMessage(
 
 export default function MarketResearch() {
   // ── Shared state ──
+  const { language } = useLanguageStore()
   const [selectedAccount, setSelectedAccount] = useState('')
-  const [analysisLanguage, setAnalysisLanguage] = useState<'en' | 'it'>('en')
+  const [analysisLanguage, setAnalysisLanguage] = useState<'en' | 'it'>(language)
   const [activeTab, setActiveTab] = useState<'product-analysis' | 'market-search'>('product-analysis')
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null)
   const [marketTrackerState, setMarketTrackerState] = useState<MarketTrackerState>({

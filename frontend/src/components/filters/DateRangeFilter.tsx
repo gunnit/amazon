@@ -22,6 +22,9 @@ const PRESET_KEYS: { value: DatePreset; key: string }[] = [
   { value: '30', key: 'filter.last30days' },
   { value: '60', key: 'filter.last60days' },
   { value: '90', key: 'filter.last90days' },
+  { value: '12m', key: 'filter.last12months' },
+  { value: 'ytd', key: 'filter.yearToDate' },
+  { value: 'lastyear', key: 'filter.lastYear' },
   { value: 'custom', key: 'filter.customRange' },
 ]
 

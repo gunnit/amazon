@@ -87,6 +87,10 @@ function KPICard({
 
   const isPrimary = emphasis === 'primary'
 
+  // A zeroed current value against a non-zero baseline yields a misleading
+  // "-100%" drop. Show a neutral placeholder instead of an alarming delta.
+  const suppressChange = value === 0 && typeof change === 'number' && change < 0
+
   return (
     <Card
       className={cn(
@@ -116,7 +120,12 @@ function KPICard({
         <div className={cn(isPrimary ? "text-3xl font-semibold" : "text-2xl font-semibold")}>
           {formattedValue}
         </div>
-        {change !== null && change !== undefined && (
+        {suppressChange ? (
+          <div className={cn("flex items-center text-xs mt-2", isPrimary ? "text-white/60" : "text-muted-foreground")}>
+            <span>—</span>
+            <span className={cn("ml-1", isPrimary && "text-white/50")}>{t('common.vsPreviousPeriod')}</span>
+          </div>
+        ) : change !== null && change !== undefined && (
           <div className={cn("flex items-center text-xs mt-2", isPrimary ? "text-white/60" : "text-muted-foreground")}>
             {trend === 'up' ? (
               <TrendingUp className={cn("h-3 w-3 mr-1", isPrimary ? "text-emerald-400" : "text-emerald-500")} />
