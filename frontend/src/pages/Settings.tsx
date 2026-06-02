@@ -36,6 +36,8 @@ export default function Settings() {
     email: user?.email || '',
   })
 
+  const [orgName, setOrgName] = useState(organization?.name || '')
+
   const [notifications, setNotifications] = useState({
     dailyDigest: true,
     alertEmails: true,
@@ -53,6 +55,12 @@ export default function Settings() {
     queryKey: ['notification-preferences'],
     queryFn: () => authApi.getNotificationPreferences(),
   })
+
+  useEffect(() => {
+    if (organization) {
+      setOrgName(organization.name)
+    }
+  }, [organization])
 
   useEffect(() => {
     if (savedNotifications) {
@@ -141,6 +149,25 @@ export default function Settings() {
       const message =
         (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         t('settings.profileFailed')
+      toast({
+        variant: 'destructive',
+        title: message,
+      })
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleSaveOrganization = async () => {
+    setIsSaving(true)
+    try {
+      const updated = await authApi.updateOrganization({ name: orgName })
+      useAuthStore.getState().setOrganization(updated)
+      toast({ title: t('settings.orgUpdated') })
+    } catch (error: unknown) {
+      const message =
+        (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        t('settings.orgUpdateFailed')
       toast({
         variant: 'destructive',
         title: message,
@@ -337,14 +364,28 @@ export default function Settings() {
                   }
                 />
               </div>
-              <div className="space-y-2">
-                <Label>{t('settings.organization')}</Label>
-                <Input value={organization?.name || ''} disabled />
-                <p className="text-xs text-muted-foreground">
-                  {t('settings.orgHelp')}
-                </p>
-              </div>
               <Button onClick={handleSaveProfile} disabled={isSaving}>
+                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {t('settings.saveChanges')}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Organization */}
+          <Card>
+            <CardHeader>
+              <CardTitle>{t('settings.organization')}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="orgName">{t('settings.organization')}</Label>
+                <Input
+                  id="orgName"
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                />
+              </div>
+              <Button onClick={handleSaveOrganization} disabled={isSaving}>
                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t('settings.saveChanges')}
               </Button>

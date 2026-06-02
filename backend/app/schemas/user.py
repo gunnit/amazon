@@ -44,6 +44,11 @@ class OrganizationCreate(BaseModel):
     slug: str = Field(..., min_length=1, max_length=100, pattern=r'^[a-z0-9-]+$')
 
 
+class OrganizationUpdate(BaseModel):
+    """Schema for updating an organization."""
+    name: str = Field(..., min_length=1, max_length=255)
+
+
 class OrganizationResponse(BaseModel):
     """Schema for organization response."""
     id: UUID

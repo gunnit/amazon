@@ -15,6 +15,7 @@ interface AuthState {
   logout: () => void
   loadUser: () => Promise<void>
   setUser: (user: User) => void
+  setOrganization: (organization: Organization) => void
   clearError: () => void
 }
 
@@ -131,6 +132,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       setUser: (user: User) => set({ user }),
+
+      setOrganization: (organization: Organization) => set({ organization }),
 
       clearError: () => set({ error: null }),
     }),

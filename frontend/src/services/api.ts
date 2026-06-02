@@ -152,6 +152,11 @@ export const authApi = {
     return response.data
   },
 
+  updateOrganization: async (data: { name: string }): Promise<Organization> => {
+    const response = await api.put('/auth/organization', data)
+    return response.data
+  },
+
   getApiKeys: async (): Promise<ApiKeysResponse> => {
     const response = await api.get('/auth/organization/api-keys')
     return response.data

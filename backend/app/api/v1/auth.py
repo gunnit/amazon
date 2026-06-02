@@ -13,7 +13,7 @@ from app.schemas.user import (
     UserCreate, UserUpdate, UserResponse, UserLogin, Token,
     PasswordChange, NotificationPreferences,
     ForgotPasswordRequest, ResetPasswordRequest,
-    OrganizationCreate, OrganizationResponse,
+    OrganizationCreate, OrganizationUpdate, OrganizationResponse,
     OrganizationApiKeysUpdate, OrganizationApiKeysResponse,
 )
 from app.core.security import (
@@ -381,6 +381,33 @@ async def get_current_organization(current_user: CurrentUser, db: DbSession):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User is not a member of any organization"
         )
+
+    return org
+
+
+@router.put("/organization", response_model=OrganizationResponse)
+async def update_current_organization(
+    org_in: OrganizationUpdate,
+    current_user: CurrentUser,
+    db: DbSession,
+):
+    """Update the current user's organization (name)."""
+    result = await db.execute(
+        select(Organization)
+        .join(OrganizationMember)
+        .where(OrganizationMember.user_id == current_user.id)
+    )
+    org = result.scalar_one_or_none()
+
+    if not org:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User is not a member of any organization"
+        )
+
+    org.name = org_in.name
+    await db.flush()
+    await db.refresh(org)
 
     return org
 
