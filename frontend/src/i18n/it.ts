@@ -680,6 +680,18 @@ const it: Record<string, string> = {
   'analytics.returns.orderedUnits': 'Unità ordinate',
   'analytics.returns.unknownReason': 'Sconosciuto',
   'analytics.returns.unavailable': 'Non disponibile',
+  // ── Analisi · singolo prodotto ──
+  'analytics.productPage.back': 'Torna ad Analisi',
+  'analytics.productPage.subtitle': 'Analisi sull’intero periodo per un singolo prodotto',
+  'analytics.productPage.noData': 'Nessun dato per questo prodotto nel periodo selezionato.',
+  'analytics.productPage.avgPrice': 'Prezzo medio',
+  'analytics.productPage.momentum': 'Momentum',
+  'analytics.productPage.momentumDesc': 'Segnali di trend degli ultimi 7 giorni per questo prodotto',
+  'analytics.productPage.noMomentum': 'Storico recente insufficiente per calcolare il momentum di questo prodotto.',
+  'analytics.productPage.revenueOverTime': 'Fatturato nel tempo',
+  'analytics.productPage.revenueOverTimeDesc': 'Vendite giornaliere di questo prodotto nel periodo selezionato.',
+  'analytics.productPage.returnsTitle': 'Resi',
+  'analytics.productPage.returnsDesc': 'Volume, tasso e motivazioni dei resi per questo prodotto.',
   // ── Previsioni ──
   'forecasts.title': 'Previsioni',
   'forecasts.subtitle': 'Previsioni di vendita basate su intelligenza artificiale e analisi dei trend',

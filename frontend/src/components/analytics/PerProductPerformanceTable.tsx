@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Loader2, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -34,6 +35,7 @@ const PAGE_SIZES = [25, 50, 100, 200]
 
 export function PerProductPerformanceTable({ dateRange, accountIds, enabled }: Props) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const [offset, setOffset] = useState(0)
   const [limit, setLimit] = useState(50)
   const [sortBy, setSortBy] = useState<PerProductSortKey>('revenue')
@@ -213,7 +215,11 @@ export function PerProductPerformanceTable({ dateRange, accountIds, enabled }: P
                 </TableRow>
               )}
               {items.map((item) => (
-                <TableRow key={item.asin}>
+                <TableRow
+                  key={item.asin}
+                  className="cursor-pointer hover:bg-muted/40"
+                  onClick={() => navigate(`/analytics/product/${item.asin}`)}
+                >
                   <TableCell className="font-mono text-xs">{item.asin}</TableCell>
                   <TableCell className="max-w-[280px] truncate" title={item.title ?? ''}>
                     {item.title ?? '—'}

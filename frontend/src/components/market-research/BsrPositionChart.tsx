@@ -9,6 +9,7 @@ import {
   Cell,
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { CHART_PRIMARY } from '@/lib/chart-theme'
 import { useTranslation } from '@/i18n'
 import type { MarketSearchResult } from '@/types'
 
@@ -91,9 +92,9 @@ export default function BsrPositionChart({ results, referenceAsin }: BsrPosition
               {data.map((entry, idx) => (
                 <Cell
                   key={idx}
-                  fill={entry.isReference ? 'hsl(var(--primary))' : 'hsl(var(--muted-foreground) / 0.5)'}
+                  fill={entry.isReference ? CHART_PRIMARY : 'hsl(var(--muted-foreground) / 0.5)'}
                   r={entry.isReference ? 8 : 5}
-                  stroke={entry.isReference ? 'hsl(var(--primary))' : 'transparent'}
+                  stroke={entry.isReference ? CHART_PRIMARY : 'transparent'}
                   strokeWidth={entry.isReference ? 2 : 0}
                 />
               ))}
@@ -102,7 +103,7 @@ export default function BsrPositionChart({ results, referenceAsin }: BsrPosition
         </ResponsiveContainer>
         <div className="flex items-center justify-center gap-4 mt-2 text-[11px] text-muted-foreground">
           <div className="flex items-center gap-1.5">
-            <div className="w-2.5 h-2.5 rounded-full bg-primary" />
+            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: CHART_PRIMARY }} />
             <span>{t('marketTracker.reference')}</span>
           </div>
           <div className="flex items-center gap-1.5">

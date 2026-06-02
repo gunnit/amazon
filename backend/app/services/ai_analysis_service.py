@@ -262,7 +262,7 @@ class ProductTrendInsightsAnalysisService:
 {lang_instruction}
 
 Trend dataset:
-{json.dumps(trend_data, ensure_ascii=False, indent=2)}
+{json.dumps(trend_data, ensure_ascii=False, indent=2, default=str)}
 
 Return a JSON object with exactly this structure:
 {{

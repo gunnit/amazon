@@ -7,6 +7,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts'
+import { CHART_NEUTRAL, CHART_PRIMARY } from '@/lib/chart-theme'
 import { useTranslation } from '@/i18n'
 import type { ProductSnapshot, CompetitorSnapshot } from '@/types'
 
@@ -70,16 +71,16 @@ export default function RadarComparison({ product, competitors }: RadarCompariso
         <Radar
           name={t('marketResearch.yourProduct')}
           dataKey="product"
-          stroke="hsl(var(--primary))"
-          fill="hsl(var(--primary))"
+          stroke={CHART_PRIMARY}
+          fill={CHART_PRIMARY}
           fillOpacity={0.3}
         />
         <Radar
           name={`${t('marketResearch.competitors')} avg`}
           dataKey="competitors"
-          stroke="hsl(var(--destructive))"
-          fill="hsl(var(--destructive))"
-          fillOpacity={0.1}
+          stroke={CHART_NEUTRAL}
+          fill={CHART_NEUTRAL}
+          fillOpacity={0.12}
         />
         <Legend />
       </RadarChart>

@@ -32,7 +32,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { accountsApi, analyticsApi, catalogApi } from '@/services/api'
-import { formatCurrency, formatNumber } from '@/lib/utils'
+import { formatChangePercent, formatCurrency, formatNumber } from '@/lib/utils'
+import {
+  BAR_H_FILL,
+  BAR_V_FILL,
+  CHART_PRIMARY,
+  CHART_SERIES,
+} from '@/lib/chart-theme'
 import {
   FilterBar,
   DateRangeFilter,
@@ -59,7 +65,7 @@ import type {
 } from '@/types'
 
 const ALL_ASINS_VALUE = '__all_asins__'
-const RETURN_REASON_COLORS = ['#0f766e', '#2563eb', '#d97706', '#dc2626', '#7c3aed', '#0891b2']
+const RETURN_REASON_COLORS = CHART_SERIES
 
 type AnalyticsTab = 'overview' | 'per-product' | 'returns' | 'ads-vs-organic'
 
@@ -104,14 +110,6 @@ function formatAxisCurrency(value: number): string {
 
 function formatPercentValue(value: number): string {
   return `${value.toFixed(1)}%`
-}
-
-function formatChangePercent(value: number | null | undefined): string {
-  if (value == null) {
-    return ''
-  }
-
-  return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`
 }
 
 function formatOptionalPercent(value: number | null | undefined): string {
@@ -371,6 +369,21 @@ export default function Analytics() {
       limit: 100,
     }),
     enabled: activeTab === 'overview',
+  })
+
+  const { data: productTrendInsights, isFetching: productTrendInsightsFetching } = useQuery({
+    queryKey: ['product-trend-insights', dateRange, trendAccountIds, trendAsinFilter, trendClassFilter, language],
+    queryFn: () => analyticsApi.getProductTrendInsights({
+      start_date: dateRange.start,
+      end_date: dateRange.end,
+      account_id: scopedAccountId,
+      account_ids: scopedAccountId ? undefined : trendAccountIds.length > 0 ? trendAccountIds : undefined,
+      asin: trendAsinFilter || undefined,
+      trend_class: trendClassFilter === 'all' ? undefined : trendClassFilter,
+      language,
+      limit: 100,
+    }),
+    enabled: activeTab === 'overview' && (productTrends?.summary.eligible_products ?? 0) > 0,
   })
 
   const { data: returnsAnalytics, isLoading: returnsLoading } = useQuery<ReturnsAnalyticsResponse>({
@@ -639,8 +652,9 @@ export default function Analytics() {
                         />
                         <Bar
                           dataKey="total_revenue"
-                          fill="hsl(var(--primary))"
+                          fill={BAR_H_FILL}
                           radius={[0, 4, 4, 0]}
+                          maxBarSize={26}
                         />
                       </BarChart>
                     </ResponsiveContainer>
@@ -670,7 +684,7 @@ export default function Analytics() {
                           labelFormatter={(hour) => `${String(hour).padStart(2, '0')}:00`}
                           formatter={(value: number) => [formatNumber(value), t('common.orders')]}
                         />
-                        <Bar dataKey="orders" fill="hsl(var(--primary))" />
+                        <Bar dataKey="orders" fill={BAR_V_FILL} radius={[4, 4, 0, 0]} maxBarSize={32} />
                       </BarChart>
                     </ResponsiveContainer>
                   ) : (
@@ -1036,9 +1050,14 @@ export default function Analytics() {
 
             {productTrends && (
               <TrendInsightsCard
-                insights={productTrends.insights}
-                generatedWithAi={productTrends.generated_with_ai}
+                insights={productTrendInsights?.insights ?? productTrends.insights}
+                generatedWithAi={productTrendInsights?.generated_with_ai ?? false}
                 aiAvailable={productTrends.ai_available}
+                loading={
+                  productTrends.summary.eligible_products > 0 &&
+                  !productTrendInsights &&
+                  productTrendInsightsFetching
+                }
               />
             )}
           </div>
@@ -1124,6 +1143,8 @@ export default function Analytics() {
                               innerRadius={68}
                               outerRadius={108}
                               paddingAngle={3}
+                              stroke="hsl(var(--card))"
+                              strokeWidth={2}
                             >
                               {returnReasonChartData.map((entry, index) => (
                                 <Cell
@@ -1188,8 +1209,9 @@ export default function Analytics() {
                             />
                             <Bar
                               dataKey="quantity_returned"
-                              fill="hsl(var(--primary))"
+                              fill={BAR_H_FILL}
                               radius={[0, 4, 4, 0]}
+                              maxBarSize={26}
                             />
                           </BarChart>
                         </ResponsiveContainer>
@@ -1242,7 +1264,7 @@ export default function Analytics() {
                           <Line
                             type="monotone"
                             dataKey="returned_units"
-                            stroke="#2563eb"
+                            stroke={CHART_PRIMARY}
                             strokeWidth={2.5}
                             dot={false}
                             activeDot={{ r: 4 }}
@@ -1424,15 +1446,17 @@ export default function Analytics() {
                               dataKey="ad_sales"
                               name={t('analytics.advertisingSales')}
                               stackId="sales"
-                              fill="#d97706"
-                              radius={[4, 4, 0, 0]}
+                              fill={CHART_SERIES[2]}
+                              radius={[0, 0, 0, 0]}
+                              maxBarSize={42}
                             />
                             <Bar
                               dataKey="organic_sales"
                               name={t('analytics.organicSales')}
                               stackId="sales"
-                              fill="#0f766e"
+                              fill={CHART_SERIES[1]}
                               radius={[4, 4, 0, 0]}
+                              maxBarSize={42}
                             />
                           </BarChart>
                         </ResponsiveContainer>

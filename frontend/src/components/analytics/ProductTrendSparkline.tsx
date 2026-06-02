@@ -1,13 +1,14 @@
 import { Line, LineChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { formatCurrency, formatNumber } from '@/lib/utils'
+import { CHART_NEGATIVE, CHART_NEUTRAL, CHART_POSITIVE } from '@/lib/chart-theme'
 import type { ProductTrendClass, ProductTrendTimeseriesPoint } from '@/types'
 
 const strokeByClass: Record<ProductTrendClass, string> = {
-  rising_fast: '#059669',
-  rising: '#10b981',
-  stable: '#64748b',
-  declining: '#f59e0b',
-  declining_fast: '#e11d48',
+  rising_fast: CHART_POSITIVE,
+  rising: '#6ee7b7',
+  stable: CHART_NEUTRAL,
+  declining: '#fbbf24',
+  declining_fast: CHART_NEGATIVE,
 }
 
 export default function ProductTrendSparkline({

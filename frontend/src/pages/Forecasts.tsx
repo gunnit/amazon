@@ -49,6 +49,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/components/ui/use-toast'
 import { forecastsApi, accountsApi, exportsApi } from '@/services/api'
 import { formatCurrency, formatDate, downloadBlob } from '@/lib/utils'
+import { CHART_PRIMARY } from '@/lib/chart-theme'
 import { useTranslation } from '@/i18n'
 import { useLanguageStore } from '@/store/languageStore'
 import type {
@@ -856,8 +857,8 @@ export default function Forecasts() {
                         dataKey="ci_range"
                         stackId="ci"
                         stroke="none"
-                        fill="hsl(var(--primary))"
-                        fillOpacity={0.12}
+                        fill={CHART_PRIMARY}
+                        fillOpacity={0.14}
                         connectNulls={false}
                       />
                       <Line
@@ -871,7 +872,7 @@ export default function Forecasts() {
                       <Line
                         type="monotone"
                         dataKey="predicted_value"
-                        stroke="hsl(var(--primary))"
+                        stroke={CHART_PRIMARY}
                         strokeWidth={2}
                         dot={false}
                         connectNulls={false}
@@ -899,7 +900,10 @@ export default function Forecasts() {
                     <span>{t('forecasts.historical')}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-0.5 w-5 rounded bg-primary" />
+                    <span
+                      className="inline-block h-0.5 w-5 rounded"
+                      style={{ backgroundColor: CHART_PRIMARY }}
+                    />
                     <span>{t('forecasts.forecast')}</span>
                   </div>
                   <div className="flex items-center gap-1.5">

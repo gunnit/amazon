@@ -680,6 +680,18 @@ const en: Record<string, string> = {
   'analytics.returns.orderedUnits': 'Ordered Units',
   'analytics.returns.unknownReason': 'Unknown',
   'analytics.returns.unavailable': 'Unavailable',
+  // ── Analytics · single product ──
+  'analytics.productPage.back': 'Back to Analytics',
+  'analytics.productPage.subtitle': 'Full-period analytics for a single product',
+  'analytics.productPage.noData': 'No data for this product in the selected period.',
+  'analytics.productPage.avgPrice': 'Avg price',
+  'analytics.productPage.momentum': 'Momentum',
+  'analytics.productPage.momentumDesc': 'Recent 7-day trend signals for this product',
+  'analytics.productPage.noMomentum': 'Not enough recent history to score this product’s momentum.',
+  'analytics.productPage.revenueOverTime': 'Revenue over time',
+  'analytics.productPage.revenueOverTimeDesc': 'Daily sales for this product across the selected period.',
+  'analytics.productPage.returnsTitle': 'Returns',
+  'analytics.productPage.returnsDesc': 'Return volume, rate and reasons for this product.',
   // ── Forecasts ──
   'forecasts.title': 'Forecasts',
   'forecasts.subtitle': 'AI-powered sales predictions and trend analysis',

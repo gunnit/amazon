@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -415,6 +415,25 @@ def _build_dedup_key(event_kind: str, account_id: Optional[UUID], asin: Optional
     return f"{event_kind}:{account_id or '-'}:{asin or '-'}"
 
 
+def _split_period(start_date: date, end_date: date) -> tuple[date, date, date, date]:
+    """Split the selected range into two contiguous halves for comparison.
+
+    The previous window is the first half and the current window is the second
+    half, so trends reflect momentum within the period the user actually
+    selected instead of a fixed trailing window anchored to today.
+    """
+    total_days = (end_date - start_date).days + 1
+    if total_days < 2:
+        # Single-day range: nothing meaningful to compare against.
+        return start_date, start_date, end_date, end_date
+    half = total_days // 2
+    previous_start = start_date
+    previous_end = start_date + timedelta(days=half - 1)
+    current_start = previous_end + timedelta(days=1)
+    current_end = end_date
+    return previous_start, previous_end, current_start, current_end
+
+
 class ProductTrendsService:
     """Compute product trends and deterministic insights."""
 
@@ -436,10 +455,10 @@ class ProductTrendsService:
         if not account_ids:
             return _empty_response(language)
 
-        current_end = end_date
-        current_start = current_end - timedelta(days=TREND_WINDOW_DAYS - 1)
-        previous_end = current_start - timedelta(days=1)
-        previous_start = previous_end - timedelta(days=TREND_WINDOW_DAYS - 1)
+        previous_start, previous_end, current_start, current_end = _split_period(
+            start_date, end_date
+        )
+        comparison_window_days = (current_end - current_start).days + 1
 
         sales_timeseries = await self._sales_timeseries(
             account_ids=account_ids,
@@ -529,6 +548,7 @@ class ProductTrendsService:
                 current_inventory=current_inventory,
                 previous_inventory=previous_inventory,
                 inventory_days_of_cover=inventory_days_of_cover,
+                window_days=comparison_window_days,
             )
 
             product_ad = ad_data.get(product_asin, {})
@@ -908,20 +928,21 @@ class ProductTrendsService:
         current_inventory: Optional[int],
         previous_inventory: Optional[int],
         inventory_days_of_cover: Optional[float],
+        window_days: int = TREND_WINDOW_DAYS,
     ) -> List[str]:
         if language == "it":
             signals = [
-                _format_percent_signal_it("Vendite", sales_delta_percent, TREND_WINDOW_DAYS),
+                _format_percent_signal_it("Vendite", sales_delta_percent, window_days),
             ]
         else:
             signals = [
-                _format_percent_signal("Sales", sales_delta_percent, TREND_WINDOW_DAYS),
+                _format_percent_signal("Sales", sales_delta_percent, window_days),
             ]
         if abs(units_change_percent - sales_delta_percent) >= 3 or abs(units_change_percent) >= 5:
             signals.append(
-                _format_percent_signal_it("Unità", units_change_percent, TREND_WINDOW_DAYS)
+                _format_percent_signal_it("Unità", units_change_percent, window_days)
                 if language == "it"
-                else _format_percent_signal("Units", units_change_percent, TREND_WINDOW_DAYS)
+                else _format_percent_signal("Units", units_change_percent, window_days)
             )
         if bsr_position_change:
             if bsr_position_change > 0:
@@ -1004,7 +1025,7 @@ class ProductTrendsService:
         products: List[Dict[str, Any]],
     ) -> None:
         rule = await self._ensure_trend_alert_rule(organization_id)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cooldown_start = now - timedelta(hours=ALERT_COOLDOWN_HOURS)
         active_alert_keys: set[str] = set()
         scope_asins = {product["asin"] for product in products}

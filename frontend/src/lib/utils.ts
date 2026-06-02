@@ -20,6 +20,15 @@ export function formatPercent(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
 }
 
+/** Signed percent change, empty string when the value is missing. */
+export function formatChangePercent(value: number | null | undefined): string {
+  if (value == null) {
+    return ''
+  }
+
+  return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`
+}
+
 export function formatDate(date: string | Date): string {
   // Parse date-only strings as local time to avoid timezone shift
   const d = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)

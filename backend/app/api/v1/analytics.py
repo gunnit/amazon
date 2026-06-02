@@ -6,6 +6,7 @@ from decimal import Decimal
 import logging
 import re
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import Date, and_, case, cast, func, select, text
 
 from app.api.deps import CurrentOrganization, CurrentSuperuser, CurrentUser, DbSession
@@ -25,6 +26,7 @@ from app.schemas.analytics import (
     ComparisonDailyPoint, ComparisonMetric, ComparisonPeriod, ComparisonResponse,
     PaginatedProductPerformance, ProductPerformance, TopPerformers,
     AdvertisingInsights, HourlyOrdersData, ProductTrendsResponse,
+    ProductTrendInsightsResponse,
     ReturnAsinMetric, ReturnReasonBreakdown, ReturnsAnalyticsResponse, ReturnsSummary,
     ReturnsTrendPoint,
     AdsVsOrganicResponse,
@@ -1269,13 +1271,17 @@ async def get_per_product_performance(
     sort_by: str = Query(default="revenue"),
     sort_dir: str = Query(default="desc"),
     search: Optional[str] = Query(default=None),
+    asin: Optional[str] = Query(default=None),
 ):
     """Paginated per-product performance for the Analytics ‘Per product’ tab.
 
     Returns a flat, sortable, searchable list of every ASIN with sales in the
     range, joined left with ad metrics so products without ads still appear.
+    When ``asin`` is supplied the aggregate is scoped to that single product,
+    which powers the per-product analytics page.
     """
     await _validate_account_ids(db, organization.id, account_ids)
+    asin = _normalize_optional_asin(asin)
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
     )
@@ -1298,6 +1304,7 @@ async def get_per_product_performance(
             SalesData.asin != DAILY_TOTAL_ASIN,
             SalesData.date >= start_date,
             SalesData.date <= end_date,
+            *([SalesData.asin == asin] if asin else []),
         )
         .group_by(SalesData.asin)
         .subquery()
@@ -1464,13 +1471,83 @@ async def get_product_trends(
         trend_data["declining_products"],
         language=language,
     )
+
+    return ProductTrendsResponse(
+        summary=trend_data["summary"],
+        rising_products=trend_data["rising_products"],
+        declining_products=trend_data["declining_products"],
+        products=trend_data["products"],
+        insights=insights,
+        generated_with_ai=False,
+        ai_available=bool(settings.ANTHROPIC_API_KEY),
+    )
+
+
+@router.get("/product-trends/insights", response_model=ProductTrendInsightsResponse)
+async def get_product_trend_insights(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    start_date: date = Query(default=date.today() - timedelta(days=30)),
+    end_date: date = Query(default=date.today()),
+    account_id: Optional[UUID] = Query(default=None),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    asin: Optional[str] = Query(default=None),
+    trend_class: Optional[str] = Query(
+        default=None,
+        pattern="^(rising_fast|rising|stable|declining|declining_fast)$",
+    ),
+    language: str = Query(default="en", pattern="^(en|it)$"),
+    limit: int = Query(default=50, ge=1, le=100),
+):
+    """Generate AI-backed trend insights, loaded separately from the trend data.
+
+    The model call is slow (tens of seconds), so it lives behind its own
+    endpoint to keep the trends table responsive. Falls back to deterministic
+    insights when AI is unavailable or fails.
+    """
+    _validate_period(start_date, end_date, "trend period")
+    asin = _normalize_optional_asin(asin)
+
+    scoped_account_ids = list(account_ids or [])
+    if account_id and account_id not in scoped_account_ids:
+        scoped_account_ids.append(account_id)
+
+    await _validate_account_ids(db, organization.id, scoped_account_ids)
+
+    accounts_stmt = select(AmazonAccount.id).where(
+        AmazonAccount.organization_id == organization.id
+    )
+    if scoped_account_ids:
+        accounts_stmt = accounts_stmt.where(AmazonAccount.id.in_(scoped_account_ids))
+
+    resolved_account_ids = list((await db.execute(accounts_stmt)).scalars().all())
+    trends_service = ProductTrendsService(db)
+    trend_data = await trends_service.get_product_trends(
+        account_ids=resolved_account_ids,
+        start_date=start_date,
+        end_date=end_date,
+        language=language,
+        organization_id=organization.id,
+        asin=asin,
+        trend_class=trend_class,
+        limit=limit,
+    )
+
+    insights = build_rule_based_insights(
+        trend_data["summary"],
+        trend_data["rising_products"],
+        trend_data["declining_products"],
+        language=language,
+    )
     generated_with_ai = False
     ai_available = bool(settings.ANTHROPIC_API_KEY)
 
     if ai_available and trend_data["summary"]["eligible_products"] > 0:
         try:
             ai_service = ProductTrendInsightsAnalysisService(settings.ANTHROPIC_API_KEY)
-            insights = ai_service.analyze(
+            insights = await run_in_threadpool(
+                ai_service.analyze,
                 trend_data=trend_data["insights_context"],
                 language=language,
             )
@@ -1478,11 +1555,7 @@ async def get_product_trends(
         except Exception:
             logger.exception("Falling back to deterministic product trend insights")
 
-    return ProductTrendsResponse(
-        summary=trend_data["summary"],
-        rising_products=trend_data["rising_products"],
-        declining_products=trend_data["declining_products"],
-        products=trend_data["products"],
+    return ProductTrendInsightsResponse(
         insights=insights,
         generated_with_ai=generated_with_ai,
         ai_available=ai_available,

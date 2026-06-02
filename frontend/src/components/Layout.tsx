@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useAuthStore } from '@/store/authStore'
 import { cn } from '@/lib/utils'
+import { ChartGradients } from '@/lib/chart-theme'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { NotificationBell } from '@/components/NotificationBell'
 import { useTranslation } from '@/i18n'
@@ -55,6 +56,7 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-background">
+      <ChartGradients />
       {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
         <div

@@ -4,7 +4,7 @@ import type {
   AmazonAccount, AccountSummary, AdvertisingProfile, AdvertisingProfilesRequest,
   DashboardKPIs, TrendData, SalesAggregated, ComparisonResponse,
   AdsVsOrganicResponse, AdvertisingInsights,
-  HourlyOrdersData, ProductTrendsResponse, ReturnsAnalyticsResponse, TopPerformersResponse,
+  HourlyOrdersData, ProductTrendsResponse, ProductTrendInsightsResponse, ReturnsAnalyticsResponse, TopPerformersResponse,
   PaginatedProductPerformance, PerProductSortKey,
   Forecast, Product,
   ForecastExportJob,
@@ -484,6 +484,7 @@ export const analyticsApi = {
     sort_by?: PerProductSortKey
     sort_dir?: 'asc' | 'desc'
     search?: string
+    asin?: string
   }): Promise<PaginatedProductPerformance> => {
     const response = await api.get('/analytics/per-product-performance', { params })
     return response.data
@@ -509,6 +510,23 @@ export const analyticsApi = {
     limit?: number
   }): Promise<ProductTrendsResponse> => {
     const response = await api.get('/analytics/product-trends', { params })
+    return response.data
+  },
+
+  getProductTrendInsights: async (params: {
+    start_date: string
+    end_date: string
+    account_id?: string
+    account_ids?: string[]
+    asin?: string
+    trend_class?: 'rising_fast' | 'rising' | 'stable' | 'declining' | 'declining_fast'
+    language?: 'en' | 'it'
+    limit?: number
+  }): Promise<ProductTrendInsightsResponse> => {
+    const response = await api.get('/analytics/product-trends/insights', {
+      params,
+      timeout: 60000,
+    })
     return response.data
   },
 

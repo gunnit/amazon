@@ -57,3 +57,34 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Recharts — make every chart's tooltip, axes and grid match the app theme
+   instead of Recharts' built-in light-mode defaults. */
+.recharts-default-tooltip {
+  border-radius: 0.625rem !important;
+  border: 1px solid hsl(var(--border)) !important;
+  background-color: hsl(var(--popover)) !important;
+  box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.55) !important;
+  padding: 8px 12px !important;
+}
+.recharts-tooltip-label {
+  color: hsl(var(--foreground)) !important;
+  font-weight: 600;
+  margin-bottom: 4px !important;
+}
+.recharts-cartesian-axis-tick-value,
+.recharts-polar-angle-axis-tick-value {
+  fill: hsl(var(--muted-foreground)) !important;
+  font-size: 12px;
+}
+.recharts-cartesian-grid line,
+.recharts-polar-grid-concentric-circle,
+.recharts-polar-grid-concentric-polygon {
+  stroke: hsl(var(--border) / 0.7);
+}
+.recharts-rectangle.recharts-tooltip-cursor {
+  fill: hsl(var(--foreground) / 0.06) !important;
+}
+.recharts-curve.recharts-tooltip-cursor {
+  stroke: hsl(var(--muted-foreground) / 0.35) !important;
+}

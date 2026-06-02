@@ -397,6 +397,12 @@ export interface ProductTrendsResponse {
   ai_available: boolean
 }
 
+export interface ProductTrendInsightsResponse {
+  insights: ProductTrendInsights
+  generated_with_ai: boolean
+  ai_available: boolean
+}
+
 // Sales data types
 export interface SalesData {
   id: number

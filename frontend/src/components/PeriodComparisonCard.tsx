@@ -12,6 +12,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn, formatCurrency, formatDate, formatNumber } from '@/lib/utils'
+import { CHART_NEUTRAL, CHART_PRIMARY } from '@/lib/chart-theme'
 import { useTranslation } from '@/i18n'
 import type { ComparisonDailyPoint, ComparisonMetric, ComparisonResponse } from '@/types'
 
@@ -185,12 +186,12 @@ export function PeriodComparisonCard({
                               <p className="text-xs font-medium text-foreground">{point.day_label}</p>
                               <div className="mt-2 space-y-2 text-xs">
                                 <div>
-                                  <p className="font-medium text-[#2563eb]">{t('comparison.period1Label')}</p>
+                                  <p className="font-medium" style={{ color: CHART_PRIMARY }}>{t('comparison.period1Label')}</p>
                                   <p className="text-muted-foreground">{formatChartDate(point.period_1_date)}</p>
                                   <p className="text-foreground">{formatChartRevenue(point.period_1_revenue)}</p>
                                 </div>
                                 <div>
-                                  <p className="font-medium text-[#64748b]">{t('comparison.period2Label')}</p>
+                                  <p className="font-medium" style={{ color: CHART_NEUTRAL }}>{t('comparison.period2Label')}</p>
                                   <p className="text-muted-foreground">{formatChartDate(point.period_2_date)}</p>
                                   <p className="text-foreground">{formatChartRevenue(point.period_2_revenue)}</p>
                                 </div>
@@ -204,7 +205,7 @@ export function PeriodComparisonCard({
                         type="monotone"
                         dataKey="period_1_revenue"
                         name={t('comparison.period1Label')}
-                        stroke="#2563eb"
+                        stroke={CHART_PRIMARY}
                         strokeWidth={2.5}
                         dot={false}
                         activeDot={{ r: 4 }}
@@ -213,7 +214,7 @@ export function PeriodComparisonCard({
                         type="monotone"
                         dataKey="period_2_revenue"
                         name={t('comparison.period2Label')}
-                        stroke="#64748b"
+                        stroke={CHART_NEUTRAL}
                         strokeWidth={2.5}
                         strokeDasharray="6 4"
                         dot={false}

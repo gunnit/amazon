@@ -1,4 +1,4 @@
-import { AlertTriangle, Lightbulb, Sparkles, TrendingDown, TrendingUp } from 'lucide-react'
+import { AlertTriangle, Lightbulb, Loader2, Sparkles, TrendingDown, TrendingUp } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useTranslation } from '@/i18n'
@@ -8,6 +8,7 @@ interface TrendInsightsCardProps {
   insights: ProductTrendInsights
   generatedWithAi: boolean
   aiAvailable: boolean
+  loading?: boolean
 }
 
 const priorityVariants: Record<string, 'destructive' | 'warning' | 'secondary'> = {
@@ -20,6 +21,7 @@ export default function TrendInsightsCard({
   insights,
   generatedWithAi,
   aiAvailable,
+  loading = false,
 }: TrendInsightsCardProps) {
   const { t } = useTranslation()
 
@@ -31,13 +33,20 @@ export default function TrendInsightsCard({
             <CardTitle>{t('analytics.trendInsights')}</CardTitle>
             <CardDescription>{t('analytics.trendInsightsDesc')}</CardDescription>
           </div>
-          <Badge variant={generatedWithAi ? 'default' : 'outline'}>
-            {generatedWithAi
-              ? t('analytics.insightsSource.ai')
-              : aiAvailable
-                ? t('analytics.insightsSource.fallback')
-                : t('analytics.insightsSource.data')}
-          </Badge>
+          {loading ? (
+            <Badge variant="outline" className="gap-1.5">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {t('common.loading')}
+            </Badge>
+          ) : (
+            <Badge variant={generatedWithAi ? 'default' : 'outline'}>
+              {generatedWithAi
+                ? t('analytics.insightsSource.ai')
+                : aiAvailable
+                  ? t('analytics.insightsSource.fallback')
+                  : t('analytics.insightsSource.data')}
+            </Badge>
+          )}
         </div>
       </CardHeader>
       <CardContent className="space-y-6">

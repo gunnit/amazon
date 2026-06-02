@@ -379,3 +379,14 @@ class ProductTrendsResponse(BaseModel):
     insights: ProductTrendInsights
     generated_with_ai: bool
     ai_available: bool
+
+
+class ProductTrendInsightsResponse(BaseModel):
+    """Insights block for product trends, fetched separately from the data.
+
+    The deterministic trends response returns immediately; the (slower) AI
+    narrative is loaded through its own request so it never blocks the table.
+    """
+    insights: ProductTrendInsights
+    generated_with_ai: bool
+    ai_available: bool

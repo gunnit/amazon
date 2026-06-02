@@ -9,6 +9,7 @@ import {
   Cell,
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { CHART_PRIMARY } from '@/lib/chart-theme'
 import { useTranslation } from '@/i18n'
 import type { MarketSearchResult } from '@/types'
 
@@ -92,11 +93,8 @@ export default function PriceDistributionChart({ results }: PriceDistributionCha
               {data.map((entry, idx) => (
                 <Cell
                   key={idx}
-                  fill={
-                    entry.midpoint <= avgPrice
-                      ? 'hsl(var(--primary))'
-                      : 'hsl(var(--primary) / 0.5)'
-                  }
+                  fill={CHART_PRIMARY}
+                  fillOpacity={entry.midpoint <= avgPrice ? 1 : 0.45}
                 />
               ))}
             </Bar>

@@ -39,6 +39,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { analyticsApi, accountsApi } from '@/services/api'
 import { formatCurrency, formatNumber, formatPercent, cn } from '@/lib/utils'
+import { AREA_FILL, CHART_PRIMARY, CHART_SERIES } from '@/lib/chart-theme'
 import { buildDashboardSearchParams, resolveDashboardScope } from '@/lib/dashboardScope'
 import { FilterBar, DateRangeFilter, AccountFilter, ComparisonFilter } from '@/components/filters'
 import ProductTrendBadge from '@/components/analytics/ProductTrendBadge'
@@ -533,7 +534,7 @@ export default function Dashboard() {
   const vendorRevenue = vendorTrends?.find((t) => t.metric_name === 'revenue')
   const vendorUnits = vendorTrends?.find((t) => t.metric_name === 'units')
 
-  const vendorColor = '#f59e0b'
+  const vendorColor = CHART_SERIES[2]
 
   // Merge a seller daily series and a vendor monthly series into rows keyed by
   // date. Missing values stay undefined so Recharts skips them instead of
@@ -807,15 +808,17 @@ export default function Dashboard() {
                       dataKey="vendor"
                       name={t('dashboard.seriesVendor')}
                       fill={vendorColor}
-                      fillOpacity={0.8}
+                      fillOpacity={0.85}
+                      radius={[4, 4, 0, 0]}
+                      maxBarSize={36}
                     />
                     <Area
                       type="monotone"
                       dataKey="seller"
                       name={t('dashboard.seriesSeller')}
-                      stroke="hsl(var(--primary))"
-                      fill="hsl(var(--primary))"
-                      fillOpacity={0.2}
+                      stroke={CHART_PRIMARY}
+                      strokeWidth={2}
+                      fill={AREA_FILL}
                     />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -829,7 +832,7 @@ export default function Dashboard() {
                       formatter={(value: number) => [formatCurrency(value, currency), t('dashboard.seriesVendor')]}
                       labelFormatter={labelFormatter}
                     />
-                    <Bar dataKey="value" fill={vendorColor} fillOpacity={0.8} />
+                    <Bar dataKey="value" fill={vendorColor} fillOpacity={0.85} radius={[4, 4, 0, 0]} maxBarSize={36} />
                   </BarChart>
                 </ResponsiveContainer>
               ) : revenueTrend && revenueTrend.data_points.length > 0 ? (
@@ -845,9 +848,9 @@ export default function Dashboard() {
                     <Area
                       type="monotone"
                       dataKey="value"
-                      stroke="hsl(var(--primary))"
-                      fill="hsl(var(--primary))"
-                      fillOpacity={0.2}
+                      stroke={CHART_PRIMARY}
+                      strokeWidth={2}
+                      fill={AREA_FILL}
                     />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -885,13 +888,15 @@ export default function Dashboard() {
                       dataKey="vendor"
                       name={t('dashboard.seriesVendor')}
                       fill={vendorColor}
-                      fillOpacity={0.8}
+                      fillOpacity={0.85}
+                      radius={[4, 4, 0, 0]}
+                      maxBarSize={36}
                     />
                     <Line
                       type="monotone"
                       dataKey="seller"
                       name={t('dashboard.seriesSeller')}
-                      stroke="hsl(var(--primary))"
+                      stroke={CHART_PRIMARY}
                       strokeWidth={2}
                       dot={false}
                     />
@@ -907,7 +912,7 @@ export default function Dashboard() {
                       formatter={(value: number) => [formatNumber(value), t('dashboard.seriesVendor')]}
                       labelFormatter={labelFormatter}
                     />
-                    <Bar dataKey="value" fill={vendorColor} fillOpacity={0.8} />
+                    <Bar dataKey="value" fill={vendorColor} fillOpacity={0.85} radius={[4, 4, 0, 0]} maxBarSize={36} />
                   </BarChart>
                 </ResponsiveContainer>
               ) : unitsTrend && unitsTrend.data_points.length > 0 ? (
@@ -923,7 +928,7 @@ export default function Dashboard() {
                     <Line
                       type="monotone"
                       dataKey="value"
-                      stroke="hsl(var(--primary))"
+                      stroke={CHART_PRIMARY}
                       strokeWidth={2}
                       dot={false}
                     />
