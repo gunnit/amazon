@@ -22,6 +22,7 @@ const API_URL = import.meta.env.VITE_API_URL || ''
 
 const api = axios.create({
   baseURL: `${API_URL}/api/v1`,
+  timeout: 20000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -51,7 +52,7 @@ api.interceptors.response.use(
       const token = localStorage.getItem('access_token')
       if (!token) {
         window.location.href = '/login'
-        return new Promise(() => {})
+        return Promise.reject(error)
       }
     }
 
@@ -75,12 +76,12 @@ api.interceptors.response.use(
           localStorage.removeItem('access_token')
           localStorage.removeItem('refresh_token')
           window.location.href = '/login'
-          return new Promise(() => {})
+          return Promise.reject(error)
         }
       } else {
         localStorage.removeItem('access_token')
         window.location.href = '/login'
-        return new Promise(() => {})
+        return Promise.reject(error)
       }
     }
 
