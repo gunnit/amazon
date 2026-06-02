@@ -78,15 +78,12 @@ export function NotificationBell() {
   })
 
   const {
-    data: recentAlerts = [],
+    data: recentAlertsResponse,
     isLoading: isLoadingAlerts,
     isFetching: isRefreshingAlerts,
   } = useQuery({
     queryKey: ['recent-alerts'],
-    queryFn: async () => {
-      const response = await alertsApi.getAlerts({ status: 'unread', limit: 20 })
-      return response.items
-    },
+    queryFn: () => alertsApi.getAlerts({ status: 'unread', limit: 20 }),
     enabled: open,
     staleTime: 0,
     refetchOnMount: 'always',
@@ -139,6 +136,7 @@ export function NotificationBell() {
   })
 
   const count = unreadData?.count ?? 0
+  const recentAlerts = recentAlertsResponse?.items ?? []
   const prioritizedAlerts = useMemo(
     () => sortAlertsByPriority(recentAlerts).slice(0, 6),
     [recentAlerts]
