@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { Toaster } from '@/components/ui/toaster'
@@ -34,41 +34,25 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function App() {
   const { isAuthenticated, loadUser, logout } = useAuthStore()
   const [authChecked, setAuthChecked] = useState(false)
-  const hasBootstrappedAuth = useRef(false)
 
   useEffect(() => {
-    if (hasBootstrappedAuth.current) {
-      return
-    }
-
-    hasBootstrappedAuth.current = true
-    let isMounted = true
-
     const bootstrapAuth = async () => {
       const token = localStorage.getItem('access_token')
 
       if (!token) {
         logout()
-        if (isMounted) {
-          setAuthChecked(true)
-        }
+        setAuthChecked(true)
         return
       }
 
       try {
         await loadUser()
       } finally {
-        if (isMounted) {
-          setAuthChecked(true)
-        }
+        setAuthChecked(true)
       }
     }
 
     void bootstrapAuth()
-
-    return () => {
-      isMounted = false
-    }
   }, [loadUser, logout])
 
   if (!authChecked) {
