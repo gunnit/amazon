@@ -1467,9 +1467,16 @@ export default function BrandAnalysis() {
                     const isSelected = selectedJobId === job.id
                     return (
                       <li key={job.id}>
-                        <button
-                          type="button"
+                        <div
+                          role="button"
+                          tabIndex={0}
                           onClick={() => setSelectedJobId(job.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              setSelectedJobId(job.id)
+                            }
+                          }}
                           className={cn(
                             'grid w-full grid-cols-[1.6fr_1fr_1fr_120px_64px] items-center gap-3 px-6 py-3.5 text-left transition-colors hover:bg-muted/40',
                             isSelected && 'bg-primary/[0.04]',
@@ -1529,7 +1536,7 @@ export default function BrandAnalysis() {
                               </Button>
                             ) : null}
                           </div>
-                        </button>
+                        </div>
                       </li>
                     )
                   })}

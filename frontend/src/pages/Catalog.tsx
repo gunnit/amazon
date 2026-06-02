@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Package } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Loader2, Package } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -44,6 +44,8 @@ export default function Catalog() {
   const [search, setSearch] = useState('')
   const [activeOnly, setActiveOnly] = useState(true)
   const [activeAccountId, setActiveAccountId] = useState<string>('')
+  const [page, setPage] = useState(0)
+  const pageSize = 50
 
   const accountsQuery = useQuery({
     queryKey: ['accounts'],
@@ -56,10 +58,21 @@ export default function Catalog() {
       catalogApi.getProducts({
         search: search || undefined,
         active_only: activeOnly,
-        limit: 100,
+        limit: 500,
         account_ids: activeAccountId ? [activeAccountId] : undefined,
       }),
   })
+
+  const products = productsQuery.data ?? []
+  const totalPages = Math.ceil(products.length / pageSize)
+  const pagedProducts = useMemo(
+    () => products.slice(page * pageSize, page * pageSize + pageSize),
+    [products, page],
+  )
+
+  useEffect(() => {
+    setPage(0)
+  }, [search, activeOnly, activeAccountId])
 
   const accounts = accountsQuery.data ?? []
   const selectedAccountId = activeAccountId || accounts[0]?.id || ''
@@ -157,14 +170,14 @@ export default function Catalog() {
                         </TableCell>
                       </TableRow>
                     )}
-                    {productsQuery.data?.length === 0 && !productsQuery.isLoading && (
+                    {products.length === 0 && !productsQuery.isLoading && (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           {t('catalog.products.empty')}
                         </TableCell>
                       </TableRow>
                     )}
-                    {productsQuery.data?.map((p) => (
+                    {pagedProducts.map((p) => (
                       <TableRow key={p.id}>
                         <TableCell className="font-mono text-xs">{p.asin}</TableCell>
                         <TableCell className="max-w-[320px] truncate">{p.title ?? '—'}</TableCell>
@@ -190,6 +203,37 @@ export default function Catalog() {
                   </TableBody>
                 </Table>
               </div>
+
+              {products.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">
+                    {products.length} {t('catalog.tab.products').toLowerCase()}
+                  </span>
+                  {totalPages > 1 && (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPage((p) => Math.max(0, p - 1))}
+                        disabled={page === 0}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
+                        {page + 1} / {totalPages}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                        disabled={page >= totalPages - 1}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

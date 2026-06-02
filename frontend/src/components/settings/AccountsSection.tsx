@@ -755,9 +755,9 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.lastSync')}</span><span>{detailsAccount.last_sync_at ? formatDate(detailsAccount.last_sync_at) : t('common.never')}</span></div>
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.syncStatus')}</span><StatusBadge status={detailsAccount.sync_status} /></div>
                 {detailsAccount.sync_error_message && (
-                  <Alert variant="destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertTitle>{t('accounts.lastError')}</AlertTitle>
+                  <Alert variant={detailsAccount.sync_error_kind === 'warning' ? 'warning' : 'destructive'}>
+                    {detailsAccount.sync_error_kind === 'warning' ? <AlertTriangle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                    <AlertTitle>{detailsAccount.sync_error_kind === 'warning' ? t('alerts.severity.warning') : t('accounts.lastError')}</AlertTitle>
                     <AlertDescription>{detailsAccount.sync_error_message}</AlertDescription>
                   </Alert>
                 )}

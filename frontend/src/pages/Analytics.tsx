@@ -15,9 +15,10 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts'
-import { ArrowDownRight, ArrowUpDown, ArrowUpRight, ChevronLeft, ChevronRight, Loader2, Minus } from 'lucide-react'
-import { useSearchParams } from 'react-router-dom'
+import { AlertTriangle, ArrowDownRight, ArrowUpDown, ArrowUpRight, ChevronLeft, ChevronRight, Loader2, Minus } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -30,7 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { analyticsApi, catalogApi } from '@/services/api'
+import { accountsApi, analyticsApi, catalogApi } from '@/services/api'
 import { formatCurrency, formatNumber } from '@/lib/utils'
 import {
   FilterBar,
@@ -45,8 +46,10 @@ import ProductTrendSparkline from '@/components/analytics/ProductTrendSparkline'
 import TrendInsightsCard from '@/components/analytics/TrendInsightsCard'
 import { PerProductPerformanceTable } from '@/components/analytics/PerProductPerformanceTable'
 import type {
+  AdsConnectionState,
   AdsVsOrganicAsinBreakdownItem,
   AdsVsOrganicResponse,
+  AmazonAccount,
   HourlyOrdersData,
   MetricValue,
   Product,
@@ -117,6 +120,14 @@ function formatOptionalPercent(value: number | null | undefined): string {
   }
 
   return `${value.toFixed(1)}%`
+}
+
+function resolveAdsState(account: AmazonAccount): AdsConnectionState {
+  if (account.ads_connection_state) return account.ads_connection_state
+  if (account.has_ads_client_credentials === false) return 'missing_client_credentials'
+  if (!account.has_advertising_refresh_token) return 'missing_refresh_token'
+  if (!account.advertising_profile_id) return 'missing_profile'
+  return 'ok'
 }
 
 function formatTimeBucketLabel(
@@ -395,6 +406,19 @@ export default function Analytics() {
     enabled: activeTab === 'ads-vs-organic',
   })
 
+  const { data: accountsList = [] } = useQuery<AmazonAccount[]>({
+    queryKey: ['accounts'],
+    queryFn: () => accountsApi.list(),
+    enabled: activeTab === 'ads-vs-organic',
+  })
+
+  const adsScopedAccounts = trendAccountIds.length > 0
+    ? accountsList.filter((account) => trendAccountIds.includes(account.id))
+    : accountsList
+  const showNoAdsBanner =
+    adsScopedAccounts.length > 0 &&
+    adsScopedAccounts.every((account) => resolveAdsState(account) !== 'ok')
+
   const asinOptions = useMemo(() => {
     const deduped = new Map<string, Product>()
     for (const product of products || []) {
@@ -501,7 +525,10 @@ export default function Analytics() {
   )
 
   const selectedAsinProduct = asinOptions.find((product) => product.asin === selectedAsin)
-  const returnReasonChartData = (returnsAnalytics?.reason_breakdown || []).slice(0, 6)
+  const returnReasonChartData = (returnsAnalytics?.reason_breakdown || []).slice(0, 6).map((entry) => ({
+    ...entry,
+    reason: entry.reason === 'Unknown' ? t('analytics.returns.unknownReason') : entry.reason,
+  }))
   const returnAsinChartData = (returnsAnalytics?.top_asins_by_returns || []).slice(0, 8).map((item) => ({
     ...item,
     displayLabel: truncateLabel(item.asin, 16),
@@ -679,7 +706,9 @@ export default function Analytics() {
                   <div className="space-y-2">
                     <p className="text-sm text-muted-foreground">{t('analytics.returnRate')}</p>
                     <p className="text-2xl font-bold">
-                      {(kpis?.return_rate.value || 0).toFixed(1)}%
+                      {kpis?.return_rate.is_available
+                        ? `${(kpis.return_rate.value || 0).toFixed(1)}%`
+                        : 'N/A'}
                     </p>
                   </div>
                   <div className="space-y-2">
@@ -1051,7 +1080,9 @@ export default function Analytics() {
                 <div className="rounded-lg border p-4">
                   <p className="text-sm text-muted-foreground">{t('analytics.returns.topReason')}</p>
                   <p className="mt-2 text-2xl font-bold">
-                    {returnsAnalytics?.summary.top_reason || t('analytics.returns.unknownReason')}
+                    {returnsAnalytics?.summary.top_reason && returnsAnalytics.summary.top_reason !== 'Unknown'
+                      ? returnsAnalytics.summary.top_reason
+                      : t('analytics.returns.unknownReason')}
                   </p>
                 </div>
                 <div className="rounded-lg border p-4">
@@ -1294,6 +1325,18 @@ export default function Analytics() {
             </Card>
           ) : (
             <>
+              {showNoAdsBanner && (
+                <Alert variant="warning">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>{t('advertising.noAdsConnectionsTitle')}</AlertTitle>
+                  <AlertDescription>
+                    {t('advertising.noAdsConnectionsDesc')}{' '}
+                    <Link to="/accounts" className="font-medium underline">
+                      {t('advertising.openAccounts')}
+                    </Link>
+                  </AlertDescription>
+                </Alert>
+              )}
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                 <AdsVsOrganicKpiCard
                   label={t('analytics.totalSales')}

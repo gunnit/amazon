@@ -219,13 +219,6 @@ export interface AdsVsOrganicResponse {
   attribution_notes: string[]
 }
 
-export interface CategorySalesData {
-  category: string
-  total_revenue: number
-  total_units: number
-  total_orders: number
-}
-
 export interface TopPerformerData {
   asin: string
   title: string | null

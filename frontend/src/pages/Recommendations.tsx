@@ -14,13 +14,7 @@ import {
 } from 'lucide-react'
 import { downloadBlob } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -407,7 +401,7 @@ export default function Recommendations() {
                     {priorityBadge(rec.priority)}
                   </div>
                   <CardTitle className="text-base leading-snug">{rec.title}</CardTitle>
-                  <CardDescription className="space-y-2 text-xs">
+                  <div className="space-y-2 text-xs text-muted-foreground">
                     <div>{new Date(rec.generated_at).toLocaleDateString()}</div>
                     <div className="flex flex-wrap gap-2">
                       {isGlobalScope ? (
@@ -428,7 +422,7 @@ export default function Recommendations() {
                         </>
                       )}
                     </div>
-                  </CardDescription>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div>

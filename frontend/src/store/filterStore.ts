@@ -184,15 +184,18 @@ function formatDate(dateValue: Date): string {
 }
 
 function shiftDate(dateValue: Date, preset: ComparisonPreset): Date {
-  const shifted = new Date(dateValue)
+  const day = dateValue.getDate()
+  let year = dateValue.getFullYear()
+  let month = dateValue.getMonth()
   if (preset === 'mom') {
-    shifted.setMonth(shifted.getMonth() - 1)
+    month -= 1
   } else if (preset === 'qoq') {
-    shifted.setMonth(shifted.getMonth() - 3)
+    month -= 3
   } else {
-    shifted.setFullYear(shifted.getFullYear() - 1)
+    year -= 1
   }
-  return shifted
+  const lastDayOfTargetMonth = new Date(year, month + 1, 0).getDate()
+  return new Date(year, month, Math.min(day, lastDayOfTargetMonth))
 }
 
 /** Resolve the two date ranges used by the period comparison feature. */
