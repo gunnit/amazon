@@ -391,7 +391,7 @@ function ForecastExportModal({
               <p><span className="font-medium text-foreground">ASIN:</span> {forecast.asin}</p>
             )}
             <p><span className="font-medium text-foreground">{t('forecasts.model')}:</span> {forecast.model_used}</p>
-            <p><span className="font-medium text-foreground">{t('forecasts.horizonLabel')}:</span> {forecast.horizon_days} {t('filter.day').toLowerCase()}s</p>
+            <p><span className="font-medium text-foreground">{t('forecasts.horizonLabel')}:</span> {t('forecasts.byAsin.daysValue', { days: forecast.horizon_days })}</p>
             <p><span className="font-medium text-foreground">{t('forecasts.predictedTotal')}:</span> {formatCurrency(forecast.predictions.reduce((s, p) => s + p.predicted_value, 0))}</p>
           </div>
 
@@ -806,7 +806,7 @@ export default function Forecasts() {
                       onClick={() => setExportModalOpen(true)}
                     >
                       <Download className="mr-1 h-4 w-4" />
-                      {t('forecasts.exportCsv')}
+                      {t('export.button')}
                     </Button>
                     <Badge variant="secondary">
                       {(latestForecast.confidence_interval * 100).toFixed(0)}% CI
@@ -1075,7 +1075,7 @@ export default function Forecasts() {
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">{t('forecasts.horizonLabel')}</span>
-                    <span>{latestForecast.horizon_days} {t('filter.day').toLowerCase()}s</span>
+                    <span>{t('forecasts.byAsin.daysValue', { days: latestForecast.horizon_days })}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">{t('forecasts.type')}</span>

@@ -119,6 +119,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "summary_notes_inventory": "Compared with the previous available inventory snapshot.",
         "summary_notes_advertising": "Compared with the immediately preceding period.",
         "low_stock_note": f"Threshold: available quantity below {LOW_STOCK_THRESHOLD}.",
+        "cover_sheet": "Cover",
+        "cover_title": "Inthezon — Report",
+        "cover_period": "Period",
+        "cover_report_types": "Report Types",
+        "cover_data_source": "Data Source",
+        "cover_data_source_value": "Source: Amazon SP-API",
     },
     "it": {
         "section": "Sezione",
@@ -213,6 +219,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "summary_notes_inventory": "Confrontato con lo snapshot inventario precedente disponibile.",
         "summary_notes_advertising": "Confrontato con il periodo immediatamente precedente.",
         "low_stock_note": f"Soglia: quantità disponibile inferiore a {LOW_STOCK_THRESHOLD}.",
+        "cover_sheet": "Copertina",
+        "cover_title": "Inthezon — Report",
+        "cover_period": "Periodo",
+        "cover_report_types": "Tipi di Report",
+        "cover_data_source": "Fonte Dati",
+        "cover_data_source_value": "Fonte: Amazon SP-API",
     },
 }
 
@@ -459,6 +471,8 @@ class ExportService:
         # Remove default sheet — we'll create named ones
         wb.remove(wb.active)
 
+        self._write_cover_sheet(wb, renderer, accounts, report_types, start_date, end_date, lang)
+
         for report_type in report_types:
             if report_type == "sales":
                 collected = await self._collect_sales_data(accounts, start_date, end_date, group_by, lang, include_comparison)
@@ -495,6 +509,34 @@ class ExportService:
         output.seek(0)
         filename = f"inthezon_export_{start_date}_{end_date}_{lang}_{style.name}.xlsx"
         return output.getvalue(), filename
+
+    def _write_cover_sheet(
+        self,
+        wb: Any,
+        renderer: Any,
+        accounts: list[AmazonAccount],
+        report_types: list[ReportType],
+        start_date: date,
+        end_date: date,
+        lang: Language,
+    ) -> None:
+        """Prepend a branded cover sheet using the template title banner."""
+        ws = wb.create_sheet(title=self._text(lang, "cover_sheet")[:31], index=0)
+        report_labels = ", ".join(self._text(lang, f"{rt}_report") for rt in report_types)
+        renderer.write_title_banner(
+            ws,
+            title=self._text(lang, "cover_title"),
+            subtitle=self._accounts_label(accounts, lang),
+            metadata_rows=[
+                (self._text(lang, "cover_period"), f"{start_date.isoformat()} — {end_date.isoformat()}"),
+                (self._text(lang, "cover_report_types"), report_labels),
+                (self._text(lang, "generated_at"), datetime.utcnow().strftime("%Y-%m-%d %H:%M")),
+                (self._text(lang, "cover_data_source"), self._text(lang, "cover_data_source_value")),
+            ],
+        )
+        ws.column_dimensions["A"].width = 22
+        ws.column_dimensions["B"].width = 48
+        ws.sheet_view.showGridLines = False
 
     # ── Data collectors (shared by CSV and Excel) ─────────────────────
 

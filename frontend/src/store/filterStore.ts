@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
-export type DatePreset = '7' | '14' | '30' | '60' | '90' | 'custom'
+export type DatePreset = '7' | '14' | '30' | '60' | '90' | '12m' | 'ytd' | 'lastyear' | 'custom'
 export type GroupBy = 'day' | 'week' | 'month'
 export type ComparisonMode = 'preset' | 'custom'
 export type ComparisonPreset = 'mom' | 'qoq' | 'yoy'
@@ -62,7 +62,7 @@ interface FilterState {
 }
 
 const defaultState = {
-  datePreset: '30' as DatePreset,
+  datePreset: '12m' as DatePreset,
   customStartDate: null as string | null,
   customEndDate: null as string | null,
   accountIds: [] as string[],
@@ -123,7 +123,7 @@ export const useFilterStore = create<FilterState>()(
 
       resetAll: () => set(defaultState),
       resetDashboard: () => set({
-        datePreset: '30',
+        datePreset: '12m',
         customStartDate: null,
         customEndDate: null,
         accountIds: [],
@@ -161,13 +161,33 @@ export function getFilterDateRange(state: Pick<FilterState, 'datePreset' | 'cust
     return { start: state.customStartDate, end: state.customEndDate }
   }
 
-  const days = parseInt(state.datePreset) || 30
-  const end = new Date()
-  const start = new Date()
-  start.setDate(start.getDate() - days)
-
   const fmt = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+  const today = new Date()
+
+  if (state.datePreset === '12m') {
+    const day = today.getDate()
+    const month = today.getMonth() - 12
+    const year = today.getFullYear()
+    const lastDayOfTargetMonth = new Date(year, month + 1, 0).getDate()
+    const start = new Date(year, month, Math.min(day, lastDayOfTargetMonth))
+    return { start: fmt(start), end: fmt(today) }
+  }
+
+  if (state.datePreset === 'ytd') {
+    return { start: fmt(new Date(today.getFullYear(), 0, 1)), end: fmt(today) }
+  }
+
+  if (state.datePreset === 'lastyear') {
+    const year = today.getFullYear() - 1
+    return { start: fmt(new Date(year, 0, 1)), end: fmt(new Date(year, 11, 31)) }
+  }
+
+  const days = parseInt(state.datePreset) || 30
+  const end = today
+  const start = new Date()
+  start.setDate(start.getDate() - days)
 
   return {
     start: fmt(start),

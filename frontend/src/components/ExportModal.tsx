@@ -31,7 +31,7 @@ import type { AmazonAccount } from '@/types'
 import type { DateRange } from 'react-day-picker'
 
 type ReportType = 'sales' | 'inventory' | 'advertising'
-type DatePreset = '7' | '14' | '30' | '60' | '90' | 'custom'
+type DatePreset = '7' | '14' | '30' | '60' | '90' | '12m' | 'ytd' | 'lastyear' | 'custom'
 type TemplateType = 'clean' | 'corporate' | 'executive'
 
 const PRESET_OPTIONS: { value: DatePreset; key: string }[] = [
@@ -40,6 +40,9 @@ const PRESET_OPTIONS: { value: DatePreset; key: string }[] = [
   { value: '30', key: 'filter.last30days' },
   { value: '60', key: 'filter.last60days' },
   { value: '90', key: 'filter.last90days' },
+  { value: '12m', key: 'filter.last12months' },
+  { value: 'ytd', key: 'filter.yearToDate' },
+  { value: 'lastyear', key: 'filter.lastYear' },
   { value: 'custom', key: 'filter.customRange' },
 ]
 
@@ -132,15 +135,35 @@ function TemplatePreview({
 }
 
 function computeDateRange(preset: DatePreset, customStart: string | null, customEnd: string | null) {
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
   if (preset === 'custom' && customStart && customEnd) {
     return { start: customStart, end: customEnd }
   }
+
+  const today = new Date()
+  if (preset === '12m') {
+    const targetYear = today.getFullYear() - 1
+    const targetMonth = today.getMonth()
+    const lastDayOfMonth = new Date(targetYear, targetMonth + 1, 0).getDate()
+    const start = new Date(targetYear, targetMonth, Math.min(today.getDate(), lastDayOfMonth))
+    return { start: fmt(start), end: fmt(today) }
+  }
+  if (preset === 'ytd') {
+    return { start: fmt(new Date(today.getFullYear(), 0, 1)), end: fmt(today) }
+  }
+  if (preset === 'lastyear') {
+    return {
+      start: fmt(new Date(today.getFullYear() - 1, 0, 1)),
+      end: fmt(new Date(today.getFullYear() - 1, 11, 31)),
+    }
+  }
+
   const days = parseInt(preset) || 30
   const end = new Date()
   const start = new Date()
   start.setDate(start.getDate() - days)
-  const fmt = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   return { start: fmt(start), end: fmt(end) }
 }
 
@@ -156,7 +179,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
   // Local state (independent from page filters)
   const [reportTypes, setReportTypes] = useState<Set<ReportType>>(new Set(['sales', 'inventory']))
   const [language, setLanguage] = useState<'en' | 'it'>('en')
-  const [datePreset, setDatePreset] = useState<DatePreset>('30')
+  const [datePreset, setDatePreset] = useState<DatePreset>('12m')
   const [customStartDate, setCustomStartDate] = useState<string | null>(null)
   const [customEndDate, setCustomEndDate] = useState<string | null>(null)
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([])
