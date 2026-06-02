@@ -579,6 +579,10 @@ async def get_dashboard_kpis(
     sales_previous = await _get_sales_period_metrics(db, accounts_query, prev_start, prev_end)
     ads_current = await _get_advertising_period_metrics(db, accounts_query, start_date, end_date)
     ads_previous = await _get_advertising_period_metrics(db, accounts_query, prev_start, prev_end)
+    ads_available = bool(
+        ads_current.get("impressions", 0) or ads_current.get("clicks", 0) or ads_current.get("spend", 0)
+    )
+    ads_reason = None if ads_available else "ads_not_connected"
 
     revenue_metric = _build_comparison_metric(
         "revenue", "Revenue", "currency", sales_current["revenue"], sales_previous["revenue"]
@@ -597,13 +601,16 @@ async def get_dashboard_kpis(
         sales_previous["average_order_value"],
     )
     roas_metric = _build_comparison_metric(
-        "roas", "ROAS", "ratio", ads_current["roas"], ads_previous["roas"]
+        "roas", "ROAS", "ratio", ads_current["roas"], ads_previous["roas"],
+        is_available=ads_available, unavailable_reason=ads_reason,
     )
     acos_metric = _build_comparison_metric(
-        "acos", "ACoS", "percent", ads_current["acos"], ads_previous["acos"]
+        "acos", "ACoS", "percent", ads_current["acos"], ads_previous["acos"],
+        is_available=ads_available, unavailable_reason=ads_reason,
     )
     ctr_metric = _build_comparison_metric(
-        "ctr", "CTR", "percent", ads_current["ctr"], ads_previous["ctr"]
+        "ctr", "CTR", "percent", ads_current["ctr"], ads_previous["ctr"],
+        is_available=ads_available, unavailable_reason=ads_reason,
     )
     ad_spend_metric = _build_comparison_metric(
         "total_ad_spend",
@@ -611,6 +618,8 @@ async def get_dashboard_kpis(
         "currency",
         ads_current["spend"],
         ads_previous["spend"],
+        is_available=ads_available,
+        unavailable_reason=ads_reason,
     )
     conversion_available = sales_current.get("sessions", 0) > 0
     conversion_metric = _build_comparison_metric(
@@ -689,6 +698,7 @@ async def get_ads_vs_organic(
     date_to: date = Query(default=date.today()),
     group_by: str = Query(default="day", pattern="^(day|week|month)$"),
     asin: Optional[str] = Query(default=None),
+    language: str = Query(default="en", pattern="^(en|it)$"),
 ):
     """Get ad-attributed vs organic sales analytics."""
     _validate_period(date_from, date_to, "period")
@@ -705,6 +715,7 @@ async def get_ads_vs_organic(
         date_to=date_to,
         group_by=group_by,
         asin=asin,
+        language=language,
     )
 
 
@@ -794,6 +805,7 @@ async def get_returns_analysis(
     date_to: Optional[date] = Query(default=None),
     asin: Optional[str] = Query(default=None, min_length=1, max_length=20),
     limit: int = Query(default=10, ge=1, le=50),
+    language: str = Query(default="en", pattern="^(en|it)$"),
 ):
     """Get return trends, reasons, and ASIN-level return metrics."""
     date_from, date_to = _resolve_optional_date_range(date_from, date_to)
@@ -813,8 +825,9 @@ async def get_returns_analysis(
     if asin:
         returns_filters.append(ReturnData.asin == asin)
 
-    reason_expr = func.coalesce(func.nullif(ReturnData.reason, ""), "Unknown")
-    disposition_expr = func.coalesce(func.nullif(ReturnData.disposition, ""), "Unknown")
+    unknown_label = "Sconosciuto" if language == "it" else "Unknown"
+    reason_expr = func.coalesce(func.nullif(ReturnData.reason, ""), unknown_label)
+    disposition_expr = func.coalesce(func.nullif(ReturnData.disposition, ""), unknown_label)
 
     returns_trend_rows = (
         await db.execute(

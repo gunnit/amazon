@@ -181,8 +181,8 @@ export const accountsApi = {
     return response.data
   },
 
-  getSummary: async (): Promise<AccountSummary> => {
-    const response = await api.get('/accounts/summary')
+  getSummary: async (params?: { start_date?: string; end_date?: string }): Promise<AccountSummary> => {
+    const response = await api.get('/accounts/summary', { params })
     return response.data
   },
 

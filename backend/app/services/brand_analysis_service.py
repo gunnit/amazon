@@ -2063,13 +2063,347 @@ def format_number(value: Optional[float], digits: int = 0) -> str:
     return f"{float(value):,.{digits}f}"
 
 
+PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
+    "en": {
+        # Cover
+        "cover_on_amazon": "ON AMAZON",
+        "cover_subtitle": "Market analysis and growth strategy",
+        # As-is
+        "as_is_title": "Current Amazon Performance",
+        "as_is_subtitle": "Overview of current Amazon marketplace presence",
+        "kpi_revenue_2025": "Revenue 2025",
+        "kpi_revenue_2024": "Revenue 2024",
+        "kpi_yoy_change": "YoY Change",
+        "kpi_average_rating": "Average Rating",
+        "kpi_units_sold_2025": "Units Sold 2025",
+        "kpi_avg_price_per_asin": "Avg Price / ASIN",
+        # Revenue YoY
+        "revenue_yoy_title": "Revenue 2024 vs 2025",
+        "revenue_yoy_subtitle": "Year-over-year performance calculated from source rows",
+        "kpi_yoy": "YoY",
+        "revenue_yoy_footnote": "All revenue numbers are deterministic sums from the selected internal or uploaded yearly source data.",
+        # Catalog health
+        "catalog_health_title": "Catalog Health",
+        "catalog_health_subtitle": "ASIN universe, discovery coverage and enrichment quality",
+        "kpi_asins_2025": "ASINs 2025",
+        "kpi_active_2025": "Active 2025",
+        "kpi_inactive_2025": "Inactive 2025",
+        "kpi_new_yoy": "New YoY",
+        "readiness_discovered_asins": "Discovered ASINs",
+        "readiness_lookups_attempted": "Catalog lookups attempted",
+        "readiness_failed_asins": "Catalog failed ASINs",
+        "readiness_partial_enrichment": "Partial enrichment",
+        "value_yes": "Yes",
+        "value_no": "No",
+        "value_none": "None",
+        "table_readiness_signal": "Readiness signal",
+        "table_value": "Value",
+        "missing_optional_fields_2025": "Optional fields missing in 2025",
+        "source_limitations": "Source limitations",
+        # Active / inactive
+        "active_inactive_title": "Active / Inactive ASINs",
+        "active_inactive_subtitle": "Zero-revenue ASINs are treated as inactive",
+        "catalog_split_2025": "2025 catalog split",
+        "kpi_active": "Active",
+        "kpi_inactive": "Inactive",
+        "kpi_pct_inactive": "% Inactive",
+        "active_inactive_footnote": "ASINs discovered through catalog search or local catalog enrichment are included with EUR 0 revenue when the account has yearly history but the scoped ASIN has no sales.",
+        # Top performers
+        "top_performers_title": "Top Performing ASINs",
+        "top_performers_subtitle": "Revenue leaders and YoY movement",
+        "table_asin": "ASIN",
+        "table_product": "Product",
+        "table_rev_2025": "Rev. 2025",
+        "table_rev_2024": "Rev. 2024",
+        "table_yoy_pct": "YoY %",
+        # Catalog audit (alternate layout)
+        "catalog_audit_title": "Catalog Audit",
+        "catalog_audit_subtitle": "Catalog composition and performance on Amazon",
+        "kpi_asins_2024": "ASINs 2024",
+        "kpi_inactive_asins": "Inactive ASINs",
+        # Content audit
+        "content_audit_title": "SEO & Content Audit",
+        "content_audit_subtitle": "Content quality and product listing optimization",
+        "kpi_avg_images_per_asin": "Avg Images / ASIN",
+        "kpi_missing_bullets": "Missing Bullets",
+        "kpi_missing_description": "Missing Description",
+        "kpi_short_titles": "Short Titles",
+        "table_detected_gaps": "Detected gaps",
+        "content_no_gaps": "No source-backed content gaps",
+        # Image / review weaknesses
+        "review_image_title": "Image / Review Weaknesses",
+        "review_image_subtitle": "Listing trust signals where source data is available",
+        "kpi_asins_few_images": "ASINs <5 Images",
+        "kpi_asins_few_reviews": "ASINs <15 Reviews",
+        "kpi_rating_below_4": "Rating <4.0",
+        "table_reviews": "Reviews",
+        "table_rating": "Rating",
+        "table_issue": "Issue",
+        "review_no_weakness": "No review/rating weakness in source-backed fields",
+        # Subcategory performance
+        "subcategory_title": "Subcategory Performance",
+        "subcategory_subtitle": "Revenue contribution and YoY by subcategory",
+        "table_subcategory": "Subcategory",
+        # Operational gap
+        "operational_gap_title": "Operational Performance Gap",
+        "operational_gap_subtitle": "Key issues limiting growth potential",
+        "kpi_pct_inactive_asins": "% Inactive ASINs",
+        "kpi_pct_declining_asins": "% ASINs Declining YoY",
+        "kpi_asins_multi_seller": "ASINs with >1 Seller",
+        "kpi_largest_subcat_decline": "Largest Subcategory Decline",
+        "revenue_concentration": "Revenue Concentration",
+        "kpi_top_5_asins": "Top 5 ASINs",
+        "kpi_top_10_asins": "Top 10 ASINs",
+        "kpi_avg_rev_per_active_asin": "Avg Rev / Active ASIN",
+        # Channel gap
+        "channel_gap_title": "Channel Performance Gap",
+        "channel_gap_subtitle": "Current reseller snapshot and Buy Box availability",
+        "kpi_avg_sellers": "Avg Sellers",
+        "kpi_avg_offers": "Avg Offers",
+        "kpi_missing_buy_box": "Missing Buy Box",
+        "table_reseller_buy_box": "Reseller / Buy Box",
+        "table_asins": "ASINs",
+        "table_revenue": "Revenue",
+        "table_pct_impact": "% Impact",
+        "current_snapshot": "Current snapshot",
+        "channel_not_available": "Not available in source data",
+        # Concentration risk
+        "concentration_risk_title": "Concentration Risk",
+        "concentration_risk_subtitle": "How much revenue depends on the top ASINs",
+        "kpi_top_5_revenue_share": "Top 5 Revenue Share",
+        "kpi_top_10_revenue_share": "Top 10 Revenue Share",
+        "table_yoy": "YoY",
+        # Market share
+        "market_share_title": "Market Share & Competition",
+        "market_share_subtitle": "Calculated only when a reliable competitor revenue base exists",
+        "kpi_market_size_2025": "Market Size 2025",
+        "kpi_revenue_share_2025": "Revenue Share 2025",
+        "kpi_revenue_share_2024": "Revenue Share 2024",
+        "table_brand": "Brand",
+        "table_share": "Share",
+        "market_share_unavailable": "Revenue market share: N/A [UNAVAILABLE]",
+        "market_share_no_base": "No reliable competitor revenue base was provided.",
+        "market_share_no_invent": "The deck does not invent market size. Upload a broad yearly market export with competitor brand revenue to calculate this section.",
+        # Approach
+        "approach_title": "Our Approach",
+        "approach_subtitle": "Three pillars for professional Amazon channel management",
+        "approach_visibility": "VISIBILITY",
+        "approach_visibility_sub": "SEO - ADV - Keywords",
+        "approach_conversion": "CONVERSION",
+        "approach_conversion_sub": "Content - Images - A+",
+        "approach_loyalty": "LOYALTY",
+        "approach_loyalty_sub": "Brand Store - Reviews",
+        # Roadmap
+        "roadmap_title": "Operational Roadmap",
+        "roadmap_subtitle": "3-phase action plan for the first 12 months",
+        # Projection
+        "projection_title": "Growth Projection",
+        "projection_subtitle": "12-month revenue growth scenarios",
+        "current_situation": "Current Situation",
+        "projection_active_asins": "active ASINs out of",
+        "scenario_conservative": "CONSERVATIVE",
+        "scenario_realistic": "REALISTIC",
+        "scenario_optimistic": "OPTIMISTIC",
+        "scenario_cons_1": "Basic SEO on top ASINs",
+        "scenario_cons_2": "Image upgrade priority set",
+        "scenario_cons_3": "ADV on key categories",
+        "scenario_cons_4": "Basic Buy Box monitoring",
+        "scenario_real_1": "SEO across broad catalog",
+        "scenario_real_2": "A+ Content on priority ASINs",
+        "scenario_real_3": "Inactive ASIN reactivation",
+        "scenario_real_4": "ADV and competitor targeting",
+        "scenario_opt_1": "Full catalog SEO",
+        "scenario_opt_2": "A+ plus video on hero ASINs",
+        "scenario_opt_3": "Aggressive reactivation",
+        "scenario_opt_4": "Brand Store and ADV scale-up",
+        # Conclusions
+        "conclusions_title": "Conclusions",
+        "conclusions_subtitle": "Summary and next steps",
+        "conclusions_current_situation": "Current Situation",
+        "conclusions_strengths": "Strengths",
+        "conclusions_plan": "3-Phase Plan - 12 Months",
+        "conclusions_urgency": "Urgency",
+    },
+    "it": {
+        # Cover
+        "cover_on_amazon": "SU AMAZON",
+        "cover_subtitle": "Analisi di mercato e strategia di crescita",
+        # As-is
+        "as_is_title": "Performance attuale su Amazon",
+        "as_is_subtitle": "Panoramica della presenza attuale sul marketplace Amazon",
+        "kpi_revenue_2025": "Fatturato 2025",
+        "kpi_revenue_2024": "Fatturato 2024",
+        "kpi_yoy_change": "Variazione YoY",
+        "kpi_average_rating": "Valutazione media",
+        "kpi_units_sold_2025": "Unità vendute 2025",
+        "kpi_avg_price_per_asin": "Prezzo medio / ASIN",
+        # Revenue YoY
+        "revenue_yoy_title": "Fatturato 2024 vs 2025",
+        "revenue_yoy_subtitle": "Performance anno su anno calcolata dai dati di origine",
+        "kpi_yoy": "YoY",
+        "revenue_yoy_footnote": "Tutti i valori di fatturato sono somme deterministiche dei dati annuali di origine interni o caricati selezionati.",
+        # Catalog health
+        "catalog_health_title": "Salute del catalogo",
+        "catalog_health_subtitle": "Universo ASIN, copertura della discovery e qualità dell'arricchimento",
+        "kpi_asins_2025": "ASIN 2025",
+        "kpi_active_2025": "Attivi 2025",
+        "kpi_inactive_2025": "Inattivi 2025",
+        "kpi_new_yoy": "Nuovi YoY",
+        "readiness_discovered_asins": "ASIN individuati",
+        "readiness_lookups_attempted": "Ricerche catalogo tentate",
+        "readiness_failed_asins": "ASIN catalogo non riusciti",
+        "readiness_partial_enrichment": "Arricchimento parziale",
+        "value_yes": "Sì",
+        "value_no": "No",
+        "value_none": "Nessuno",
+        "table_readiness_signal": "Indicatore di completezza",
+        "table_value": "Valore",
+        "missing_optional_fields_2025": "Campi opzionali mancanti nel 2025",
+        "source_limitations": "Limiti dei dati di origine",
+        # Active / inactive
+        "active_inactive_title": "ASIN attivi / inattivi",
+        "active_inactive_subtitle": "Gli ASIN con fatturato zero sono trattati come inattivi",
+        "catalog_split_2025": "Suddivisione catalogo 2025",
+        "kpi_active": "Attivi",
+        "kpi_inactive": "Inattivi",
+        "kpi_pct_inactive": "% Inattivi",
+        "active_inactive_footnote": "Gli ASIN individuati tramite ricerca a catalogo o arricchimento del catalogo locale sono inclusi con fatturato pari a EUR 0 quando l'account ha uno storico annuale ma l'ASIN considerato non ha vendite.",
+        # Top performers
+        "top_performers_title": "ASIN più performanti",
+        "top_performers_subtitle": "Leader di fatturato e andamento YoY",
+        "table_asin": "ASIN",
+        "table_product": "Prodotto",
+        "table_rev_2025": "Fatt. 2025",
+        "table_rev_2024": "Fatt. 2024",
+        "table_yoy_pct": "YoY %",
+        # Catalog audit (alternate layout)
+        "catalog_audit_title": "Audit del catalogo",
+        "catalog_audit_subtitle": "Composizione del catalogo e performance su Amazon",
+        "kpi_asins_2024": "ASIN 2024",
+        "kpi_inactive_asins": "ASIN inattivi",
+        # Content audit
+        "content_audit_title": "Audit SEO e contenuti",
+        "content_audit_subtitle": "Qualità dei contenuti e ottimizzazione delle schede prodotto",
+        "kpi_avg_images_per_asin": "Immagini medie / ASIN",
+        "kpi_missing_bullets": "Bullet mancanti",
+        "kpi_missing_description": "Descrizione mancante",
+        "kpi_short_titles": "Titoli brevi",
+        "table_detected_gaps": "Lacune rilevate",
+        "content_no_gaps": "Nessuna lacuna di contenuto supportata dai dati",
+        # Image / review weaknesses
+        "review_image_title": "Debolezze immagini / recensioni",
+        "review_image_subtitle": "Segnali di affidabilità delle schede dove i dati di origine sono disponibili",
+        "kpi_asins_few_images": "ASIN <5 immagini",
+        "kpi_asins_few_reviews": "ASIN <15 recensioni",
+        "kpi_rating_below_4": "Valutazione <4.0",
+        "table_reviews": "Recensioni",
+        "table_rating": "Valutazione",
+        "table_issue": "Problema",
+        "review_no_weakness": "Nessuna debolezza di recensioni/valutazioni nei campi supportati dai dati",
+        # Subcategory performance
+        "subcategory_title": "Performance per sottocategoria",
+        "subcategory_subtitle": "Contributo al fatturato e YoY per sottocategoria",
+        "table_subcategory": "Sottocategoria",
+        # Operational gap
+        "operational_gap_title": "Gap di performance operativa",
+        "operational_gap_subtitle": "Principali criticità che limitano il potenziale di crescita",
+        "kpi_pct_inactive_asins": "% ASIN inattivi",
+        "kpi_pct_declining_asins": "% ASIN in calo YoY",
+        "kpi_asins_multi_seller": "ASIN con >1 venditore",
+        "kpi_largest_subcat_decline": "Maggior calo per sottocategoria",
+        "revenue_concentration": "Concentrazione del fatturato",
+        "kpi_top_5_asins": "Top 5 ASIN",
+        "kpi_top_10_asins": "Top 10 ASIN",
+        "kpi_avg_rev_per_active_asin": "Fatt. medio / ASIN attivo",
+        # Channel gap
+        "channel_gap_title": "Gap di performance di canale",
+        "channel_gap_subtitle": "Snapshot attuale dei rivenditori e disponibilità della Buy Box",
+        "kpi_avg_sellers": "Venditori medi",
+        "kpi_avg_offers": "Offerte medie",
+        "kpi_missing_buy_box": "Buy Box mancante",
+        "table_reseller_buy_box": "Rivenditore / Buy Box",
+        "table_asins": "ASIN",
+        "table_revenue": "Fatturato",
+        "table_pct_impact": "% Impatto",
+        "current_snapshot": "Snapshot attuale",
+        "channel_not_available": "Non disponibile nei dati di origine",
+        # Concentration risk
+        "concentration_risk_title": "Rischio di concentrazione",
+        "concentration_risk_subtitle": "Quanto fatturato dipende dagli ASIN principali",
+        "kpi_top_5_revenue_share": "Quota fatturato Top 5",
+        "kpi_top_10_revenue_share": "Quota fatturato Top 10",
+        "table_yoy": "YoY",
+        # Market share
+        "market_share_title": "Quota di mercato e concorrenza",
+        "market_share_subtitle": "Calcolata solo quando esiste una base affidabile di fatturato dei concorrenti",
+        "kpi_market_size_2025": "Dimensione mercato 2025",
+        "kpi_revenue_share_2025": "Quota fatturato 2025",
+        "kpi_revenue_share_2024": "Quota fatturato 2024",
+        "table_brand": "Brand",
+        "table_share": "Quota",
+        "market_share_unavailable": "Quota di mercato a fatturato: N/A [NON DISPONIBILE]",
+        "market_share_no_base": "Non è stata fornita una base affidabile di fatturato dei concorrenti.",
+        "market_share_no_invent": "Il deck non inventa la dimensione del mercato. Carica un export di mercato annuale completo con il fatturato dei brand concorrenti per calcolare questa sezione.",
+        # Approach
+        "approach_title": "Il nostro approccio",
+        "approach_subtitle": "Tre pilastri per una gestione professionale del canale Amazon",
+        "approach_visibility": "VISIBILITÀ",
+        "approach_visibility_sub": "SEO - ADV - Keyword",
+        "approach_conversion": "CONVERSIONE",
+        "approach_conversion_sub": "Contenuti - Immagini - A+",
+        "approach_loyalty": "FIDELIZZAZIONE",
+        "approach_loyalty_sub": "Brand Store - Recensioni",
+        # Roadmap
+        "roadmap_title": "Roadmap operativa",
+        "roadmap_subtitle": "Piano d'azione in 3 fasi per i primi 12 mesi",
+        # Projection
+        "projection_title": "Proiezione di crescita",
+        "projection_subtitle": "Scenari di crescita del fatturato a 12 mesi",
+        "current_situation": "Situazione attuale",
+        "projection_active_asins": "ASIN attivi su",
+        "scenario_conservative": "CONSERVATIVO",
+        "scenario_realistic": "REALISTICO",
+        "scenario_optimistic": "OTTIMISTICO",
+        "scenario_cons_1": "SEO di base sugli ASIN principali",
+        "scenario_cons_2": "Priorità di upgrade delle immagini definita",
+        "scenario_cons_3": "ADV sulle categorie chiave",
+        "scenario_cons_4": "Monitoraggio Buy Box di base",
+        "scenario_real_1": "SEO sull'intero catalogo",
+        "scenario_real_2": "Contenuti A+ sugli ASIN prioritari",
+        "scenario_real_3": "Riattivazione degli ASIN inattivi",
+        "scenario_real_4": "ADV e targeting dei concorrenti",
+        "scenario_opt_1": "SEO sull'intero catalogo",
+        "scenario_opt_2": "A+ con video sugli ASIN di punta",
+        "scenario_opt_3": "Riattivazione aggressiva",
+        "scenario_opt_4": "Scale-up di Brand Store e ADV",
+        # Conclusions
+        "conclusions_title": "Conclusioni",
+        "conclusions_subtitle": "Sintesi e prossimi passi",
+        "conclusions_current_situation": "Situazione attuale",
+        "conclusions_strengths": "Punti di forza",
+        "conclusions_plan": "Piano in 3 fasi - 12 mesi",
+        "conclusions_urgency": "Urgenza",
+    },
+}
+
+
 class BrandAnalysisPptxBuilder:
     """Generate a PowerPoint deck from deterministic metrics."""
 
-    def __init__(self, metrics: dict[str, Any], narrative: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        metrics: dict[str, Any],
+        narrative: dict[str, Any],
+        language: str = "en",
+    ) -> None:
         self.metrics = metrics
         self.narrative = narrative
         self.brand = str(metrics.get("brand_name") or "Brand").upper()
+        self.language = "it" if str(language or "").lower().startswith("it") else "en"
+
+    def _t(self, key: str) -> str:
+        strings = PPTX_STATIC_STRINGS.get(self.language) or PPTX_STATIC_STRINGS["en"]
+        return strings.get(key) or PPTX_STATIC_STRINGS["en"].get(key, key)
 
     def _badge(self, metric_key: str) -> str:
         registry = self.metrics.get("metric_source_registry") or {}
@@ -2135,21 +2469,21 @@ class BrandAnalysisPptxBuilder:
     def _slide_cover(self, prs) -> None:
         slide = self._blank(prs)
         self._rect(slide, 0, 0, 10, 5.625, self._RGBColor(212, 39, 45))
-        self._text(slide, 1.2, 2.25, 7.6, 0.55, f"{self.brand} ON AMAZON", size=30, bold=True, color=(255, 255, 255), align="center")
-        self._text(slide, 2.7, 2.92, 4.6, 0.3, "Market analysis and growth strategy", size=13, color=(255, 255, 255), align="center")
+        self._text(slide, 1.2, 2.25, 7.6, 0.55, f"{self.brand} {self._t('cover_on_amazon')}", size=30, bold=True, color=(255, 255, 255), align="center")
+        self._text(slide, 2.7, 2.92, 4.6, 0.3, self._t("cover_subtitle"), size=13, color=(255, 255, 255), align="center")
         self._footer(slide)
 
     def _slide_as_is(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Current Amazon Performance", "Overview of current Amazon marketplace presence")
+        self._title(slide, self._t("as_is_title"), self._t("as_is_subtitle"))
         kpis = [
-            ("Revenue 2025" + self._badge("total_revenue_2025"), format_currency(self.metrics.get("total_revenue_2025")), 0.65, 1.4, 2.3, 0.95),
-            ("Revenue 2024" + self._badge("total_revenue_2024"), format_currency(self.metrics.get("total_revenue_2024")), 3.05, 1.4, 2.3, 0.95),
-            ("YoY Change" + self._badge("yoy_percent"), format_percent(self.metrics.get("yoy_percent")), 5.45, 1.4, 1.65, 0.95),
-            ("Average Rating" + self._badge("weighted_average_rating"), format_number(self.metrics.get("weighted_average_rating"), 2), 7.25, 1.4, 1.65, 0.95),
-            ("Units Sold 2025" + self._badge("total_units_sold_2025"), format_number(self.metrics.get("total_units_sold_2025"), 0), 5.45, 2.55, 1.65, 0.95),
-            ("Avg Price / ASIN" + self._badge("average_price_per_asin"), format_currency(self.metrics.get("average_price_per_asin"), 2), 7.25, 2.55, 1.65, 0.95),
+            (self._t("kpi_revenue_2025") + self._badge("total_revenue_2025"), format_currency(self.metrics.get("total_revenue_2025")), 0.65, 1.4, 2.3, 0.95),
+            (self._t("kpi_revenue_2024") + self._badge("total_revenue_2024"), format_currency(self.metrics.get("total_revenue_2024")), 3.05, 1.4, 2.3, 0.95),
+            (self._t("kpi_yoy_change") + self._badge("yoy_percent"), format_percent(self.metrics.get("yoy_percent")), 5.45, 1.4, 1.65, 0.95),
+            (self._t("kpi_average_rating") + self._badge("weighted_average_rating"), format_number(self.metrics.get("weighted_average_rating"), 2), 7.25, 1.4, 1.65, 0.95),
+            (self._t("kpi_units_sold_2025") + self._badge("total_units_sold_2025"), format_number(self.metrics.get("total_units_sold_2025"), 0), 5.45, 2.55, 1.65, 0.95),
+            (self._t("kpi_avg_price_per_asin") + self._badge("average_price_per_asin"), format_currency(self.metrics.get("average_price_per_asin"), 2), 7.25, 2.55, 1.65, 0.95),
         ]
         for label, value, x, y, w, h in kpis:
             self._kpi(slide, x, y, w, h, label, value)
@@ -2158,7 +2492,7 @@ class BrandAnalysisPptxBuilder:
     def _slide_revenue_yoy(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Revenue 2024 vs 2025", "Year-over-year performance calculated from source rows")
+        self._title(slide, self._t("revenue_yoy_title"), self._t("revenue_yoy_subtitle"))
         bars = [
             ("2024", self.metrics.get("total_revenue_2024"), (100, 116, 139)),
             ("2025", self.metrics.get("total_revenue_2025"), (212, 39, 45)),
@@ -2170,47 +2504,48 @@ class BrandAnalysisPptxBuilder:
             self._text(slide, x, 1.25, 2.7, 0.24, label, size=12, bold=True, align="center")
             self._rect(slide, x + 0.35, 4.1 - bar_h, 2.0, bar_h, self._RGBColor(*color))
             self._text(slide, x, 4.25, 2.7, 0.28, format_currency(value), size=16, bold=True, align="center", color=color)
-        self._kpi(slide, 3.95, 1.35, 1.9, 0.9, "YoY", format_percent(self.metrics.get("yoy_percent")))
+        self._kpi(slide, 3.95, 1.35, 1.9, 0.9, self._t("kpi_yoy"), format_percent(self.metrics.get("yoy_percent")))
         self._body_box(
             slide,
             0.8,
             4.82,
             8.4,
             0.42,
-            "All revenue numbers are deterministic sums from the selected internal or uploaded yearly source data.",
+            self._t("revenue_yoy_footnote"),
         )
 
     def _slide_catalog_health(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Catalog Health", "ASIN universe, discovery coverage and enrichment quality")
+        self._title(slide, self._t("catalog_health_title"), self._t("catalog_health_subtitle"))
         kpis = [
-            ("ASINs 2025", str(self.metrics.get("total_asins_2025", 0))),
-            ("Active 2025", str(self.metrics.get("active_asins_2025", 0))),
-            ("Inactive 2025", str(self.metrics.get("inactive_asins_2025", 0))),
-            ("New YoY", str(self.metrics.get("new_asins_yoy", 0))),
+            (self._t("kpi_asins_2025"), str(self.metrics.get("total_asins_2025", 0))),
+            (self._t("kpi_active_2025"), str(self.metrics.get("active_asins_2025", 0))),
+            (self._t("kpi_inactive_2025"), str(self.metrics.get("inactive_asins_2025", 0))),
+            (self._t("kpi_new_yoy"), str(self.metrics.get("new_asins_yoy", 0))),
         ]
         for idx, (label, value) in enumerate(kpis):
             self._kpi(slide, 0.65 + idx * 2.2, 1.25, 1.85, 0.78, label, value)
         readiness = self.metrics.get("data_readiness") or {}
         catalog = readiness.get("catalog_enrichment") or {}
         rows = [
-            ["Discovered ASINs", str(readiness.get("discovered_asins_count", "N/A"))],
-            ["Catalog lookups attempted", str(catalog.get("attempted", "N/A"))],
-            ["Catalog failed ASINs", str(len(catalog.get("failed_asins") or []))],
-            ["Partial enrichment", "Yes" if catalog.get("partial") else "No"],
+            [self._t("readiness_discovered_asins"), str(readiness.get("discovered_asins_count", "N/A"))],
+            [self._t("readiness_lookups_attempted"), str(catalog.get("attempted", "N/A"))],
+            [self._t("readiness_failed_asins"), str(len(catalog.get("failed_asins") or []))],
+            [self._t("readiness_partial_enrichment"), self._t("value_yes") if catalog.get("partial") else self._t("value_no")],
         ]
-        self._table(slide, 0.8, 2.35, 4.0, 2.25, ["Readiness signal", "Value"], rows, [2.6, 1.1])
+        self._table(slide, 0.8, 2.35, 4.0, 2.25, [self._t("table_readiness_signal"), self._t("table_value")], rows, [2.6, 1.1])
         completeness = self.metrics.get("data_completeness") or {}
         missing = completeness.get("missing_optional_fields_2025") or []
         limitations = (self.metrics.get("limitations") or {}).get("items") or []
+        none_bullet = f"- {self._t('value_none')}"
         self._body_box(
             slide,
             5.15,
             2.35,
             3.95,
             1.45,
-            "Optional fields missing in 2025\n" + ("\n".join(f"- {item}" for item in missing[:8]) if missing else "- None"),
+            f"{self._t('missing_optional_fields_2025')}\n" + ("\n".join(f"- {item}" for item in missing[:8]) if missing else none_bullet),
             title_bold=True,
         )
         self._body_box(
@@ -2219,14 +2554,14 @@ class BrandAnalysisPptxBuilder:
             3.95,
             3.95,
             0.85,
-            "Source limitations\n" + ("\n".join(f"- {item.get('area')}" for item in limitations[:3]) if limitations else "- None"),
+            f"{self._t('source_limitations')}\n" + ("\n".join(f"- {item.get('area')}" for item in limitations[:3]) if limitations else none_bullet),
             title_bold=True,
         )
 
     def _slide_active_inactive(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Active / Inactive ASINs", "Zero-revenue ASINs are treated as inactive")
+        self._title(slide, self._t("active_inactive_title"), self._t("active_inactive_subtitle"))
         active = int(self.metrics.get("active_asins_2025") or 0)
         inactive = int(self.metrics.get("inactive_asins_2025") or 0)
         total = max(active + inactive, 1)
@@ -2234,42 +2569,42 @@ class BrandAnalysisPptxBuilder:
         inactive_w = 7.8 - active_w
         self._rect(slide, 1.1, 1.7, active_w, 0.72, self._RGBColor(22, 163, 74))
         self._rect(slide, 1.1 + active_w, 1.7, inactive_w, 0.72, self._RGBColor(212, 39, 45))
-        self._text(slide, 1.1, 1.35, 2.5, 0.22, "2025 catalog split", size=12, bold=True)
-        self._kpi(slide, 1.1, 2.75, 2.4, 0.86, "Active", str(active))
-        self._kpi(slide, 3.8, 2.75, 2.4, 0.86, "Inactive", str(inactive))
-        self._kpi(slide, 6.5, 2.75, 2.4, 0.86, "% Inactive", format_share(self.metrics.get("percentage_inactive_asins")))
+        self._text(slide, 1.1, 1.35, 2.5, 0.22, self._t("catalog_split_2025"), size=12, bold=True)
+        self._kpi(slide, 1.1, 2.75, 2.4, 0.86, self._t("kpi_active"), str(active))
+        self._kpi(slide, 3.8, 2.75, 2.4, 0.86, self._t("kpi_inactive"), str(inactive))
+        self._kpi(slide, 6.5, 2.75, 2.4, 0.86, self._t("kpi_pct_inactive"), format_share(self.metrics.get("percentage_inactive_asins")))
         self._body_box(
             slide,
             1.1,
             4.05,
             7.8,
             0.72,
-            "ASINs discovered through catalog search or local catalog enrichment are included with EUR 0 revenue when the account has yearly history but the scoped ASIN has no sales.",
+            self._t("active_inactive_footnote"),
         )
 
     def _slide_top_performers(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Top Performing ASINs", "Revenue leaders and YoY movement")
+        self._title(slide, self._t("top_performers_title"), self._t("top_performers_subtitle"))
         rows = [
             [item["asin"], item["product_name"], format_currency(item["revenue_2025"]), format_currency(item["revenue_2024"]), format_percent(item["yoy_percent"])]
             for item in self.metrics.get("top_5_asins", [])
         ]
         self._table(
             slide, 0.65, 1.25, 8.7, 3.65,
-            ["ASIN", "Product", "Rev. 2025", "Rev. 2024", "YoY %"], rows, [1.25, 3.45, 1.35, 1.35, 0.95],
+            [self._t("table_asin"), self._t("table_product"), self._t("table_rev_2025"), self._t("table_rev_2024"), self._t("table_yoy_pct")], rows, [1.25, 3.45, 1.35, 1.35, 0.95],
             yoy_columns=[4],
         )
 
     def _slide_catalog_audit(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Catalog Audit", "Catalog composition and performance on Amazon")
+        self._title(slide, self._t("catalog_audit_title"), self._t("catalog_audit_subtitle"))
         kpis = [
-            ("ASINs 2025", str(self.metrics.get("total_asins_2025", 0))),
-            ("ASINs 2024", str(self.metrics.get("total_asins_2024", 0))),
-            ("New YoY", str(self.metrics.get("new_asins_yoy", 0))),
-            ("Inactive ASINs", str(self.metrics.get("inactive_asins_2025", 0))),
+            (self._t("kpi_asins_2025"), str(self.metrics.get("total_asins_2025", 0))),
+            (self._t("kpi_asins_2024"), str(self.metrics.get("total_asins_2024", 0))),
+            (self._t("kpi_new_yoy"), str(self.metrics.get("new_asins_yoy", 0))),
+            (self._t("kpi_inactive_asins"), str(self.metrics.get("inactive_asins_2025", 0))),
         ]
         for idx, (label, value) in enumerate(kpis):
             self._kpi(slide, 0.65 + idx * 2.2, 1.25, 1.85, 0.78, label, value)
@@ -2279,20 +2614,20 @@ class BrandAnalysisPptxBuilder:
         ]
         self._table(
             slide, 0.65, 2.35, 8.7, 2.55,
-            ["ASIN", "Product", "Rev. 2025", "YoY %"], rows, [1.35, 4.25, 1.55, 1.0],
+            [self._t("table_asin"), self._t("table_product"), self._t("table_rev_2025"), self._t("table_yoy_pct")], rows, [1.35, 4.25, 1.55, 1.0],
             yoy_columns=[3],
         )
 
     def _slide_content_audit(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "SEO & Content Audit", "Content quality and product listing optimization")
+        self._title(slide, self._t("content_audit_title"), self._t("content_audit_subtitle"))
         content = self.metrics.get("content_health") or {}
         kpis = [
-            ("Avg Images / ASIN", format_number(self.metrics.get("average_images_per_asin"), 1)),
-            ("Missing Bullets", format_number(content.get("asins_missing_bullets"), 0)),
-            ("Missing Description", format_number(content.get("asins_missing_description"), 0)),
-            ("Short Titles", format_number(content.get("short_title_count"), 0)),
+            (self._t("kpi_avg_images_per_asin"), format_number(self.metrics.get("average_images_per_asin"), 1)),
+            (self._t("kpi_missing_bullets"), format_number(content.get("asins_missing_bullets"), 0)),
+            (self._t("kpi_missing_description"), format_number(content.get("asins_missing_description"), 0)),
+            (self._t("kpi_short_titles"), format_number(content.get("short_title_count"), 0)),
         ]
         for idx, (label, value) in enumerate(kpis):
             self._kpi(slide, 0.65 + idx * 2.25, 1.25, 2.0, 0.78, label, value)
@@ -2301,21 +2636,21 @@ class BrandAnalysisPptxBuilder:
             for item in (content.get("content_gap_asins") or [])[:6]
         ]
         if not rows:
-            rows = [["N/A", "No source-backed content gaps", "N/A", "N/A"]]
+            rows = [["N/A", self._t("content_no_gaps"), "N/A", "N/A"]]
         self._table(
             slide, 0.65, 2.25, 8.7, 2.75,
-            ["ASIN", "Product", "Detected gaps", "Rev. 2025"], rows, [1.2, 3.0, 2.8, 1.2],
+            [self._t("table_asin"), self._t("table_product"), self._t("table_detected_gaps"), self._t("table_rev_2025")], rows, [1.2, 3.0, 2.8, 1.2],
         )
 
     def _slide_review_image_weaknesses(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Image / Review Weaknesses", "Listing trust signals where source data is available")
+        self._title(slide, self._t("review_image_title"), self._t("review_image_subtitle"))
         weaknesses = self.metrics.get("review_rating_weaknesses") or {}
         kpis = [
-            ("ASINs <5 Images", format_number(self.metrics.get("asins_with_fewer_than_5_images"), 0)),
-            ("ASINs <15 Reviews", format_number(weaknesses.get("asins_with_fewer_than_15_reviews"), 0)),
-            ("Rating <4.0", format_number(weaknesses.get("asins_with_rating_below_4"), 0)),
+            (self._t("kpi_asins_few_images"), format_number(self.metrics.get("asins_with_fewer_than_5_images"), 0)),
+            (self._t("kpi_asins_few_reviews"), format_number(weaknesses.get("asins_with_fewer_than_15_reviews"), 0)),
+            (self._t("kpi_rating_below_4"), format_number(weaknesses.get("asins_with_rating_below_4"), 0)),
         ]
         for idx, (label, value) in enumerate(kpis):
             self._kpi(slide, 0.85 + idx * 2.65, 1.25, 2.25, 0.82, label, value)
@@ -2324,46 +2659,46 @@ class BrandAnalysisPptxBuilder:
             for item in (weaknesses.get("weak_asins") or [])[:7]
         ]
         if not rows:
-            rows = [["N/A", "No review/rating weakness in source-backed fields", "N/A", "N/A", "N/A"]]
+            rows = [["N/A", self._t("review_no_weakness"), "N/A", "N/A", "N/A"]]
         self._table(
             slide, 0.65, 2.35, 8.7, 2.55,
-            ["ASIN", "Product", "Reviews", "Rating", "Issue"], rows, [1.15, 3.1, 0.95, 0.85, 2.0],
+            [self._t("table_asin"), self._t("table_product"), self._t("table_reviews"), self._t("table_rating"), self._t("table_issue")], rows, [1.15, 3.1, 0.95, 0.85, 2.0],
         )
 
     def _slide_subcategory_performance(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Subcategory Performance", "Revenue contribution and YoY by subcategory")
+        self._title(slide, self._t("subcategory_title"), self._t("subcategory_subtitle"))
         rows = [
             [item["subcategory"], format_currency(item["revenue_2025"]), format_currency(item["revenue_2024"]), format_percent(item["yoy_percent"])]
             for item in (self.metrics.get("revenue_by_subcategory") or [])[:8]
         ]
         self._table(
             slide, 0.65, 2.25, 8.7, 2.75,
-            ["Subcategory", "Rev. 2025", "Rev. 2024", "YoY %"], rows, [3.6, 1.65, 1.65, 1.1],
+            [self._t("table_subcategory"), self._t("table_rev_2025"), self._t("table_rev_2024"), self._t("table_yoy_pct")], rows, [3.6, 1.65, 1.65, 1.1],
             yoy_columns=[3],
         )
 
     def _slide_operational_gap(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Operational Performance Gap", "Key issues limiting growth potential")
+        self._title(slide, self._t("operational_gap_title"), self._t("operational_gap_subtitle"))
         decline = self.metrics.get("subcategory_with_largest_decline") or {}
         kpis = [
-            ("% Inactive ASINs", format_share(self.metrics.get("percentage_inactive_asins"))),
-            ("% ASINs Declining YoY", format_share(self.metrics.get("percentage_declining_asins_among_active"))),
-            ("ASINs with >1 Seller", format_number(self.metrics.get("asins_with_more_than_1_seller"), 0)),
-            ("Largest Subcategory Decline", f"{decline.get('subcategory', 'N/A')} {format_percent(decline.get('yoy_percent')) if decline else ''}".strip()),
+            (self._t("kpi_pct_inactive_asins"), format_share(self.metrics.get("percentage_inactive_asins"))),
+            (self._t("kpi_pct_declining_asins"), format_share(self.metrics.get("percentage_declining_asins_among_active"))),
+            (self._t("kpi_asins_multi_seller"), format_number(self.metrics.get("asins_with_more_than_1_seller"), 0)),
+            (self._t("kpi_largest_subcat_decline"), f"{decline.get('subcategory', 'N/A')} {format_percent(decline.get('yoy_percent')) if decline else ''}".strip()),
         ]
         for idx, (label, value) in enumerate(kpis):
             x = 0.65 + (idx % 2) * 4.3
             y = 1.25 + (idx // 2) * 1.05
             self._kpi(slide, x, y, 3.8, 0.78, label, value)
-        self._text(slide, 0.85, 3.6, 2.8, 0.24, "Revenue Concentration", size=13, bold=True, color=(212, 39, 45))
+        self._text(slide, 0.85, 3.6, 2.8, 0.24, self._t("revenue_concentration"), size=13, bold=True, color=(212, 39, 45))
         concentration = [
-            ("Top 5 ASINs", format_share(self.metrics.get("top_5_revenue_share"))),
-            ("Top 10 ASINs", format_share(self.metrics.get("top_10_revenue_share"))),
-            ("Avg Rev / Active ASIN", format_currency(self.metrics.get("average_revenue_per_active_asin"))),
+            (self._t("kpi_top_5_asins"), format_share(self.metrics.get("top_5_revenue_share"))),
+            (self._t("kpi_top_10_asins"), format_share(self.metrics.get("top_10_revenue_share"))),
+            (self._t("kpi_avg_rev_per_active_asin"), format_currency(self.metrics.get("average_revenue_per_active_asin"))),
         ]
         for idx, (label, value) in enumerate(concentration):
             self._kpi(slide, 0.85 + idx * 2.75, 3.95, 2.25, 0.72, label, value)
@@ -2371,51 +2706,51 @@ class BrandAnalysisPptxBuilder:
     def _slide_channel_gap(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Channel Performance Gap", "Current reseller snapshot and Buy Box availability")
+        self._title(slide, self._t("channel_gap_title"), self._t("channel_gap_subtitle"))
         summary = self.metrics.get("seller_buy_box_summary") or {}
-        self._kpi(slide, 0.65, 1.15, 2.0, 0.72, "Avg Sellers", format_number(summary.get("average_seller_count"), 1))
-        self._kpi(slide, 2.9, 1.15, 2.0, 0.72, "Avg Offers", format_number(summary.get("average_offer_count"), 1))
-        self._kpi(slide, 5.15, 1.15, 2.0, 0.72, "Missing Buy Box", format_number(summary.get("asins_missing_buy_box_owner"), 0))
+        self._kpi(slide, 0.65, 1.15, 2.0, 0.72, self._t("kpi_avg_sellers"), format_number(summary.get("average_seller_count"), 1))
+        self._kpi(slide, 2.9, 1.15, 2.0, 0.72, self._t("kpi_avg_offers"), format_number(summary.get("average_offer_count"), 1))
+        self._kpi(slide, 5.15, 1.15, 2.0, 0.72, self._t("kpi_missing_buy_box"), format_number(summary.get("asins_missing_buy_box_owner"), 0))
         rows = [
             [item["reseller"], str(item["asin_count"]), format_currency(item["revenue"]), format_share(item["share_percent"])]
             for item in (self.metrics.get("reseller_buy_box_distribution") or [])[:8]
         ]
         if not rows and summary.get("current_buy_box_snapshot_distribution"):
             rows = [
-                [item.get("reseller"), str(item.get("asin_count")), "N/A", "Current snapshot"]
+                [item.get("reseller"), str(item.get("asin_count")), "N/A", self._t("current_snapshot")]
                 for item in summary.get("current_buy_box_snapshot_distribution", [])[:8]
             ]
         if not rows:
-            rows = [["Not available in source data", "N/A", "N/A", "N/A"]]
-        self._table(slide, 0.65, 2.15, 8.7, 2.8, ["Reseller / Buy Box", "ASINs", "Revenue", "% Impact"], rows, [4.2, 1.0, 1.8, 1.2])
+            rows = [[self._t("channel_not_available"), "N/A", "N/A", "N/A"]]
+        self._table(slide, 0.65, 2.15, 8.7, 2.8, [self._t("table_reseller_buy_box"), self._t("table_asins"), self._t("table_revenue"), self._t("table_pct_impact")], rows, [4.2, 1.0, 1.8, 1.2])
 
     def _slide_concentration_risk(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Concentration Risk", "How much revenue depends on the top ASINs")
-        self._kpi(slide, 0.85, 1.25, 2.3, 0.9, "Top 5 Revenue Share", format_share(self.metrics.get("top_5_revenue_share")))
-        self._kpi(slide, 3.45, 1.25, 2.3, 0.9, "Top 10 Revenue Share", format_share(self.metrics.get("top_10_revenue_share")))
-        self._kpi(slide, 6.05, 1.25, 2.7, 0.9, "Avg Rev / Active ASIN", format_currency(self.metrics.get("average_revenue_per_active_asin")))
+        self._title(slide, self._t("concentration_risk_title"), self._t("concentration_risk_subtitle"))
+        self._kpi(slide, 0.85, 1.25, 2.3, 0.9, self._t("kpi_top_5_revenue_share"), format_share(self.metrics.get("top_5_revenue_share")))
+        self._kpi(slide, 3.45, 1.25, 2.3, 0.9, self._t("kpi_top_10_revenue_share"), format_share(self.metrics.get("top_10_revenue_share")))
+        self._kpi(slide, 6.05, 1.25, 2.7, 0.9, self._t("kpi_avg_rev_per_active_asin"), format_currency(self.metrics.get("average_revenue_per_active_asin")))
         rows = [
             [item["asin"], item["product_name"], format_currency(item["revenue_2025"]), format_percent(item["yoy_percent"])]
             for item in self.metrics.get("top_5_asins", [])
         ]
         self._table(
             slide, 0.65, 2.55, 8.7, 2.35,
-            ["ASIN", "Product", "Revenue", "YoY"], rows, [1.25, 4.35, 1.45, 0.95],
+            [self._t("table_asin"), self._t("table_product"), self._t("table_revenue"), self._t("table_yoy")], rows, [1.25, 4.35, 1.45, 0.95],
             yoy_columns=[3],
         )
 
     def _slide_market_share(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Market Share & Competition", "Calculated only when a reliable competitor revenue base exists")
+        self._title(slide, self._t("market_share_title"), self._t("market_share_subtitle"))
         market = self.metrics.get("market_analysis") or {}
         if market.get("status") == "calculated_from_external_market_export":
             kpis = [
-                ("Market Size 2025" + self._badge("market_revenue_share"), format_currency(market.get("market_size_2025"))),
-                ("Revenue Share 2025" + self._badge("market_revenue_share"), format_share(market.get("market_share_2025"))),
-                ("Revenue Share 2024" + self._badge("market_revenue_share"), format_share(market.get("market_share_2024"))),
+                (self._t("kpi_market_size_2025") + self._badge("market_revenue_share"), format_currency(market.get("market_size_2025"))),
+                (self._t("kpi_revenue_share_2025") + self._badge("market_revenue_share"), format_share(market.get("market_share_2025"))),
+                (self._t("kpi_revenue_share_2024") + self._badge("market_revenue_share"), format_share(market.get("market_share_2024"))),
             ]
             for idx, (label, value) in enumerate(kpis):
                 self._kpi(slide, 0.75 + idx * 2.8, 1.25, 2.35, 0.85, label, value)
@@ -2423,7 +2758,7 @@ class BrandAnalysisPptxBuilder:
                 [item.get("brand"), str(item.get("asin_count")), format_currency(item.get("revenue")), format_share(item.get("market_share_percent"))]
                 for item in (market.get("competitive_brand_distribution") or [])[:7]
             ]
-            self._table(slide, 0.65, 2.45, 8.7, 2.45, ["Brand", "ASINs", "Revenue", "Share"], rows, [3.4, 1.0, 1.8, 1.0])
+            self._table(slide, 0.65, 2.45, 8.7, 2.45, [self._t("table_brand"), self._t("table_asins"), self._t("table_revenue"), self._t("table_share")], rows, [3.4, 1.0, 1.8, 1.0])
         else:
             self._body_box(
                 slide,
@@ -2431,8 +2766,8 @@ class BrandAnalysisPptxBuilder:
                 1.45,
                 8.3,
                 2.2,
-                "Revenue market share: N/A [UNAVAILABLE]\n"
-                + str(market.get("limitation") or "No reliable competitor revenue base was provided."),
+                f"{self._t('market_share_unavailable')}\n"
+                + str(market.get("limitation") or self._t("market_share_no_base")),
                 title_bold=True,
             )
             self._body_box(
@@ -2441,13 +2776,13 @@ class BrandAnalysisPptxBuilder:
                 3.95,
                 8.3,
                 0.72,
-                "The deck does not invent market size. Upload a broad yearly market export with competitor brand revenue to calculate this section.",
+                self._t("market_share_no_invent"),
             )
 
     def _slide_approach(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Our Approach", "Three pillars for professional Amazon channel management")
+        self._title(slide, self._t("approach_title"), self._t("approach_subtitle"))
         pillars = (self.narrative.get("approach_pillars") or [])[:3]
         for idx, pillar in enumerate(pillars):
             x = 0.65 + idx * 3.1
@@ -2455,7 +2790,11 @@ class BrandAnalysisPptxBuilder:
             self._rect(slide, x, 1.35, 2.75, 0.12, self._RGBColor(212, 39, 45))
             self._text(slide, x + 0.18, 1.65, 2.35, 0.35, pillar.get("title", ""), size=13, bold=True, color=(255, 255, 255))
             self._text(slide, x + 0.18, 2.12, 2.35, 1.0, pillar.get("body", ""), size=8.5, color=(255, 255, 255))
-        banners = [("VISIBILITY", "SEO - ADV - Keywords", (29, 78, 216)), ("CONVERSION", "Content - Images - A+", (234, 88, 12)), ("LOYALTY", "Brand Store - Reviews", (22, 163, 74))]
+        banners = [
+            (self._t("approach_visibility"), self._t("approach_visibility_sub"), (29, 78, 216)),
+            (self._t("approach_conversion"), self._t("approach_conversion_sub"), (234, 88, 12)),
+            (self._t("approach_loyalty"), self._t("approach_loyalty_sub"), (22, 163, 74)),
+        ]
         for idx, (title, subtitle, color) in enumerate(banners):
             x = 0.65 + idx * 3.1
             self._rect(slide, x, 3.85, 2.75, 0.7, self._RGBColor(*color))
@@ -2465,7 +2804,7 @@ class BrandAnalysisPptxBuilder:
     def _slide_roadmap(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Operational Roadmap", "3-phase action plan for the first 12 months")
+        self._title(slide, self._t("roadmap_title"), self._t("roadmap_subtitle"))
         colors = [(212, 39, 45), (234, 88, 12), (22, 163, 74)]
         roadmap = (self.narrative.get("roadmap") or [])[:3]
         for idx, item in enumerate(roadmap):
@@ -2478,9 +2817,9 @@ class BrandAnalysisPptxBuilder:
     def _slide_projection(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Growth Projection", "12-month revenue growth scenarios")
+        self._title(slide, self._t("projection_title"), self._t("projection_subtitle"))
         self._rect(slide, 0.65, 1.18, 8.7, 0.65, self._RGBColor(245, 245, 245))
-        self._text(slide, 0.85, 1.27, 2.0, 0.18, "Current Situation", size=9, bold=True, color=(80, 80, 80))
+        self._text(slide, 0.85, 1.27, 2.0, 0.18, self._t("current_situation"), size=9, bold=True, color=(80, 80, 80))
         self._text(slide, 2.55, 1.22, 2.2, 0.35, format_currency(self.metrics.get("total_revenue_2025")), size=22, bold=True, color=(212, 39, 45))
         self._text(
             slide,
@@ -2488,14 +2827,14 @@ class BrandAnalysisPptxBuilder:
             1.34,
             4.0,
             0.2,
-            f"{format_percent(self.metrics.get('yoy_percent'))} YoY | {self.metrics.get('active_asins_2025', 0)} active ASINs out of {self.metrics.get('total_asins_2025', 0)}",
+            f"{format_percent(self.metrics.get('yoy_percent'))} YoY | {self.metrics.get('active_asins_2025', 0)} {self._t('projection_active_asins')} {self.metrics.get('total_asins_2025', 0)}",
             size=8.5,
             color=(80, 80, 80),
         )
         scenarios = [
-            ("CONSERVATIVE", "conservative", (100, 116, 139), ["Basic SEO on top ASINs", "Image upgrade priority set", "ADV on key categories", "Basic Buy Box monitoring"]),
-            ("REALISTIC", "realistic", (22, 163, 74), ["SEO across broad catalog", "A+ Content on priority ASINs", "Inactive ASIN reactivation", "ADV and competitor targeting"]),
-            ("OPTIMISTIC", "optimistic", (212, 39, 45), ["Full catalog SEO", "A+ plus video on hero ASINs", "Aggressive reactivation", "Brand Store and ADV scale-up"]),
+            (self._t("scenario_conservative"), "conservative", (100, 116, 139), [self._t("scenario_cons_1"), self._t("scenario_cons_2"), self._t("scenario_cons_3"), self._t("scenario_cons_4")]),
+            (self._t("scenario_realistic"), "realistic", (22, 163, 74), [self._t("scenario_real_1"), self._t("scenario_real_2"), self._t("scenario_real_3"), self._t("scenario_real_4")]),
+            (self._t("scenario_optimistic"), "optimistic", (212, 39, 45), [self._t("scenario_opt_1"), self._t("scenario_opt_2"), self._t("scenario_opt_3"), self._t("scenario_opt_4")]),
         ]
         projections = self.metrics.get("growth_projection_scenarios") or {}
         for idx, (label, key, color, actions) in enumerate(scenarios):
@@ -2512,12 +2851,12 @@ class BrandAnalysisPptxBuilder:
     def _slide_conclusions(self, prs, page: int) -> None:
         slide = self._blank(prs)
         self._add_header(slide, page)
-        self._title(slide, "Conclusions", "Summary and next steps")
+        self._title(slide, self._t("conclusions_title"), self._t("conclusions_subtitle"))
         sections = [
-            ("Current Situation", self.narrative.get("conclusions", {}).get("current_situation", []), (212, 39, 45)),
-            ("Strengths", self.narrative.get("conclusions", {}).get("strengths", []), (22, 163, 74)),
-            ("3-Phase Plan - 12 Months", self.narrative.get("conclusions", {}).get("plan", []), (29, 78, 216)),
-            ("Urgency", self.narrative.get("conclusions", {}).get("urgency", []), (234, 88, 12)),
+            (self._t("conclusions_current_situation"), self.narrative.get("conclusions", {}).get("current_situation", []), (212, 39, 45)),
+            (self._t("conclusions_strengths"), self.narrative.get("conclusions", {}).get("strengths", []), (22, 163, 74)),
+            (self._t("conclusions_plan"), self.narrative.get("conclusions", {}).get("plan", []), (29, 78, 216)),
+            (self._t("conclusions_urgency"), self.narrative.get("conclusions", {}).get("urgency", []), (234, 88, 12)),
         ]
         for idx, (title, bullets, bar_color) in enumerate(sections):
             x = 0.65 + (idx % 2) * 4.35
@@ -2796,8 +3135,8 @@ def _yoy_cell_color(value: Any) -> Optional[tuple[int, int, int]]:
     return None
 
 
-def build_brand_analysis_pptx(metrics: dict[str, Any], narrative: dict[str, Any]) -> bytes:
-    return BrandAnalysisPptxBuilder(metrics, narrative).build()
+def build_brand_analysis_pptx(metrics: dict[str, Any], narrative: dict[str, Any], language: str = "en") -> bytes:
+    return BrandAnalysisPptxBuilder(metrics, narrative, language).build()
 
 
 def validate_pptx_bytes(pptx_bytes: bytes) -> dict[str, Any]:
@@ -3140,7 +3479,7 @@ def process_brand_analysis_job(job_id: str) -> None:
                 )
 
                 await _set_status("generating_pptx", "Generating PowerPoint deck")
-                pptx_bytes = build_brand_analysis_pptx(metrics, narrative)
+                pptx_bytes = build_brand_analysis_pptx(metrics, narrative, language=job.language)
                 # Open the deck back up to confirm the file is structurally
                 # valid (16 slides, correct OOXML). If it isn't, surface as a
                 # job failure rather than letting the user download a broken
