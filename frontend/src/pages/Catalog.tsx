@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Loader2, Package } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Download, Loader2, Package } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -28,13 +28,47 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 import { accountsApi, catalogApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
+import type { Product } from '@/types'
 import { BulkUpdateCard } from '@/components/catalog/BulkUpdateCard'
 import { PricesCard } from '@/components/catalog/PricesCard'
 import { AvailabilityCard } from '@/components/catalog/AvailabilityCard'
 import { ImagesCard } from '@/components/catalog/ImagesCard'
+
+type StringSortKey = 'asin' | 'title' | 'sku' | 'brand'
+type NumberSortKey = 'current_price' | 'current_bsr'
+type SortKey = StringSortKey | NumberSortKey
+type SortDirection = 'asc' | 'desc'
+
+const STRING_SORT_KEYS: StringSortKey[] = ['asin', 'title', 'sku', 'brand']
+
+const priceFormatter = new Intl.NumberFormat('it-IT', {
+  style: 'currency',
+  currency: 'EUR',
+})
+
+function isStringSortKey(key: SortKey): key is StringSortKey {
+  return (STRING_SORT_KEYS as SortKey[]).includes(key)
+}
+
+function compareProducts(left: Product, right: Product, sortKey: SortKey, sortDirection: SortDirection) {
+  const modifier = sortDirection === 'asc' ? 1 : -1
+
+  if (isStringSortKey(sortKey)) {
+    return modifier * (left[sortKey] ?? '').localeCompare(right[sortKey] ?? '')
+  }
+
+  return modifier * ((left[sortKey] ?? 0) - (right[sortKey] ?? 0))
+}
 
 export default function Catalog() {
   const { t } = useTranslation()
@@ -45,6 +79,9 @@ export default function Catalog() {
   const [activeOnly, setActiveOnly] = useState(true)
   const [activeAccountId, setActiveAccountId] = useState<string>('')
   const [page, setPage] = useState(0)
+  const [sortKey, setSortKey] = useState<SortKey>('title')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const pageSize = 50
 
   const accountsQuery = useQuery({
@@ -64,15 +101,55 @@ export default function Catalog() {
   })
 
   const products = productsQuery.data ?? []
-  const totalPages = Math.ceil(products.length / pageSize)
+  const sortedProducts = useMemo(
+    () => [...products].sort((a, b) => compareProducts(a, b, sortKey, sortDirection)),
+    [products, sortKey, sortDirection],
+  )
+  const totalPages = Math.ceil(sortedProducts.length / pageSize)
   const pagedProducts = useMemo(
-    () => products.slice(page * pageSize, page * pageSize + pageSize),
-    [products, page],
+    () => sortedProducts.slice(page * pageSize, page * pageSize + pageSize),
+    [sortedProducts, page],
   )
 
   useEffect(() => {
     setPage(0)
   }, [search, activeOnly, activeAccountId])
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setSortKey(key)
+    setSortDirection(isStringSortKey(key) ? 'asc' : 'desc')
+  }
+
+  const handleExport = () => {
+    const headers = ['ASIN', 'SKU', t('catalog.products.col.title'), t('catalog.products.col.brand'), t('catalog.products.col.price'), t('catalog.products.col.bsr'), t('catalog.products.col.status')]
+    const escape = (value: unknown) => {
+      const str = value == null ? '' : String(value)
+      return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str
+    }
+    const rows = sortedProducts.map((p) => [
+      p.asin,
+      p.sku ?? '',
+      p.title ?? '',
+      p.brand ?? '',
+      p.current_price ?? '',
+      p.current_bsr ?? '',
+      p.is_active ? t('catalog.products.active') : t('catalog.products.inactive'),
+    ])
+    const csv = [headers, ...rows].map((row) => row.map(escape).join(',')).join('\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `catalog-products-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+    URL.revokeObjectURL(url)
+  }
 
   const accounts = accountsQuery.data ?? []
   const selectedAccountId = activeAccountId || accounts[0]?.id || ''
@@ -147,18 +224,38 @@ export default function Catalog() {
                     ? t('catalog.products.showingActive')
                     : t('catalog.products.showingAll')}
                 </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleExport}
+                  disabled={products.length === 0}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  {t('export.button')}
+                </Button>
               </div>
 
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>ASIN</TableHead>
-                      <TableHead>{t('catalog.products.col.title')}</TableHead>
-                      <TableHead>SKU</TableHead>
-                      <TableHead>{t('catalog.products.col.brand')}</TableHead>
-                      <TableHead>{t('catalog.products.col.price')}</TableHead>
-                      <TableHead>{t('catalog.products.col.bsr')}</TableHead>
+                      <SortableHead sortKey="asin" activeKey={sortKey} direction={sortDirection} onSort={handleSort}>
+                        ASIN
+                      </SortableHead>
+                      <SortableHead sortKey="title" activeKey={sortKey} direction={sortDirection} onSort={handleSort}>
+                        {t('catalog.products.col.title')}
+                      </SortableHead>
+                      <SortableHead sortKey="sku" activeKey={sortKey} direction={sortDirection} onSort={handleSort}>
+                        SKU
+                      </SortableHead>
+                      <SortableHead sortKey="brand" activeKey={sortKey} direction={sortDirection} onSort={handleSort}>
+                        {t('catalog.products.col.brand')}
+                      </SortableHead>
+                      <SortableHead sortKey="current_price" activeKey={sortKey} direction={sortDirection} onSort={handleSort}>
+                        {t('catalog.products.col.price')}
+                      </SortableHead>
+                      <SortableHead sortKey="current_bsr" activeKey={sortKey} direction={sortDirection} onSort={handleSort}>
+                        {t('catalog.products.col.bsr')}
+                      </SortableHead>
                       <TableHead>{t('catalog.products.col.status')}</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -178,7 +275,11 @@ export default function Catalog() {
                       </TableRow>
                     )}
                     {pagedProducts.map((p) => (
-                      <TableRow key={p.id}>
+                      <TableRow
+                        key={p.id}
+                        className="cursor-pointer"
+                        onClick={() => setSelectedProduct(p)}
+                      >
                         <TableCell className="font-mono text-xs">{p.asin}</TableCell>
                         <TableCell className="max-w-[320px] truncate">{p.title ?? '—'}</TableCell>
                         <TableCell className="font-mono text-xs">
@@ -190,7 +291,7 @@ export default function Catalog() {
                         </TableCell>
                         <TableCell>{p.brand ?? '—'}</TableCell>
                         <TableCell>
-                          {p.current_price != null ? Number(p.current_price).toFixed(2) : '—'}
+                          {p.current_price != null ? priceFormatter.format(Number(p.current_price)) : '—'}
                         </TableCell>
                         <TableCell>{p.current_bsr ?? '—'}</TableCell>
                         <TableCell>
@@ -257,6 +358,72 @@ export default function Catalog() {
           <ImagesCard {...sharedProps} />
         </TabsContent>
       </Tabs>
+
+      <Dialog open={selectedProduct !== null} onOpenChange={(open) => !open && setSelectedProduct(null)}>
+        <DialogContent>
+          {selectedProduct && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{selectedProduct.title ?? selectedProduct.asin}</DialogTitle>
+                <DialogDescription className="font-mono">{selectedProduct.asin}</DialogDescription>
+              </DialogHeader>
+              <dl className="grid grid-cols-[140px_1fr] gap-x-4 gap-y-2 text-sm">
+                <dt className="text-muted-foreground">SKU</dt>
+                <dd>{selectedProduct.sku ?? '—'}</dd>
+                <dt className="text-muted-foreground">{t('catalog.products.col.title')}</dt>
+                <dd>{selectedProduct.title ?? '—'}</dd>
+                <dt className="text-muted-foreground">{t('catalog.products.col.brand')}</dt>
+                <dd>{selectedProduct.brand ?? '—'}</dd>
+                <dt className="text-muted-foreground">{t('catalog.products.col.price')}</dt>
+                <dd>
+                  {selectedProduct.current_price != null
+                    ? priceFormatter.format(Number(selectedProduct.current_price))
+                    : '—'}
+                </dd>
+                <dt className="text-muted-foreground">{t('catalog.products.col.bsr')}</dt>
+                <dd>{selectedProduct.current_bsr ?? '—'}</dd>
+                <dt className="text-muted-foreground">{t('catalog.products.col.status')}</dt>
+                <dd>
+                  <Badge variant={selectedProduct.is_active ? 'default' : 'secondary'}>
+                    {selectedProduct.is_active
+                      ? t('catalog.products.active')
+                      : t('catalog.products.inactive')}
+                  </Badge>
+                </dd>
+              </dl>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+  )
+}
+
+function SortableHead({
+  sortKey,
+  activeKey,
+  direction,
+  onSort,
+  children,
+}: {
+  sortKey: SortKey
+  activeKey: SortKey
+  direction: SortDirection
+  onSort: (key: SortKey) => void
+  children: ReactNode
+}) {
+  const isActive = activeKey === sortKey
+  const Icon = !isActive ? ArrowUpDown : direction === 'asc' ? ArrowUp : ArrowDown
+  return (
+    <TableHead>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className="flex items-center gap-1.5 font-medium"
+      >
+        {children}
+        <Icon className={`h-3.5 w-3.5 ${isActive ? 'text-foreground' : 'text-muted-foreground'}`} />
+      </button>
+    </TableHead>
   )
 }

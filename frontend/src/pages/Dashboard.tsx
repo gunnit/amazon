@@ -16,6 +16,7 @@ import {
   Target,
   Info,
   AlertCircle,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   LineChart,
@@ -337,8 +338,8 @@ export default function Dashboard() {
   }
 
   const { data: accountSummary, isLoading: accountsLoading } = useQuery<AccountSummary>({
-    queryKey: ['accounts-summary'],
-    queryFn: () => accountsApi.getSummary(),
+    queryKey: ['accounts-summary', dateRange],
+    queryFn: () => accountsApi.getSummary({ start_date: dateRange.start, end_date: dateRange.end }),
   })
 
   const { data: accounts } = useQuery<AmazonAccount[]>({
@@ -732,7 +733,17 @@ export default function Dashboard() {
       </div>
 
       {/* Advertising KPIs */}
-      {kpis?.roas.is_available !== false && (
+      {kpis?.roas?.is_available === false ? (
+        <Alert variant="warning">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>
+            {t('advertising.notConnected')}{' '}
+            <Link to="/accounts" className="font-medium underline">
+              {t('advertising.openAccounts')}
+            </Link>
+          </AlertDescription>
+        </Alert>
+      ) : (
         <div className="grid gap-4 md:grid-cols-3">
           <KPICard
             title={t('dashboard.adSpend')}

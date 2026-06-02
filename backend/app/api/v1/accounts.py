@@ -2,7 +2,7 @@
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Union
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
@@ -182,13 +182,19 @@ def _normalize_ads_profile(profile: dict) -> AdvertisingProfileResponse:
 async def _load_account_metrics(
     db: DbSession,
     account_ids: List[UUID],
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
 ) -> Dict[UUID, Dict[str, Union[float, int]]]:
-    """Load per-account metrics used by dashboard drill-down cards."""
+    """Load per-account metrics used by dashboard drill-down cards.
+
+    When a date range is supplied the sales window matches it; otherwise it
+    defaults to the trailing 30 days used by the Accounts page snapshot.
+    """
     if not account_ids:
         return {}
 
-    period_end = date.today()
-    period_start = period_end - timedelta(days=29)
+    period_end = end_date or date.today()
+    period_start = start_date or (period_end - timedelta(days=29))
 
     metrics: Dict[UUID, Dict[str, Union[float, int]]] = {
         account_id: {
@@ -315,6 +321,8 @@ async def get_accounts_summary(
     current_user: CurrentUser,
     organization: CurrentOrganization,
     db: DbSession,
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
 ):
     """Get summary of all accounts with status."""
     result = await db.execute(
@@ -322,7 +330,9 @@ async def get_accounts_summary(
         .where(AmazonAccount.organization_id == organization.id)
     )
     accounts = result.scalars().all()
-    account_metrics = await _load_account_metrics(db, [account.id for account in accounts])
+    account_metrics = await _load_account_metrics(
+        db, [account.id for account in accounts], start_date, end_date
+    )
 
     account_statuses = []
     for acc in accounts:

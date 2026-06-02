@@ -295,6 +295,7 @@ class AnalyticsService:
         date_to: date,
         group_by: str = "day",
         asin: Optional[str] = None,
+        language: str = "en",
     ) -> Dict[str, Any]:
         """Compare total sales with ad-attributed sales for the selected period."""
         self._validate_group_by(group_by)
@@ -322,7 +323,9 @@ class AnalyticsService:
         attribution_notes: list[str] = []
         if asin:
             attribution_notes.append(
-                "ASIN filtering narrows sales data only; advertising metrics remain account-level because stored ad data is campaign-based."
+                "Il filtro per ASIN restringe solo i dati di vendita; le metriche pubblicitarie restano a livello account perché i dati ad memorizzati sono basati sulle campagne."
+                if language == "it"
+                else "ASIN filtering narrows sales data only; advertising metrics remain account-level because stored ad data is campaign-based."
             )
 
         response: Dict[str, Any] = {

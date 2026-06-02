@@ -125,6 +125,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cover_report_types": "Report Types",
         "cover_data_source": "Data Source",
         "cover_data_source_value": "Source: Amazon SP-API",
+        "sheet_sales_trend": "Sales Trend",
+        "sheet_product_performance": "Product Performance",
+        "sheet_category_breakdown": "Category Breakdown",
+        "sheet_inventory_snapshot": "Inventory Snapshot",
+        "sheet_low_stock": "Low Stock",
+        "sheet_campaign_performance": "Campaign Performance",
+        "sheet_campaign_rollup": "Campaign Rollup",
+        "data_sources": "Data Sources",
+        "note_per_asin_totals": "Per-ASIN figures (Product/Category sheets) come from Amazon's by-ASIN report and may differ from the account-level daily total shown above.",
+        "no_data_available": "No data available for the selected period.",
     },
     "it": {
         "section": "Sezione",
@@ -225,6 +235,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cover_report_types": "Tipi di Report",
         "cover_data_source": "Fonte Dati",
         "cover_data_source_value": "Fonte: Amazon SP-API",
+        "sheet_sales_trend": "Andamento Vendite",
+        "sheet_product_performance": "Performance Prodotti",
+        "sheet_category_breakdown": "Ripartizione per Categoria",
+        "sheet_inventory_snapshot": "Snapshot Inventario",
+        "sheet_low_stock": "Scorte Basse",
+        "sheet_campaign_performance": "Performance Campagne",
+        "sheet_campaign_rollup": "Riepilogo Campagne",
+        "data_sources": "Fonti Dati",
+        "note_per_asin_totals": "I valori per ASIN (fogli Prodotti/Categoria) provengono dal report per-ASIN di Amazon e possono differire dal totale giornaliero a livello account riportato sopra.",
+        "no_data_available": "Nessun dato disponibile per il periodo selezionato.",
     },
 }
 
@@ -343,6 +363,8 @@ class ExportService:
                 cols = sheet_info["columns"]
                 hdrs = [self._text(lang, c) for c in cols]
                 renderer.write_data_sheet(ws, sheet_info["rows"], cols, hdrs)
+                if not sheet_info["rows"]:
+                    ws.cell(row=3, column=1, value=self._text(lang, "no_data_available"))
 
         output = io.BytesIO()
         wb.save(output)
@@ -503,6 +525,8 @@ class ExportService:
                 cols = sheet_info["columns"]
                 hdrs = [self._text(lang, c) for c in cols]
                 renderer.write_data_sheet(ws, sheet_info["rows"], cols, hdrs)
+                if not sheet_info["rows"]:
+                    ws.cell(row=3, column=1, value=self._text(lang, "no_data_available"))
 
         output = io.BytesIO()
         wb.save(output)
@@ -600,6 +624,10 @@ class ExportService:
                              _percent_change(float(current_summary["active_asins"]), float(previous_summary["active_asins"])) if previous_summary else None, "count_unit"),
         ])
 
+        summary_rows.append(
+            self._metric_row(lang, "metadata", "data_sources", "", notes_key="note_per_asin_totals")
+        )
+
         summary_columns = ["section", "metric", "current_value", "previous_value", "change_percent", "unit", "notes"]
         trend_columns = ["report_date", "revenue", "units", "orders", "average_order_value", "average_selling_price", "units_per_order", "currency"]
         product_columns = ["account_name", "asin", "sku", "title", "brand", "category", "units", "revenue", "orders", "average_selling_price", "revenue_share", "currency"]
@@ -609,9 +637,9 @@ class ExportService:
             "summary_rows": summary_rows,
             "summary_columns": summary_columns,
             "sheets": [
-                {"name": self._text(lang, "report_date") + " Trend", "rows": trend_rows, "columns": trend_columns},
-                {"name": "Product Performance", "rows": product_rows, "columns": product_columns},
-                {"name": "Category Breakdown", "rows": category_rows, "columns": category_columns},
+                {"name": self._text(lang, "sheet_sales_trend"), "rows": trend_rows, "columns": trend_columns},
+                {"name": self._text(lang, "sheet_product_performance"), "rows": product_rows, "columns": product_columns},
+                {"name": self._text(lang, "sheet_category_breakdown"), "rows": category_rows, "columns": category_columns},
             ],
         }
 
@@ -681,8 +709,8 @@ class ExportService:
             "summary_rows": summary_rows,
             "summary_columns": summary_columns,
             "sheets": [
-                {"name": "Inventory Snapshot", "rows": snapshot_rows, "columns": inv_columns},
-                {"name": "Low Stock", "rows": low_stock_rows, "columns": inv_columns},
+                {"name": self._text(lang, "sheet_inventory_snapshot"), "rows": snapshot_rows, "columns": inv_columns},
+                {"name": self._text(lang, "sheet_low_stock"), "rows": low_stock_rows, "columns": inv_columns},
             ],
         }
 
@@ -762,8 +790,8 @@ class ExportService:
             "summary_rows": summary_rows,
             "summary_columns": summary_columns,
             "sheets": [
-                {"name": "Campaign Performance", "rows": campaign_rows, "columns": daily_columns},
-                {"name": "Campaign Rollup", "rows": rollup_rows, "columns": rollup_columns},
+                {"name": self._text(lang, "sheet_campaign_performance"), "rows": campaign_rows, "columns": daily_columns},
+                {"name": self._text(lang, "sheet_campaign_rollup"), "rows": rollup_rows, "columns": rollup_columns},
             ],
         }
 
@@ -950,6 +978,10 @@ class ExportService:
                     "count_unit",
                 ),
             ]
+        )
+
+        summary_rows.append(
+            self._metric_row(lang, "metadata", "data_sources", "", notes_key="note_per_asin_totals")
         )
 
         return [

@@ -327,6 +327,7 @@ const it: Record<string, string> = {
   'advertising.partialAdsConnectionsTitle': 'Alcuni account non hanno una connessione Ads completa',
   'advertising.partialAdsConnectionsDesc': 'Le metriche PPC potrebbero essere parziali finché ogni account selezionato non ha refresh token, profilo e credenziali client a livello organizzazione.',
   'advertising.openAccounts': 'Apri Account Amazon',
+  'advertising.notConnected': 'Amazon Ads non collegato',
   'settings.accountsMovedDesc': 'Connessione account e salute credenziali ora sono in una pagina dedicata.',
   'settings.openAccounts': 'Apri Account Amazon',
   // Nomi marketplace
@@ -914,6 +915,7 @@ const it: Record<string, string> = {
   'marketResearch.noResults.retry': 'Rilancia scoperta',
   'marketResearch.title': 'Ricerca di Mercato',
   'marketResearch.subtitle': 'Confronta i tuoi prodotti con i concorrenti e ottieni insight basati su IA',
+  'marketResearch.insufficientData': 'Dati di mercato insufficienti per generare un\'analisi affidabile.',
   'marketResearch.productAnalysisTab': 'Analizza il Mio Prodotto',
   'marketResearch.marketTrackerTab': 'Esplora il Mercato Simile',
   'marketResearch.generateTitle': 'Nuova Ricerca',

@@ -47,6 +47,8 @@ TR = {
         "peak_value": "Peak Value",
         "summary_sheet": "Forecast Summary",
         "data_sheet": "Daily Forecast",
+        "data_sheet_monthly": "Monthly Forecast",
+        "low_reliability_note": "Low reliability — limited history",
         "all_products": "All Products (Account-wide)",
         "days_suffix": "days",
         "date": "Date",
@@ -84,6 +86,8 @@ TR = {
         "peak_value": "Valore di Picco",
         "summary_sheet": "Riepilogo Previsione",
         "data_sheet": "Previsione Giornaliera",
+        "data_sheet_monthly": "Previsione Mensile",
+        "low_reliability_note": "Bassa affidabilità — storico limitato",
         "all_products": "Tutti i Prodotti (Intero Account)",
         "days_suffix": "giorni",
         "date": "Data",
@@ -266,6 +270,23 @@ def build_forecast_workbook_bytes(
     peak_idx = values.index(max(values)) if values else 0
     peak_pred = predictions[peak_idx] if predictions else None
 
+    def _to_date(value):
+        from datetime import date as d
+
+        return d.fromisoformat(value) if isinstance(value, str) else value
+
+    pred_dates = [_to_date(p["date"]) for p in predictions]
+    is_monthly = _is_monthly(pred_dates)
+
+    # MAPE above this threshold (or missing) is not a trustworthy accuracy figure.
+    mape_unreliable = mape is None or mape > 100
+    if mape is None:
+        mape_cell = "N/A"
+    elif mape_unreliable:
+        mape_cell = f"{mape:.2f}% ⚠ ({t['low_reliability_note']})"
+    else:
+        mape_cell = f"{mape:.2f}%"
+
     def _day_name(date_str: str) -> str:
         from datetime import date as d
 
@@ -303,7 +324,7 @@ def build_forecast_workbook_bytes(
     summary_columns = ["section", "metric", "current_value"]
     summary_headers = [t["section"], t["metric"], t["value"]]
     summary_rows = [
-        {"section": t["model_metrics"], "metric": t["mape"], "current_value": f"{mape:.2f}%" if mape is not None else "N/A"},
+        {"section": t["model_metrics"], "metric": t["mape"], "current_value": mape_cell},
         {"section": t["model_metrics"], "metric": t["rmse"], "current_value": round(rmse, 2) if rmse is not None else "N/A"},
         {"section": t["forecast_summary"], "metric": t["total_predicted"], "current_value": round(total, 2)},
         {"section": t["forecast_summary"], "metric": t["avg_daily"], "current_value": round(avg_daily, 2)},
@@ -312,20 +333,28 @@ def build_forecast_workbook_bytes(
     ]
     renderer.write_summary_sheet(ws_summary, summary_rows, summary_columns, summary_headers, start_row=next_row)
 
-    ws_data = wb.create_sheet(title=t["data_sheet"][:31])
-    data_columns = ["date", "day_of_week", "predicted_value", "lower_bound", "upper_bound", "currency"]
-    data_headers = [t["date"], t["day_of_week"], t["predicted_value"], t["lower_bound"], t["upper_bound"], t["currency_col"]]
+    data_sheet_title = t["data_sheet_monthly"] if is_monthly else t["data_sheet"]
+    ws_data = wb.create_sheet(title=data_sheet_title[:31])
+    # The day-of-week column is meaningless for monthly cadence, so omit it there.
+    if is_monthly:
+        data_columns = ["date", "predicted_value", "lower_bound", "upper_bound", "currency"]
+        data_headers = [t["date"], t["predicted_value"], t["lower_bound"], t["upper_bound"], t["currency_col"]]
+    else:
+        data_columns = ["date", "day_of_week", "predicted_value", "lower_bound", "upper_bound", "currency"]
+        data_headers = [t["date"], t["day_of_week"], t["predicted_value"], t["lower_bound"], t["upper_bound"], t["currency_col"]]
     data_rows = []
     for p in predictions:
         pred_date = p["date"]
-        data_rows.append({
+        row = {
             "date": pred_date if isinstance(pred_date, str) else pred_date.isoformat(),
-            "day_of_week": _day_name(pred_date),
             "predicted_value": round(p["value"], 2),
-            "lower_bound": round(p.get("lower", p["value"] * 0.8), 2),
+            "lower_bound": round(max(0.0, p.get("lower", p["value"] * 0.8)), 2),
             "upper_bound": round(p.get("upper", p["value"] * 1.2), 2),
             "currency": "EUR",
-        })
+        }
+        if not is_monthly:
+            row["day_of_week"] = _day_name(pred_date)
+        data_rows.append(row)
     renderer.write_data_sheet(ws_data, data_rows, data_columns, data_headers)
 
     output = io.BytesIO()

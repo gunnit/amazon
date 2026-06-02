@@ -67,6 +67,8 @@ function reportTypeLabelKey(report: { title?: string | null } | null | undefined
     : 'marketResearch.productAnalysisTab'
 }
 
+const eurFormatter = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' })
+
 type ComparisonResult = 'better' | 'worse' | 'neutral'
 
 function isLowerBetterDimension(name: ComparisonDimension['name']): boolean {
@@ -95,7 +97,7 @@ function formatDimensionValue(
 
   switch (name) {
     case 'price':
-      return `$${value.toFixed(2)}`
+      return eurFormatter.format(value)
     case 'rating':
       return value.toFixed(1)
     case 'bsr':
@@ -340,6 +342,16 @@ export default function MarketResearch() {
   const opportunityDimensions = comparisonMatrix?.dimensions.filter((dimension) =>
     comparisonMatrix.opportunities.includes(dimension.name)
   ) || []
+
+  // The AI narrative leans on price/BSR/reviews/rating. Only trust it when at least one
+  // competitor actually carries a comparable metric — otherwise the analysis is baseless.
+  const hasUsableMarketData = (selectedReport?.competitor_data || []).some(
+    (competitor) =>
+      competitor.price != null ||
+      competitor.bsr != null ||
+      competitor.review_count != null ||
+      competitor.rating != null,
+  )
 
   // When a report finishes (completed/failed), refresh the list so the badge updates
   useEffect(() => {
@@ -1030,40 +1042,52 @@ export default function MarketResearch() {
                 ) : null
               ) : null}
 
-              <div className="grid gap-4 md:grid-cols-2">
-                {/* Summary card */}
-                {selectedReport.ai_analysis && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>{t('marketResearch.summary')}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-muted-foreground">
-                        {selectedReport.ai_analysis.summary}
-                      </p>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-
-              {/* AI Insights */}
-              {selectedReport.ai_analysis ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>{t('marketResearch.aiInsights')}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <AIInsights analysis={selectedReport.ai_analysis} />
-                  </CardContent>
-                </Card>
-              ) : (
+              {selectedReport.ai_analysis && !hasUsableMarketData ? (
                 <Card>
                   <CardContent className="py-6 text-center">
                     <p className="text-sm text-muted-foreground">
-                      {t('marketResearch.noAiAnalysis')}
+                      {t('marketResearch.insufficientData')}
                     </p>
                   </CardContent>
                 </Card>
+              ) : (
+                <>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {/* Summary card */}
+                    {selectedReport.ai_analysis && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>{t('marketResearch.summary')}</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-sm text-muted-foreground">
+                            {selectedReport.ai_analysis.summary}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+
+                  {/* AI Insights */}
+                  {selectedReport.ai_analysis ? (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>{t('marketResearch.aiInsights')}</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <AIInsights analysis={selectedReport.ai_analysis} />
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <Card>
+                      <CardContent className="py-6 text-center">
+                        <p className="text-sm text-muted-foreground">
+                          {t('marketResearch.noAiAnalysis')}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
               )}
             </div>
           ) : null}

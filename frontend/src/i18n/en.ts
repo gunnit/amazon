@@ -327,6 +327,7 @@ const en: Record<string, string> = {
   'advertising.partialAdsConnectionsTitle': 'Some accounts are missing a complete Ads connection',
   'advertising.partialAdsConnectionsDesc': 'PPC metrics may be partial until every selected account has a refresh token, a profile and org-level client credentials.',
   'advertising.openAccounts': 'Open Amazon Accounts',
+  'advertising.notConnected': 'Amazon Ads not connected',
   'settings.accountsMovedDesc': 'Account connection and credential health now live on a dedicated page.',
   'settings.openAccounts': 'Open Amazon Accounts',
   // Marketplace names
@@ -914,6 +915,7 @@ const en: Record<string, string> = {
   'marketResearch.noResults.retry': 'Re-run discovery',
   'marketResearch.title': 'Market Research',
   'marketResearch.subtitle': 'Compare your products with competitors and get AI-powered insights',
+  'marketResearch.insufficientData': 'Not enough market data to produce a reliable analysis.',
   'marketResearch.productAnalysisTab': 'Analyze My Product',
   'marketResearch.marketTrackerTab': 'Explore Similar Market',
   'marketResearch.generateTitle': 'New Research',
