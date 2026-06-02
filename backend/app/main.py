@@ -7,10 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.config import settings
+from app.config import settings, validate_production_settings
 from app.api.v1.router import api_router
 from app.db.session import engine
 from app.middleware.request_id import RequestIdMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.observability import configure_logging, init_sentry
 
 # Logging + error tracking must be set up before any other module emits records.
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Inthezon Platform API (env=%s)", settings.APP_ENV)
+    validate_production_settings(settings)
 
     scheduler = None
     if settings.ENABLE_INPROCESS_SCHEDULER:
@@ -78,6 +80,7 @@ app = FastAPI(
 # Request ID middleware must be added BEFORE CORS so the request_id context
 # is set for every dispatched route, including preflight responses.
 app.add_middleware(RequestIdMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,

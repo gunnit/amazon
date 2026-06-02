@@ -27,6 +27,7 @@ class DashboardKPIs(BaseModel):
     roas: MetricValue
     acos: MetricValue
     ctr: MetricValue
+    conversion_rate: MetricValue
     active_asins: int
     accounts_synced: int
     period_start: date

@@ -1,7 +1,8 @@
 """Authentication endpoints."""
-from datetime import timedelta
+from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, Body, HTTPException, status, Depends
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import re
@@ -23,12 +24,29 @@ from app.core.security import (
 )
 from app.config import settings
 from app.services.notification_service import NotificationService
-from app.api.deps import CurrentUser, CurrentOrganization, DbSession
+from app.api.deps import (
+    CurrentUser, CurrentOrganization, DbSession,
+    RateLimiter, revoke_token, security,
+)
+from fastapi.security import HTTPAuthorizationCredentials
 
 router = APIRouter()
 
+# Sensitive endpoints get a tight limit; the rest of the auth surface relies
+# on authentication. Window is fixed at 60s.
+_auth_limit = RateLimiter(max_requests=10, window_seconds=60, scope="auth")
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_auth_limit)],
+)
 async def register(user_in: UserCreate, db: DbSession):
     """Register a new user."""
     # Check if user exists
@@ -69,7 +87,7 @@ async def register(user_in: UserCreate, db: DbSession):
     return user
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=Token, dependencies=[Depends(_auth_limit)])
 async def login(user_in: UserLogin, db: DbSession):
     """Login and get JWT tokens."""
     # Find user
@@ -100,10 +118,27 @@ async def login(user_in: UserLogin, db: DbSession):
     )
 
 
-@router.post("/refresh", response_model=Token)
-async def refresh_token(refresh_token: str, db: DbSession):
-    """Refresh JWT tokens."""
-    payload = decode_token(refresh_token)
+@router.post("/refresh", response_model=Token, dependencies=[Depends(_auth_limit)])
+async def refresh_token(
+    db: DbSession,
+    body: Optional[RefreshRequest] = None,
+    refresh_token: Optional[str] = None,
+):
+    """Refresh JWT tokens.
+
+    Accepts the token in the request body (preferred). A `refresh_token`
+    query param is still honoured for backward compatibility with older
+    clients, but the body should be used going forward.
+    """
+    token = body.refresh_token if body else refresh_token
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = decode_token(token)
 
     if payload is None or payload.get("type") != "refresh":
         raise HTTPException(
@@ -134,7 +169,28 @@ async def refresh_token(refresh_token: str, db: DbSession):
     )
 
 
-@router.post("/forgot-password")
+@router.post("/logout", status_code=status.HTTP_200_OK)
+async def logout(
+    current_user: CurrentUser,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    body: Optional[RefreshRequest] = None,
+):
+    """Revoke the caller's access token (and refresh token if supplied)."""
+    access_payload = decode_token(credentials.credentials) or {}
+    if not revoke_token(access_payload.get("jti"), access_payload.get("exp")):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Token revocation is currently unavailable",
+        )
+
+    if body and body.refresh_token:
+        refresh_payload = decode_token(body.refresh_token) or {}
+        revoke_token(refresh_payload.get("jti"), refresh_payload.get("exp"))
+
+    return {"message": "Logged out successfully"}
+
+
+@router.post("/forgot-password", dependencies=[Depends(_auth_limit)])
 async def forgot_password(request: ForgotPasswordRequest, db: DbSession):
     """Request a password reset link. Always returns 200 to avoid user enumeration."""
     result = await db.execute(select(User).where(User.email == request.email))

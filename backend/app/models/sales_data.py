@@ -34,6 +34,11 @@ class SalesData(Base):
     ordered_product_sales_b2b: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     total_order_items: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Traffic (from salesAndTrafficByDate / byAsin)
+    browser_sessions: Mapped[int] = mapped_column(Integer, default=0)
+    mobile_sessions: Mapped[int] = mapped_column(Integer, default=0)
+    page_views: Mapped[int] = mapped_column(Integer, default=0)
+
     # Currency
     currency: Mapped[str] = mapped_column(String(3), default="EUR")
 

@@ -1,6 +1,7 @@
 """Scheduled report models."""
 from __future__ import annotations
 
+import gzip
 import uuid
 from datetime import date, datetime
 from typing import Optional
@@ -10,6 +11,14 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+def _maybe_decompress(blob: Optional[bytes]) -> Optional[bytes]:
+    if blob and blob[:2] == _GZIP_MAGIC:
+        return gzip.decompress(blob)
+    return blob
 
 
 class ScheduledReport(Base):
@@ -91,10 +100,23 @@ class ScheduledReportRun(Base):
 
     artifact_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     artifact_content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    artifact_data: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+    # Stored gzip-compressed; the artifact_data property handles (de)compression
+    # transparently so every reader/writer sees raw bytes. Legacy uncompressed
+    # rows are detected by gzip magic bytes and passed through untouched.
+    artifact_data_compressed: Mapped[Optional[bytes]] = mapped_column(
+        "artifact_data", LargeBinary, nullable=True
+    )
 
     scheduled_report: Mapped["ScheduledReport"] = relationship("ScheduledReport", back_populates="runs")
     organization: Mapped["Organization"] = relationship("Organization")
+
+    @property
+    def artifact_data(self) -> Optional[bytes]:
+        return _maybe_decompress(self.artifact_data_compressed)
+
+    @artifact_data.setter
+    def artifact_data(self, value: Optional[bytes]) -> None:
+        self.artifact_data_compressed = gzip.compress(value) if value else value
 
 
 from app.models.user import Organization, User

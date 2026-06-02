@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     # Application
     APP_ENV: str = "development"
-    APP_DEBUG: bool = True
+    APP_DEBUG: bool = False
     APP_SECRET_KEY: str = "your-secret-key-change-in-production-min-32-chars"
     APP_API_URL: str = "http://localhost:8000"
     APP_FRONTEND_URL: str = "http://localhost:5173"
@@ -133,6 +133,43 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+
+    @property
+    def is_production(self) -> bool:
+        return self.APP_ENV.lower() == "production"
+
+
+# Placeholder defaults that must never survive into production.
+_INSECURE_JWT_DEFAULTS = {"your-jwt-secret-change-in-production"}
+
+
+def validate_production_settings(s: "Settings") -> None:
+    """Fail fast on insecure configuration when running in production.
+
+    A no-op outside production so local/dev keeps working with defaults.
+    Raises RuntimeError so the app refuses to boot with a placeholder
+    JWT secret; logs a loud warning for non-fatal misconfiguration.
+    """
+    if not s.is_production:
+        return
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    if s.JWT_SECRET_KEY in _INSECURE_JWT_DEFAULTS or len(s.JWT_SECRET_KEY) < 32:
+        raise RuntimeError(
+            "JWT_SECRET_KEY is using an insecure default or is too short "
+            "(min 32 chars). Set a strong JWT_SECRET_KEY before deploying to "
+            "production."
+        )
+
+    if "localhost" in s.APP_FRONTEND_URL or "127.0.0.1" in s.APP_FRONTEND_URL:
+        logger.warning(
+            "APP_FRONTEND_URL is still pointing at localhost (%s) in production; "
+            "password-reset links will be broken. Set it to the public frontend URL.",
+            s.APP_FRONTEND_URL,
+        )
 
 
 @lru_cache()

@@ -859,10 +859,21 @@ async def export_recommendations_xlsx(
 async def download_export(
     export_id: UUID,
     current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
 ):
-    """Download a previously generated export."""
-    # This would retrieve from S3 in production
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Export not found"
+    """Download a previously generated export by job id."""
+    service = ForecastExportService(db)
+    job = await service.get_job(export_id, organization.id)
+    if not job or not job.artifact_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Export not found",
+        )
+
+    filename = job.artifact_filename or f"export_{job.id}.zip"
+    return StreamingResponse(
+        io.BytesIO(job.artifact_data),
+        media_type=job.artifact_content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

@@ -126,6 +126,7 @@ export interface DashboardKPIs {
   roas: MetricValue
   acos: MetricValue
   ctr: MetricValue
+  conversion_rate: MetricValue
   active_asins: number
   accounts_synced: number
   period_start: string

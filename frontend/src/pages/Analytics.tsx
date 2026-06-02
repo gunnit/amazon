@@ -670,7 +670,11 @@ export default function Analytics() {
                   </div>
                   <div className="space-y-2">
                     <p className="text-sm text-muted-foreground">{t('analytics.conversionRate')}</p>
-                    <p className="text-2xl font-bold">3.2%</p>
+                    <p className="text-2xl font-bold">
+                      {kpis?.conversion_rate.is_available
+                        ? `${(kpis.conversion_rate.value || 0).toFixed(1)}%`
+                        : 'N/A'}
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <p className="text-sm text-muted-foreground">{t('analytics.returnRate')}</p>

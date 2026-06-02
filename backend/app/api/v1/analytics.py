@@ -177,6 +177,7 @@ async def _get_sales_period_metrics(
                 func.sum(SalesData.ordered_product_sales).label("revenue"),
                 func.sum(SalesData.units_ordered).label("units"),
                 func.sum(SalesData.total_order_items).label("orders"),
+                func.sum(SalesData.browser_sessions + SalesData.mobile_sessions).label("sessions"),
             )
             .select_from(SalesData)
             .join(
@@ -200,6 +201,7 @@ async def _get_sales_period_metrics(
                 func.sum(SalesData.ordered_product_sales).label("revenue"),
                 func.sum(SalesData.units_ordered).label("units"),
                 func.sum(SalesData.total_order_items).label("orders"),
+                func.sum(SalesData.browser_sessions + SalesData.mobile_sessions).label("sessions"),
             )
             .where(
                 SalesData.account_id.in_(accounts_query),
@@ -213,12 +215,15 @@ async def _get_sales_period_metrics(
     revenue = float(row.revenue or 0)
     units = int(row.units or 0)
     orders = int(row.orders or 0)
+    sessions = int(row.sessions or 0)
 
     return {
         "revenue": revenue,
         "units": units,
         "orders": orders,
         "average_order_value": revenue / orders if orders > 0 else 0,
+        "sessions": sessions,
+        "conversion_rate": (units / sessions * 100) if sessions > 0 else 0.0,
     }
 
 
@@ -585,6 +590,16 @@ async def get_dashboard_kpis(
         ads_current["spend"],
         ads_previous["spend"],
     )
+    conversion_available = sales_current.get("sessions", 0) > 0
+    conversion_metric = _build_comparison_metric(
+        "conversion_rate",
+        "Conversion Rate",
+        "percent",
+        sales_current.get("conversion_rate", 0.0),
+        sales_previous.get("conversion_rate", 0.0),
+        is_available=conversion_available,
+        unavailable_reason=None if conversion_available else "Traffic data not yet synced",
+    )
 
     # Count active ASINs and synced accounts (exclude sentinel)
     asin_count = await db.execute(
@@ -632,6 +647,7 @@ async def get_dashboard_kpis(
         roas=_metric_value_from_comparison(roas_metric),
         acos=_metric_value_from_comparison(acos_metric),
         ctr=_metric_value_from_comparison(ctr_metric),
+        conversion_rate=_metric_value_from_comparison(conversion_metric),
         active_asins=active_asins,
         accounts_synced=accounts_synced,
         period_start=start_date,

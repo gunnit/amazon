@@ -100,6 +100,11 @@ celery_app.conf.beat_schedule = {
         "task": "workers.tasks.scheduled_reports.scan_scheduled_reports_due",
         "schedule": crontab(minute="*/5"),
     },
+    # Recover scheduled report runs stuck without delivery every 15 minutes
+    "scheduled-report-recovery": {
+        "task": "workers.tasks.scheduled_reports.recover_stuck_scheduled_report_runs",
+        "schedule": crontab(minute="*/15"),
+    },
     # Poll Google Sheets syncs every 5 minutes
     "google-sheets-sync-scan": {
         "task": "workers.tasks.google_sheets.scan_google_sheets_syncs_due",

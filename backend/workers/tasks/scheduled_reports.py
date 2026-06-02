@@ -1,13 +1,17 @@
 """Celery tasks for scheduled operational reports."""
 import asyncio
 import logging
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+# A run that has been generated but not delivered, or left mid-processing, for
+# longer than this is considered stuck and is recovered by the monitor task.
+STUCK_RUN_THRESHOLD = timedelta(minutes=30)
 
 
 def run_async(coro_factory):
@@ -87,3 +91,47 @@ def deliver_scheduled_report_run_task(self, run_id: str):
     except Exception as exc:
         logger.exception("Scheduled report delivery failed for %s", run_id)
         raise self.retry(exc=exc, countdown=120)
+
+
+@celery_app.task
+def recover_stuck_scheduled_report_runs():
+    """Safety net for runs whose delivery was never (re)queued.
+
+    If processing crashes after retries, or the delivery enqueue is lost, a run
+    can be left non-terminal forever. This re-enqueues delivery for generated
+    runs and marks runs stuck mid-processing as failed.
+    """
+    from app.models.scheduled_report import ScheduledReportRun
+    from app.services.scheduled_report_service import RUN_TERMINAL_STATUS, utcnow
+
+    async def _recover():
+        from app.db import session as db_session
+        from workers.tasks.scheduled_reports import deliver_scheduled_report_run_task
+
+        cutoff = datetime.now(timezone.utc) - STUCK_RUN_THRESHOLD
+        redelivered = 0
+        failed = 0
+        async with db_session.AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(ScheduledReportRun).where(
+                    ScheduledReportRun.status.notin_(tuple(RUN_TERMINAL_STATUS)),
+                    ScheduledReportRun.triggered_at <= cutoff,
+                )
+            )
+            runs = result.scalars().all()
+            for run in runs:
+                if run.generation_status == "generated" and run.delivery_status != "delivered":
+                    deliver_scheduled_report_run_task.delay(str(run.id))
+                    redelivered += 1
+                else:
+                    run.status = "failed"
+                    run.generation_status = "failed"
+                    run.delivery_status = "failed"
+                    run.error_message = "Run stalled before completion and was failed by the monitor"
+                    run.progress_step = "Stalled"
+                    run.completed_at = utcnow()
+                    failed += 1
+            await db.commit()
+        return {"redelivered": redelivered, "failed": failed}
+
+    return run_async(_recover)

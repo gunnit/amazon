@@ -556,6 +556,9 @@ class DataExtractionService:
                 "ordered_product_sales": stmt.excluded.ordered_product_sales,
                 "ordered_product_sales_b2b": stmt.excluded.ordered_product_sales_b2b,
                 "total_order_items": stmt.excluded.total_order_items,
+                "browser_sessions": stmt.excluded.browser_sessions,
+                "mobile_sessions": stmt.excluded.mobile_sessions,
+                "page_views": stmt.excluded.page_views,
                 "currency": stmt.excluded.currency,
             },
         )
@@ -589,6 +592,7 @@ class DataExtractionService:
             sales_by_date = entry.get("salesByDate", {})
             ordered_sales = sales_by_date.get("orderedProductSales", {})
             ordered_sales_b2b = sales_by_date.get("orderedProductSalesB2B", {})
+            traffic_by_date = entry.get("trafficByDate", {})
 
             await self._upsert_sales_record({
                 "account_id": account.id,
@@ -600,6 +604,9 @@ class DataExtractionService:
                 "ordered_product_sales": Decimal(str(ordered_sales.get("amount", 0))),
                 "ordered_product_sales_b2b": Decimal(str(ordered_sales_b2b.get("amount", 0))),
                 "total_order_items": sales_by_date.get("totalOrderItems", 0),
+                "browser_sessions": traffic_by_date.get("browserSessions", 0),
+                "mobile_sessions": traffic_by_date.get("mobileAppSessions", 0),
+                "page_views": traffic_by_date.get("pageViews", 0),
                 "currency": ordered_sales.get("currencyCode", "EUR"),
             })
             count += 1
@@ -613,6 +620,7 @@ class DataExtractionService:
             sales_by_asin = entry.get("salesByAsin", {})
             ordered_sales = sales_by_asin.get("orderedProductSales", {})
             ordered_sales_b2b = sales_by_asin.get("orderedProductSalesB2B", {})
+            traffic_by_asin = entry.get("trafficByAsin", {})
 
             await self._upsert_sales_record({
                 "account_id": account.id,
@@ -624,6 +632,9 @@ class DataExtractionService:
                 "ordered_product_sales": Decimal(str(ordered_sales.get("amount", 0))),
                 "ordered_product_sales_b2b": Decimal(str(ordered_sales_b2b.get("amount", 0))),
                 "total_order_items": sales_by_asin.get("totalOrderItems", 0),
+                "browser_sessions": traffic_by_asin.get("browserSessions", 0),
+                "mobile_sessions": traffic_by_asin.get("mobileAppSessions", 0),
+                "page_views": traffic_by_asin.get("pageViews", 0),
                 "currency": ordered_sales.get("currencyCode", "EUR"),
             })
             count += 1

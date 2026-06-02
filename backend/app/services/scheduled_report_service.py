@@ -81,7 +81,7 @@ def scheduled_report_run_to_response(run: ScheduledReportRun) -> ScheduledReport
         period_end=run.period_end.isoformat(),
         completed_at=_iso(run.completed_at),
         artifact_filename=run.artifact_filename,
-        download_ready=bool(run.artifact_data),
+        download_ready=bool(run.artifact_data_compressed),
         recipients=list(run.recipients_snapshot or []),
     )
 
@@ -352,6 +352,9 @@ def enqueue_scheduled_run_processing(run_id: str) -> None:
         process_scheduled_report_run_task.delay(run_id)
     except Exception:
         logger.exception("Failed to enqueue scheduled report run %s; using in-process thread fallback", run_id)
+        # Daemon thread is best-effort: it may die on process shutdown, leaving
+        # the run non-terminal. recover_stuck_scheduled_report_runs is the
+        # safety net that re-enqueues or fails such runs.
         thread = threading.Thread(target=process_scheduled_report_run_job, args=(run_id,), daemon=True)
         thread.start()
 
@@ -456,7 +459,7 @@ def deliver_scheduled_report_run_job(run_id: str) -> None:
             if not schedule:
                 return
 
-            if not run.artifact_data:
+            if not run.artifact_data_compressed:
                 run.status = "failed"
                 run.delivery_status = "failed"
                 run.error_message = "Artifact is not available for delivery"
