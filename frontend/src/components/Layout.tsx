@@ -6,7 +6,6 @@ import {
   BarChart3,
   TrendingUp,
   Megaphone,
-  Store,
   Search,
   Bell,
   Package,
@@ -29,7 +28,6 @@ import { useTranslation } from '@/i18n'
 
 const navItems = [
   { key: 'nav.dashboard', href: '/', icon: LayoutDashboard },
-  { key: 'nav.accounts', href: '/accounts', icon: Store },
   { key: 'nav.reports', href: '/reports', icon: FileText },
   { key: 'nav.analytics', href: '/analytics', icon: BarChart3 },
   { key: 'nav.advertising', href: '/advertising', icon: Megaphone },
@@ -73,7 +71,7 @@ export default function Layout() {
         )}
       >
         <div className="flex items-center justify-between h-16 px-6 border-b">
-          <span className="text-xl font-bold text-primary">Inthezon</span>
+          <span className="text-xl font-bold text-white">Inthezon</span>
           <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(false)}>
             <X className="h-6 w-6" />
           </Button>
@@ -89,7 +87,7 @@ export default function Layout() {
                 className={cn(
                   "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                   isActive
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-blue-950 text-white shadow-sm"
                     : "text-muted-foreground hover:bg-muted"
                 )}
               >
@@ -115,7 +113,7 @@ export default function Layout() {
               sidebarCollapsed ? "px-3 justify-center" : "px-6 justify-between"
             )}
           >
-            <span className="text-xl font-bold text-primary">
+            <span className="text-xl font-bold text-white">
               {sidebarCollapsed ? "I" : "Inthezon"}
             </span>
             <Button
@@ -142,7 +140,7 @@ export default function Layout() {
                   className={cn(
                     "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                     isActive
-                      ? "bg-primary text-primary-foreground"
+                      ? "bg-blue-950 text-white shadow-sm"
                       : "text-muted-foreground hover:bg-muted",
                     sidebarCollapsed && "justify-center"
                   )}
