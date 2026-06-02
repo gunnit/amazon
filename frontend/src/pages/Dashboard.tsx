@@ -639,7 +639,7 @@ export default function Dashboard() {
       </div>
 
       {/* Filters */}
-      <div className="flex justify-end">
+      <div className="flex justify-start">
         <FilterBar onReset={handleReset}>
           <DateRangeFilter />
           {scope.mode === 'account' ? (
