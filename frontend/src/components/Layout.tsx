@@ -33,7 +33,7 @@ const navItems = [
   { key: 'nav.advertising', href: '/advertising', icon: Megaphone },
   { key: 'nav.forecasts', href: '/forecasts', icon: TrendingUp },
   { key: 'nav.marketResearch', href: '/market-research', icon: Search },
-  { key: 'nav.brandAnalysis', href: '/brand-analysis', icon: FileText },
+  // Brand Analysis archived for now — hidden from the sidebar (route still registered).
   { key: 'nav.catalog', href: '/catalog', icon: Package },
   { key: 'nav.recommendations', href: '/recommendations', icon: Lightbulb },
   { key: 'nav.alerts', href: '/alerts', icon: Bell },
