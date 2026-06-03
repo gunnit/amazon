@@ -22,6 +22,14 @@ import { GoogleSheetsIntegration } from '@/components/settings/GoogleSheetsInteg
 import type { Language } from '@/store/languageStore'
 import type { ApiKeysResponse } from '@/types'
 
+function maskArn(arn: string): string {
+  // arn:aws:iam::905355900769:role/API -> arn:aws:iam::•••••••••769:role/API
+  return arn.replace(/(arn:aws:iam::)(\d+)(:role\/.*)/, (_, prefix, account, suffix) => {
+    const tail = account.slice(-3)
+    return `${prefix}${'•'.repeat(Math.max(account.length - 3, 0))}${tail}${suffix}`
+  })
+}
+
 export default function Settings() {
   const { user, organization } = useAuthStore()
   const { toast } = useToast()
@@ -444,7 +452,7 @@ export default function Settings() {
                     { label: t('settings.clientSecret'), set: savedApiKeys.has_client_secret },
                     { label: t('settings.awsAccessKey'), set: !!savedApiKeys.sp_api_aws_access_key, value: savedApiKeys.sp_api_aws_access_key },
                     { label: t('settings.awsSecretKey'), set: savedApiKeys.has_aws_secret_key },
-                    { label: t('settings.roleArn'), set: !!savedApiKeys.sp_api_role_arn, value: savedApiKeys.sp_api_role_arn },
+                    { label: t('settings.roleArn'), set: !!savedApiKeys.sp_api_role_arn, value: savedApiKeys.sp_api_role_arn ? maskArn(savedApiKeys.sp_api_role_arn) : undefined },
                     { label: t('accounts.adsClientId'), set: !!savedApiKeys.advertising_client_id, value: savedApiKeys.advertising_client_id },
                     { label: t('accounts.adsClientSecret'), set: savedApiKeys.has_advertising_client_secret },
                   ]
@@ -539,7 +547,7 @@ export default function Settings() {
                     id="roleArn"
                     value={apiKeys.sp_api_role_arn}
                     onChange={(e) => setApiKeys({ ...apiKeys, sp_api_role_arn: e.target.value })}
-                    placeholder={savedApiKeys?.sp_api_role_arn || 'arn:aws:iam::123456789:role/sp-api'}
+                    placeholder={savedApiKeys?.sp_api_role_arn ? maskArn(savedApiKeys.sp_api_role_arn) : 'arn:aws:iam::123456789:role/sp-api'}
                   />
                   <p className="text-xs text-muted-foreground">
                     {t('settings.roleArnHelp')}

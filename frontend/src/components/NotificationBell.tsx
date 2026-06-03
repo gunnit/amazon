@@ -26,15 +26,15 @@ function severityIcon(severity: string) {
   }
 }
 
-function timeAgo(dateStr: string): string {
+function timeAgo(dateStr: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
   const diff = Date.now() - new Date(dateStr).getTime()
   const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return 'now'
-  if (minutes < 60) return `${minutes}m`
+  if (minutes < 1) return t('time.now')
+  if (minutes < 60) return t('time.minutesAgo', { n: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
+  if (hours < 24) return t('time.hoursAgo', { n: hours })
   const days = Math.floor(hours / 24)
-  return `${days}d`
+  return t('time.daysAgo', { n: days })
 }
 
 function alertTypeLabel(alert: Alert, t: (key: string) => string): string | null {
@@ -224,7 +224,7 @@ export function NotificationBell() {
                   <p className="mt-1 text-sm leading-snug line-clamp-2">{alert.message}</p>
                   <span className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
                     <Clock className="h-3 w-3" />
-                    {timeAgo(alert.triggered_at)}
+                    {timeAgo(alert.triggered_at, t)}
                     {alert.rule_name && <span className="truncate">{alert.rule_name}</span>}
                   </span>
                 </div>

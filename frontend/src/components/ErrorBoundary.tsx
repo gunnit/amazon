@@ -1,7 +1,16 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
-import { AlertTriangle, RefreshCw } from 'lucide-react'
+import { AlertTriangle, Home, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { useLanguageStore } from '@/store/languageStore'
+import en from '@/i18n/en'
+import it from '@/i18n/it'
+
+function tr(key: string): string {
+  const lang = useLanguageStore.getState().language
+  const dict = lang === 'it' ? it : en
+  return dict[key] ?? en[key] ?? key
+}
 
 interface Props {
   children: ReactNode
@@ -43,16 +52,24 @@ export class ErrorBoundary extends Component<Props, State> {
                 <AlertTriangle className="h-5 w-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <CardTitle className="text-lg">{this.props.title || 'Something went wrong'}</CardTitle>
+                <CardTitle className="text-lg">{this.props.title || tr('errorBoundary.title')}</CardTitle>
                 <CardDescription className="mt-1">
                   This page hit a runtime error and couldn't finish rendering. The details below
                   should help pinpoint the cause.
                 </CardDescription>
               </div>
-              <Button variant="outline" size="sm" onClick={this.reset} className="shrink-0">
-                <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                Retry
-              </Button>
+              <div className="flex shrink-0 gap-2">
+                <Button asChild variant="outline" size="sm">
+                  <a href="/">
+                    <Home className="mr-2 h-3.5 w-3.5" />
+                    {tr('errorBoundary.backToDashboard')}
+                  </a>
+                </Button>
+                <Button variant="outline" size="sm" onClick={this.reset}>
+                  <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                  Retry
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4 p-6">

@@ -434,6 +434,7 @@ const it: Record<string, string> = {
   'scheduledReports.noHistory': 'Nessuna esecuzione per questa schedulazione.',
   'scheduledReports.nextRun': 'Prossima esecuzione',
   'scheduledReports.lastRun': 'Ultima esecuzione',
+  'scheduledReports.timesNote': 'Orari mostrati in {tz}',
   'scheduledReports.notRunYet': 'Mai eseguito',
   'scheduledReports.accountsCount': '{n} account',
   'scheduledReports.create': 'Crea schedulazione',
@@ -1220,6 +1221,10 @@ const it: Record<string, string> = {
   'notifications.markAllRead': 'Segna tutti come letti',
   'notifications.viewAll': 'Vedi tutti gli avvisi',
   'notifications.empty': 'Nessuna nuova notifica',
+  'time.now': 'adesso',
+  'time.minutesAgo': '{n}m fa',
+  'time.hoursAgo': '{n}h fa',
+  'time.daysAgo': '{n}g fa',
 
   // ── Impostazioni ──
   'settings.title': 'Impostazioni',
@@ -1453,6 +1458,14 @@ const it: Record<string, string> = {
   'advertising.underperformingDesc': 'Campagne con ROAS < 1 o ACoS > 100%',
   'advertising.noCampaigns': 'Nessun dato campagna per il periodo selezionato',
   'advertising.noUnderperforming': 'Nessuna campagna sottoperformante trovata',
+  'advertising.recNoSpend': 'Nessuna spesa pubblicitaria registrata per il periodo selezionato.',
+
+  // ── Pagina non trovata ──
+  'notFound.title': 'Pagina non trovata',
+  'notFound.description': 'La pagina che cerchi non esiste o è stata spostata.',
+  'notFound.backToDashboard': 'Torna alla Dashboard',
+  'errorBoundary.title': 'Si è verificato un errore',
+  'errorBoundary.backToDashboard': 'Torna alla Dashboard',
 }
 
 export default it

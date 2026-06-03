@@ -434,6 +434,7 @@ const en: Record<string, string> = {
   'scheduledReports.noHistory': 'No runs yet for this schedule.',
   'scheduledReports.nextRun': 'Next run',
   'scheduledReports.lastRun': 'Last run',
+  'scheduledReports.timesNote': 'Times shown in {tz}',
   'scheduledReports.notRunYet': 'Not run yet',
   'scheduledReports.accountsCount': '{n} accounts',
   'scheduledReports.create': 'Create Schedule',
@@ -1220,6 +1221,10 @@ const en: Record<string, string> = {
   'notifications.markAllRead': 'Mark all read',
   'notifications.viewAll': 'View all alerts',
   'notifications.empty': 'No new notifications',
+  'time.now': 'now',
+  'time.minutesAgo': '{n}m ago',
+  'time.hoursAgo': '{n}h ago',
+  'time.daysAgo': '{n}d ago',
 
   // ── Settings ──
   'settings.title': 'Settings',
@@ -1453,6 +1458,14 @@ const en: Record<string, string> = {
   'advertising.underperformingDesc': 'Campaigns with ROAS < 1 or ACoS > 100%',
   'advertising.noCampaigns': 'No campaign data for the selected period',
   'advertising.noUnderperforming': 'No underperforming campaigns found',
+  'advertising.recNoSpend': 'No advertising spend recorded for the selected period.',
+
+  // ── Not Found ──
+  'notFound.title': 'Page not found',
+  'notFound.description': "The page you're looking for doesn't exist or has been moved.",
+  'notFound.backToDashboard': 'Back to Dashboard',
+  'errorBoundary.title': 'Something went wrong',
+  'errorBoundary.backToDashboard': 'Back to Dashboard',
 }
 
 export default en

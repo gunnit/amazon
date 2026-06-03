@@ -79,14 +79,15 @@ function alertTypeBadge(type: string | null, t: (key: string) => string) {
   return <Badge variant="secondary">{type ? labels[type] || type : '—'}</Badge>
 }
 
-function timeAgo(dateStr: string): string {
+function timeAgo(dateStr: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
   const diff = Date.now() - new Date(dateStr).getTime()
   const minutes = Math.floor(diff / 60000)
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 1) return t('time.now')
+  if (minutes < 60) return t('time.minutesAgo', { n: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return t('time.hoursAgo', { n: hours })
   const days = Math.floor(hours / 24)
-  return `${days}d ago`
+  return t('time.daysAgo', { n: days })
 }
 
 function syncConditionValue(
@@ -959,7 +960,7 @@ function HistoryTab({
                   <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <Clock className="h-3 w-3" />
-                      {timeAgo(alert.triggered_at)}
+                      {timeAgo(alert.triggered_at, t)}
                     </span>
                     <span title={formatDateTime(alert.triggered_at, language)}>
                       {formatDate(alert.triggered_at)}

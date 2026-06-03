@@ -132,9 +132,11 @@ function getTimezoneOptions(currentTimezone: string) {
   return Array.from(new Set([currentTimezone, ...supported])).slice(0, 200)
 }
 
+const DISPLAY_TIMEZONE = 'Europe/Rome'
+
 function formatTimestamp(value: string | null) {
   if (!value) return '—'
-  return new Date(value).toLocaleString()
+  return new Date(value).toLocaleString(undefined, { timeZone: DISPLAY_TIMEZONE })
 }
 
 function toBadgeVariant(status: string | null): 'default' | 'secondary' | 'destructive' {
@@ -326,6 +328,9 @@ export function ScheduledReportsPanel() {
                         <span>{t('scheduledReports.timezone')}: {schedule.timezone}</span>
                         <span>{t('scheduledReports.accountsCount', { n: schedule.account_ids.length || accounts.length })}</span>
                       </div>
+                      <p className="text-xs text-muted-foreground">
+                        {t('scheduledReports.timesNote', { tz: DISPLAY_TIMEZONE })}
+                      </p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
@@ -656,7 +661,9 @@ export function ScheduledReportsPanel() {
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[760px]">
           <DialogHeader>
             <DialogTitle>{historySchedule?.name}</DialogTitle>
-            <DialogDescription>{t('scheduledReports.historySubtitle')}</DialogDescription>
+            <DialogDescription>
+              {t('scheduledReports.historySubtitle')} · {t('scheduledReports.timesNote', { tz: DISPLAY_TIMEZONE })}
+            </DialogDescription>
           </DialogHeader>
           {runsLoading ? (
             <div className="flex h-24 items-center justify-center">
