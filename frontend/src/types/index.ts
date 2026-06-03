@@ -261,6 +261,7 @@ export interface PaginatedProductPerformance {
   total: number
   offset: number
   limit: number
+  catalog_total: number
 }
 
 export type PerProductSortKey = 'revenue' | 'units' | 'orders' | 'acos' | 'roas' | 'ad_spend'

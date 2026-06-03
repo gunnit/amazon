@@ -215,6 +215,7 @@ class PaginatedProductPerformance(BaseModel):
     total: int
     offset: int
     limit: int
+    catalog_total: int = 0
 
 
 class CompetitorAnalysis(BaseModel):

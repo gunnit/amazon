@@ -70,6 +70,7 @@ export function PerProductPerformanceTable({ dateRange, accountIds, enabled }: P
   })
 
   const total = query.data?.total ?? 0
+  const catalogTotal = query.data?.catalog_total ?? 0
   const items = query.data?.items ?? []
   const page = Math.floor(offset / limit) + 1
   const lastPage = total === 0 ? 1 : Math.ceil(total / limit)
@@ -98,6 +99,11 @@ export function PerProductPerformanceTable({ dateRange, accountIds, enabled }: P
       <CardHeader>
         <CardTitle>{t('analytics.perProduct.title')}</CardTitle>
         <CardDescription>{t('analytics.perProduct.desc')}</CardDescription>
+        {!search && catalogTotal > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {t('analytics.perProduct.periodScope', { sold: total, catalog: catalogTotal })}
+          </p>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-end gap-3">
@@ -223,8 +229,14 @@ export function PerProductPerformanceTable({ dateRange, accountIds, enabled }: P
                   onClick={() => navigate(`/analytics/product/${item.asin}`)}
                 >
                   <TableCell className="font-mono text-xs">{item.asin}</TableCell>
-                  <TableCell className="max-w-[280px] truncate" title={item.title ?? ''}>
-                    {item.title ?? '—'}
+                  <TableCell className="max-w-[280px] truncate" title={item.title ?? item.asin}>
+                    {item.title ? (
+                      item.title
+                    ) : (
+                      <span className="text-muted-foreground italic">
+                        {t('analytics.perProduct.titleMissing', { asin: item.asin })}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="font-mono text-xs">{item.sku ?? '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">

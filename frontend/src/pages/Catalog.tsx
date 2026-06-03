@@ -281,7 +281,15 @@ export default function Catalog() {
                         onClick={() => setSelectedProduct(p)}
                       >
                         <TableCell className="font-mono text-xs">{p.asin}</TableCell>
-                        <TableCell className="max-w-[320px] truncate">{p.title ?? '—'}</TableCell>
+                        <TableCell className="max-w-[320px] truncate" title={p.title ?? p.asin}>
+                          {p.title ? (
+                            p.title
+                          ) : (
+                            <span className="text-muted-foreground italic">
+                              {t('catalog.products.titleMissing')}
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="font-mono text-xs">
                           {p.sku
                             ? p.sku
