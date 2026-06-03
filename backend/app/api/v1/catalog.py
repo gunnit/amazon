@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from app.api.deps import CurrentOrganization, CurrentUser, DbSession
+from app.core.exceptions import AmazonAPIError
 from app.models.amazon_account import AmazonAccount
 from app.models.catalog_change_log import CatalogChangeLog
 from app.models.product import Product
@@ -21,6 +22,7 @@ from app.schemas.catalog import (
 )
 from app.schemas.report import ProductResponse
 from app.services.catalog_service import CatalogOperationError, CatalogService
+from app.services.data_extraction import DataExtractionService
 from app.services.image_service import (
     ALLOWED_CONTENT_TYPES,
     ImageService,
@@ -153,6 +155,40 @@ async def update_product(
     await db.refresh(product)
 
     return product
+
+
+@router.post("/backfill-titles")
+async def backfill_product_titles(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: UUID = Query(..., description="Account whose missing titles to backfill"),
+    limit: Optional[int] = Query(None, ge=1, le=200, description="Max products to look up"),
+):
+    """Re-query the Amazon catalog to fill in product titles still showing as empty.
+
+    Best-effort: ASINs for which Amazon returns no title are left untouched so the
+    UI keeps its honest fallback. Run manually after a sync (no Celery in prod).
+    """
+    result = await db.execute(
+        select(AmazonAccount).where(
+            AmazonAccount.id == account_id,
+            AmazonAccount.organization_id == organization.id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    service = DataExtractionService(db)
+    try:
+        summary = await service.backfill_missing_product_titles(
+            account, organization=organization, limit=limit
+        )
+    except AmazonAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    return {"account_id": str(account_id), **summary}
 
 
 @router.get("/bulk-update/template")

@@ -9,7 +9,7 @@ import logging
 import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.amazon_account import AmazonAccount, SyncStatus
@@ -1506,6 +1506,80 @@ class DataExtractionService:
         await self.db.flush()
         logger.info(f"Synced {count} products for {account.account_name}")
         return count
+
+    async def backfill_missing_product_titles(
+        self,
+        account: AmazonAccount,
+        organization=None,
+        limit: Optional[int] = None,
+    ) -> dict:
+        """Fill in product titles that are still empty by re-querying the catalog.
+
+        Best-effort: for each product whose ``title`` is NULL or blank we call the
+        CatalogItems API and write the returned ``itemName``. ASINs for which
+        Amazon returns no title are left untouched so the UI keeps showing its
+        honest fallback rather than an invented name. Errors are handled per ASIN
+        so a single bad lookup never aborts the batch.
+        """
+        rows = (
+            await self.db.execute(
+                select(Product)
+                .where(
+                    Product.account_id == account.id,
+                    or_(Product.title.is_(None), func.btrim(Product.title) == ""),
+                )
+                .order_by(Product.asin)
+            )
+        ).scalars().all()
+
+        if limit is not None:
+            rows = rows[:limit]
+
+        result = {"checked": 0, "filled": 0, "still_missing": 0, "errors": 0}
+        if not rows:
+            logger.info("No products missing titles for %s", account.account_name)
+            return result
+
+        client = self._create_sp_api_client(account, organization)
+
+        for index, product in enumerate(rows):
+            result["checked"] += 1
+            try:
+                catalog_data = client.get_catalog_item_details(product.asin)
+            except Exception as exc:  # noqa: BLE001 - per-ASIN isolation
+                result["errors"] += 1
+                logger.warning(
+                    "Title backfill failed for %s: %s", product.asin, exc
+                )
+                continue
+
+            title = None
+            if catalog_data:
+                summaries = catalog_data.get("summaries", [])
+                if summaries:
+                    title = summaries[0].get("itemName")
+
+            title = (title or "").strip()
+            if title:
+                product.title = title
+                result["filled"] += 1
+            else:
+                result["still_missing"] += 1
+
+            # Respect SP-API rate limits between lookups.
+            if index + 1 < len(rows):
+                time.sleep(1)
+
+        await self.db.flush()
+        logger.info(
+            "Title backfill for %s: checked=%d filled=%d still_missing=%d errors=%d",
+            account.account_name,
+            result["checked"],
+            result["filled"],
+            result["still_missing"],
+            result["errors"],
+        )
+        return result
 
     # ---- Advertising ----
 
