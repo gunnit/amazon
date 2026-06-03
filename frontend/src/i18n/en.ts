@@ -1280,6 +1280,8 @@ const en: Record<string, string> = {
   // Notifications
   'settings.notifTitle': 'Notification Preferences',
   'settings.notifDesc': 'Choose what notifications you want to receive',
+  'settings.emailDeliveryConfigured': 'Email delivery active',
+  'settings.emailDeliveryMissing': 'Email delivery not configured',
   'settings.dailyDigest': 'Daily Digest',
   'settings.dailyDigestDesc': 'Receive a daily summary of your account performance',
   'settings.alertEmails': 'Alert Emails',

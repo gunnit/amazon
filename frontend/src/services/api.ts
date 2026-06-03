@@ -144,6 +144,16 @@ export const authApi = {
     await api.put('/auth/me/notifications', data)
   },
 
+  getEmailStatus: async (): Promise<{
+    status: 'configured' | 'missing_credentials' | 'error'
+    provider: string
+    from_email: string | null
+    detail: string | null
+  }> => {
+    const response = await api.get('/auth/me/email-status')
+    return response.data
+  },
+
   deleteAccount: async (): Promise<void> => {
     await api.delete('/auth/me')
   },
@@ -326,8 +336,13 @@ export const googleSheetsApi = {
   getConnection: async (): Promise<GoogleSheetsConnection | null> => {
     try {
       const response = await api.get('/google-sheets/connection')
+      // Backend returns 200 with { connected: false } when nothing is linked.
+      if (response.data?.connected === false) {
+        return null
+      }
       return response.data
     } catch (error) {
+      // Tolerate older backends that still answer 404 for "no connection".
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         return null
       }

@@ -1280,6 +1280,8 @@ const it: Record<string, string> = {
   // Notifiche
   'settings.notifTitle': 'Preferenze notifiche',
   'settings.notifDesc': 'Scegli quali notifiche vuoi ricevere',
+  'settings.emailDeliveryConfigured': 'Invio email attivo',
+  'settings.emailDeliveryMissing': 'Invio email non configurato',
   'settings.dailyDigest': 'Riepilogo giornaliero',
   'settings.dailyDigestDesc': 'Ricevi un riepilogo giornaliero delle prestazioni del tuo account',
   'settings.alertEmails': 'Email di avviso',

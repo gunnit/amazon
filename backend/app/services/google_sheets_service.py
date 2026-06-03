@@ -83,7 +83,9 @@ def _google_redirect_uri() -> str:
 def _require_google_oauth_config() -> None:
     if settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET:
         return
-    raise RuntimeError("Google OAuth is not configured")
+    raise RuntimeError(
+        "Integrazione Google non configurata sul server — contatta l'amministratore."
+    )
 
 
 def _spreadsheet_url(spreadsheet_id: str) -> str:
@@ -185,7 +187,9 @@ def resolve_google_sync_period(
 def google_sheets_connection_to_response(
     connection: GoogleSheetsConnection,
 ) -> GoogleSheetsConnectionResponse:
-    return GoogleSheetsConnectionResponse.model_validate(connection)
+    response = GoogleSheetsConnectionResponse.model_validate(connection)
+    response.connected = True
+    return response
 
 
 def google_sheets_sync_to_response(sync: GoogleSheetsSync) -> GoogleSheetsSyncResponse:

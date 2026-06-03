@@ -136,11 +136,15 @@ async def get_google_sheets_connection(
     organization: CurrentOrganization,
     db: DbSession,
 ):
-    """Get the active Google Sheets connection for the current user and organization."""
+    """Return the Google Sheets connection state for the current user and organization.
+
+    Always 200: when no connection exists we return ``connected=false`` instead of
+    a 404 so the client probe on /reports and the export modal stays quiet.
+    """
     service = GoogleSheetsService(db)
     connection = await service.get_connection(current_user.id, organization.id)
     if not connection:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Google Sheets connection not found")
+        return GoogleSheetsConnectionResponse(connected=False)
     return google_sheets_connection_to_response(connection)
 
 

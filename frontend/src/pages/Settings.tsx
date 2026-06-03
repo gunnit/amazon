@@ -19,6 +19,7 @@ import { useAuthStore } from '@/store/authStore'
 import { authApi, exportsApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
 import { GoogleSheetsIntegration } from '@/components/settings/GoogleSheetsIntegration'
+import { cn } from '@/lib/utils'
 import type { Language } from '@/store/languageStore'
 import type { ApiKeysResponse } from '@/types'
 
@@ -62,6 +63,12 @@ export default function Settings() {
   const { data: savedNotifications } = useQuery({
     queryKey: ['notification-preferences'],
     queryFn: () => authApi.getNotificationPreferences(),
+  })
+
+  // Real outbound-email delivery state (SendGrid config + sender).
+  const { data: emailStatus } = useQuery({
+    queryKey: ['email-status'],
+    queryFn: () => authApi.getEmailStatus(),
   })
 
   useEffect(() => {
@@ -614,6 +621,32 @@ export default function Settings() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {emailStatus && (
+                <div
+                  className={cn(
+                    'flex items-start gap-2 rounded-md border p-3 text-sm',
+                    emailStatus.status === 'configured'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : 'border-amber-200 bg-amber-50 text-amber-800',
+                  )}
+                >
+                  {emailStatus.status === 'configured' ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  )}
+                  <div>
+                    <p className="font-medium">
+                      {emailStatus.status === 'configured'
+                        ? t('settings.emailDeliveryConfigured')
+                        : t('settings.emailDeliveryMissing')}
+                    </p>
+                    {emailStatus.detail && (
+                      <p className="mt-0.5 text-xs opacity-90">{emailStatus.detail}</p>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-medium">{t('settings.dailyDigest')}</p>

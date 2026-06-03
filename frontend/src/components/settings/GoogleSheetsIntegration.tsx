@@ -207,8 +207,14 @@ export function GoogleSheetsIntegration() {
     onSuccess: (authUrl) => {
       window.location.href = authUrl
     },
-    onError: () => {
-      toast({ variant: 'destructive', title: t('googleSheets.connectFailed') })
+    onError: (error) => {
+      // A 503 carries an actionable server message (OAuth not configured).
+      const detail = axios.isAxiosError(error) ? error.response?.data?.detail : null
+      toast({
+        variant: 'destructive',
+        title: t('googleSheets.connectFailed'),
+        description: typeof detail === 'string' ? detail : undefined,
+      })
     },
   })
 
