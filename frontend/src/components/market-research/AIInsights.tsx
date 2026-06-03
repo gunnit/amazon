@@ -14,36 +14,14 @@ const priorityColors: Record<string, string> = {
   low: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
 }
 
-function scoreColor(score: number): string {
-  if (score >= 80) return 'text-green-600 dark:text-green-400'
-  if (score >= 50) return 'text-yellow-600 dark:text-yellow-400'
-  return 'text-red-600 dark:text-red-400'
-}
-
-function scoreBg(score: number): string {
-  if (score >= 80) return 'bg-green-100 dark:bg-green-900/30'
-  if (score >= 50) return 'bg-yellow-100 dark:bg-yellow-900/30'
-  return 'bg-red-100 dark:bg-red-900/30'
-}
-
+// Note: the single competitive score lives in the comparison matrix card.
+// The AI section deliberately omits a second score so the report shows one
+// coherent number instead of two conflicting ones.
 export default function AIInsights({ analysis }: AIInsightsProps) {
   const { t } = useTranslation()
 
   return (
     <div className="space-y-4">
-      {/* Overall Score */}
-      <div className="flex items-center gap-4">
-        <div className={`flex items-center justify-center w-16 h-16 rounded-full ${scoreBg(analysis.overall_score)}`}>
-          <span className={`text-2xl font-bold ${scoreColor(analysis.overall_score)}`}>
-            {analysis.overall_score}
-          </span>
-        </div>
-        <div>
-          <p className="font-semibold">{t('marketResearch.overallScore')}</p>
-          <p className="text-sm text-muted-foreground">{analysis.summary}</p>
-        </div>
-      </div>
-
       <div className="grid gap-4 md:grid-cols-2">
         {/* Strengths */}
         <Card>

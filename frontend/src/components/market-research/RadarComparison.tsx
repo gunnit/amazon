@@ -76,7 +76,7 @@ export default function RadarComparison({ product, competitors }: RadarCompariso
           fillOpacity={0.3}
         />
         <Radar
-          name={`${t('marketResearch.competitors')} avg`}
+          name={t('marketResearch.competitorsAvg')}
           dataKey="competitors"
           stroke={CHART_NEUTRAL}
           fill={CHART_NEUTRAL}

@@ -62,6 +62,31 @@ logger = logging.getLogger(__name__)
 # How many competitors to auto-discover
 AUTO_DISCOVER_COUNT = 8
 
+# A price that repeats verbatim across several distinct listings is almost
+# always a placeholder/sentinel from SP-API (a barcode or a marketplace default
+# echoed onto unrelated ASINs), not a real market price. Excluding those values
+# keeps averages, ranges and the comparison matrix honest.
+_SENTINEL_PRICE_MIN_OCCURRENCES = 3
+_SENTINEL_PRICE_MIN_SHARE = 0.3
+
+
+def _detect_sentinel_prices(values: list[float]) -> set[float]:
+    """Return the set of price values that look like repeated placeholders."""
+    positive = [v for v in values if v is not None and v > 0]
+    if len(positive) < _SENTINEL_PRICE_MIN_OCCURRENCES:
+        return set()
+
+    counts: dict[float, int] = {}
+    for value in positive:
+        counts[value] = counts.get(value, 0) + 1
+
+    return {
+        value
+        for value, count in counts.items()
+        if count >= _SENTINEL_PRICE_MIN_OCCURRENCES
+        and count / len(positive) >= _SENTINEL_PRICE_MIN_SHARE
+    }
+
 
 class MarketResearchService:
     """Service for creating and managing market research reports."""
@@ -190,6 +215,12 @@ class MarketResearchService:
             {"name": "rating", "field": "rating", "weight": 0.2, "lower_is_better": False},
         ]
 
+        all_prices = [
+            self._coerce_numeric(snapshot.get("price"))
+            for snapshot in [product_snapshot, *competitor_data]
+        ]
+        sentinel_prices = _detect_sentinel_prices([p for p in all_prices if p is not None])
+
         dimensions: list[dict[str, Any]] = []
         overall_score = 0.0
         total_weight = 0.0
@@ -202,6 +233,7 @@ class MarketResearchService:
                 name=config["name"],
                 field=config["field"],
                 lower_is_better=config["lower_is_better"],
+                invalid_values=sentinel_prices if config["field"] == "price" else None,
             )
 
             dimensions.append(dimension)
@@ -249,13 +281,32 @@ class MarketResearchService:
         name: str,
         field: str,
         lower_is_better: bool,
+        invalid_values: Optional[set[float]] = None,
     ) -> dict[str, Any]:
-        """Compute comparison stats for a single metric dimension."""
-        client_value = cls._coerce_numeric(product_snapshot.get(field))
+        """Compute comparison stats for a single metric dimension.
+
+        ``invalid_values`` (e.g. detected sentinel prices) and non-positive
+        prices are treated as missing so they never pollute averages, ranges
+        or the rank used for scoring.
+        """
+        invalid = invalid_values or set()
+        is_price = field == "price"
+
+        def _clean(raw: Any) -> Optional[float]:
+            numeric = cls._coerce_numeric(raw)
+            if numeric is None:
+                return None
+            if is_price and numeric <= 0:
+                return None
+            if numeric in invalid:
+                return None
+            return numeric
+
+        client_value = _clean(product_snapshot.get(field))
 
         competitor_values: list[tuple[dict[str, Any], float]] = []
         for competitor in competitor_data:
-            numeric_value = cls._coerce_numeric(competitor.get(field))
+            numeric_value = _clean(competitor.get(field))
             if numeric_value is not None:
                 competitor_values.append((competitor, numeric_value))
 

@@ -1,6 +1,7 @@
-import { Package, DollarSign, BarChart3, Tag } from 'lucide-react'
+import { Package, Euro, BarChart3, Tag } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { useTranslation } from '@/i18n'
+import { formatEur, formatEurCompact, formatBsr, usablePrices } from '@/lib/market-research'
 import type { MarketSearchResult } from '@/types'
 
 interface MarketOverviewStatsProps {
@@ -10,7 +11,7 @@ interface MarketOverviewStatsProps {
 export default function MarketOverviewStats({ results }: MarketOverviewStatsProps) {
   const { t } = useTranslation()
 
-  const prices = results.map((r) => r.price).filter((p): p is number => p != null)
+  const prices = usablePrices(results)
   const bsrs = results.map((r) => r.bsr).filter((b): b is number => b != null)
   const brands = new Set(results.map((r) => r.brand).filter(Boolean))
 
@@ -29,15 +30,15 @@ export default function MarketOverviewStats({ results }: MarketOverviewStatsProp
     },
     {
       label: t('marketTracker.avgPrice'),
-      value: avgPrice != null ? `$${avgPrice.toFixed(2)}` : '--',
-      sub: minPrice != null && maxPrice != null ? `$${minPrice.toFixed(0)} - $${maxPrice.toFixed(0)}` : undefined,
-      icon: DollarSign,
+      value: avgPrice != null ? formatEur(avgPrice) : t('marketResearch.noData'),
+      sub: minPrice != null && maxPrice != null ? `${formatEurCompact(minPrice)} - ${formatEurCompact(maxPrice)}` : undefined,
+      icon: Euro,
       color: 'text-emerald-600 dark:text-emerald-400',
       bg: 'bg-emerald-50 dark:bg-emerald-950/30',
     },
     {
       label: t('marketTracker.avgBsr'),
-      value: avgBsr != null ? avgBsr.toLocaleString() : '--',
+      value: avgBsr != null ? formatBsr(avgBsr) : t('marketResearch.noData'),
       icon: BarChart3,
       color: 'text-amber-600 dark:text-amber-400',
       bg: 'bg-amber-50 dark:bg-amber-950/30',

@@ -101,3 +101,58 @@ def test_comparison_matrix_does_not_score_when_client_value_missing():
     for dimension in matrix["dimensions"]:
         assert dimension["client_rank"] is None
     assert matrix["overall_score"] is None
+
+
+def test_comparison_matrix_excludes_sentinel_prices():
+    """A placeholder price echoed across many listings must not pollute stats.
+
+    Mirrors the real SP-API failure where the same bogus amount (e.g. 6954.0)
+    appears on a large share of unrelated products.
+    """
+    competitor_data = [
+        {"asin": f"B0SENT{i}", "price": 6954.0} for i in range(7)
+    ] + [
+        {"asin": "B0R1", "price": 12.0},
+        {"asin": "B0R2", "price": 14.0},
+        {"asin": "B0R3", "price": 16.0},
+    ]
+    matrix = _matrix(
+        product_snapshot={"asin": "B0CLIENT", "price": 13.0},
+        competitor_data=competitor_data,
+    )
+    price_dim = next(dim for dim in matrix["dimensions"] if dim["name"] == "price")
+
+    # Only the three real prices survive; the sentinel 6954.0 is dropped.
+    assert price_dim["competitors_with_data"] == 3
+    assert price_dim["competitor_max"] == 16.0
+    assert price_dim["competitor_avg"] == 14.0
+
+
+def test_comparison_matrix_excludes_non_positive_prices():
+    """Zero/negative prices are never valid market prices."""
+    matrix = _matrix(
+        product_snapshot={"asin": "B0CLIENT", "price": 10.0},
+        competitor_data=[
+            {"asin": "B0C1", "price": 0.0},
+            {"asin": "B0C2", "price": -5.0},
+            {"asin": "B0C3", "price": 12.0},
+        ],
+    )
+    price_dim = next(dim for dim in matrix["dimensions"] if dim["name"] == "price")
+    assert price_dim["competitors_with_data"] == 1
+    assert price_dim["competitor_avg"] == 12.0
+
+
+def test_comparison_matrix_keeps_legitimate_high_prices():
+    """Distinct premium prices (no repetition) must NOT be filtered."""
+    matrix = _matrix(
+        product_snapshot={"asin": "B0CLIENT", "price": 49.0},
+        competitor_data=[
+            {"asin": "B0C1", "price": 2999.99},  # real premium product
+            {"asin": "B0C2", "price": 39.0},
+            {"asin": "B0C3", "price": 59.0},
+        ],
+    )
+    price_dim = next(dim for dim in matrix["dimensions"] if dim["name"] == "price")
+    assert price_dim["competitors_with_data"] == 3
+    assert price_dim["competitor_max"] == 2999.99

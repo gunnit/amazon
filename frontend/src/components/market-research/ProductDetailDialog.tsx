@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useTranslation } from '@/i18n'
+import { formatEur } from '@/lib/market-research'
 import type { MarketSearchResult } from '@/types'
 
 interface ProductDetailDialogProps {
@@ -19,16 +20,23 @@ interface ProductDetailDialogProps {
   averageBsr: number | null
 }
 
-function formatDiff(value: number, avg: number, lowerIsBetter = false): { text: string; color: string } {
+function formatDiff(
+  value: number,
+  avg: number,
+  lowerIsBetter: boolean,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): { text: string; color: string } {
   const pct = Math.round(((value - avg) / avg) * 100)
   const isGood = lowerIsBetter ? pct < 0 : pct > 0
 
   if (Math.abs(pct) < 3) {
-    return { text: 'At market average', color: 'text-muted-foreground' }
+    return { text: t('marketResearch.closeToAverage'), color: 'text-muted-foreground' }
   }
 
   return {
-    text: `${Math.abs(pct)}% ${pct > 0 ? 'above' : 'below'} market avg`,
+    text: `${Math.abs(pct)}% ${
+      pct > 0 ? t('marketResearch.aboveMarketAverage') : t('marketResearch.belowMarketAverage')
+    }`,
     color: isGood
       ? 'text-emerald-600 dark:text-emerald-400'
       : 'text-red-600 dark:text-red-400',
@@ -48,11 +56,11 @@ export default function ProductDetailDialog({
   if (!product) return null
 
   const priceDiff = product.price != null && averagePrice != null
-    ? formatDiff(product.price, averagePrice, true)
+    ? formatDiff(product.price, averagePrice, true, t)
     : null
 
   const bsrDiff = product.bsr != null && averageBsr != null
-    ? formatDiff(product.bsr, averageBsr, true)
+    ? formatDiff(product.bsr, averageBsr, true, t)
     : null
 
   return (
@@ -96,7 +104,7 @@ export default function ProductDetailDialog({
             <div className="rounded-lg border p-3 space-y-1">
               <p className="text-xs text-muted-foreground">{t('marketResearch.price')}</p>
               <p className="text-lg font-bold">
-                {product.price != null ? `$${product.price.toFixed(2)}` : '--'}
+                {product.price != null ? formatEur(product.price) : '—'}
               </p>
               {priceDiff && (
                 <p className={`text-xs ${priceDiff.color}`}>{priceDiff.text}</p>

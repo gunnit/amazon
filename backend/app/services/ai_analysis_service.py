@@ -14,6 +14,35 @@ def _avg(values: List[Optional[float]]) -> Optional[float]:
     return sum(present) / len(present)
 
 
+def _sanitize_prices(values: List[Optional[float]]) -> List[Optional[float]]:
+    """Drop non-positive and repeated-sentinel prices before averaging.
+
+    SP-API can echo the same placeholder amount across unrelated listings; a
+    price seen on >=3 products and >=30% of the priced set is treated as a
+    sentinel so it doesn't skew the market baseline shown to the model.
+    """
+    positive = [float(v) for v in values if v is not None and float(v) > 0]
+    if len(positive) < 3:
+        return [v if (v is not None and float(v) > 0) else None for v in values]
+
+    counts: dict[float, int] = {}
+    for value in positive:
+        counts[value] = counts.get(value, 0) + 1
+    sentinels = {
+        value
+        for value, count in counts.items()
+        if count >= 3 and count / len(positive) >= 0.3
+    }
+
+    cleaned: List[Optional[float]] = []
+    for v in values:
+        if v is None or float(v) <= 0 or float(v) in sentinels:
+            cleaned.append(None)
+        else:
+            cleaned.append(float(v))
+    return cleaned
+
+
 def _format_metric(value: Optional[float], digits: int = 2) -> str:
     if value is None:
         return "N/A"
@@ -39,7 +68,7 @@ class AIAnalysisService:
         Returns dict with: strengths, weaknesses, recommendations, overall_score, summary
         """
         lang_instruction = "Respond entirely in Italian." if language == "it" else "Respond entirely in English."
-        avg_price = _avg([comp.get("price") for comp in competitor_data])
+        avg_price = _avg(_sanitize_prices([comp.get("price") for comp in competitor_data]))
         avg_bsr = _avg([comp.get("bsr") for comp in competitor_data])
         avg_reviews = _avg([comp.get("review_count") for comp in competitor_data])
         avg_rating = _avg([comp.get("rating") for comp in competitor_data])
