@@ -1077,6 +1077,8 @@ const it: Record<string, string> = {
   'marketResearch.deleteFailed': 'Impossibile eliminare il report',
   'marketResearch.noAiAnalysis': 'Analisi IA non disponibile. Configura ANTHROPIC_API_KEY per abilitarla.',
   'marketResearch.price': 'Prezzo',
+  'marketResearch.priceUnreliable': 'Prezzo non attendibile',
+  'marketResearch.priceUnreliableHint': 'Amazon ha restituito un valore segnaposto ripetuto su più ASIN: non è un prezzo di mercato reale, quindi non viene mostrato.',
   'marketResearch.bsr': 'BSR',
   'marketResearch.reviews': 'Recensioni',
   'marketResearch.rating': 'Valutazione',

@@ -1073,6 +1073,8 @@ const en: Record<string, string> = {
   'marketResearch.deleteFailed': 'Failed to delete report',
   'marketResearch.noAiAnalysis': 'AI analysis not available. Configure ANTHROPIC_API_KEY to enable.',
   'marketResearch.price': 'Price',
+  'marketResearch.priceUnreliable': 'Price not reliable',
+  'marketResearch.priceUnreliableHint': 'Amazon returned a placeholder value repeated across several ASINs: it is not a real market price, so it is hidden.',
   'marketResearch.bsr': 'BSR',
   'marketResearch.reviews': 'Reviews',
   'marketResearch.rating': 'Rating',

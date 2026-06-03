@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { useTranslation } from '@/i18n'
-import { formatEur, formatBsr, usablePrices } from '@/lib/market-research'
+import { formatEur, formatBsr, usablePrices, isUsablePrice } from '@/lib/market-research'
 import type { MarketSearchResult } from '@/types'
 
 interface MarketSearchResultsTableProps {
@@ -186,10 +186,19 @@ export default function MarketSearchResultsTable({
                   ) : '--'}
                 </td>
                 <td className="p-3 text-right">
-                  <div className="flex items-center justify-end">
-                    <span className="font-mono text-xs">{formatEur(result.price)}</span>
-                    {getPriceBadge(result.price)}
-                  </div>
+                  {isUsablePrice(result.price, results) ? (
+                    <div className="flex items-center justify-end">
+                      <span className="font-mono text-xs">{formatEur(result.price)}</span>
+                      {getPriceBadge(result.price)}
+                    </div>
+                  ) : (
+                    <span
+                      className="text-xs text-muted-foreground"
+                      title={t('marketResearch.priceUnreliableHint')}
+                    >
+                      {t('marketResearch.priceUnreliable')}
+                    </span>
+                  )}
                 </td>
                 <td className="p-3 text-right">
                   {getBsrBar(result.bsr)}
