@@ -1014,92 +1014,95 @@ export default function Forecasts() {
                     </div>
                   )}
                 </div>
-              </CardContent>
-            </Card>
 
-            <Card>
-              <CardHeader>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <CardTitle>{t('forecasts.predictionTable')}</CardTitle>
-                    <CardDescription>
-                      {isMonthly
-                        ? t('forecasts.predictionTableDescMonthly')
-                        : t('forecasts.predictionTableDesc')}
-                    </CardDescription>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t('forecasts.predictionTableHelp')}
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPredictionTableOpen((open) => !open)}
-                  >
-                    {predictionTableOpen ? (
-                      <ChevronUp className="mr-1 h-4 w-4" />
-                    ) : (
-                      <ChevronDown className="mr-1 h-4 w-4" />
-                    )}
-                    {predictionTableOpen
-                      ? t('forecasts.hidePredictions')
-                      : t('forecasts.showPredictions')}
-                  </Button>
-                </div>
-              </CardHeader>
-              {predictionTableOpen && (
-                <CardContent className="space-y-3">
-                  {latestForecast.predictions.length > 30 && (
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      {!showAllPredictions ? (
-                        <p className="text-xs text-muted-foreground">
-                          {t('forecasts.showingFirstRows', {
-                            count: visiblePredictions.length,
-                            total: latestForecast.predictions.length,
-                          })}
-                        </p>
+                {/* Forecast values for the ASIN plotted above — collapsible so
+                    the chart stays the focus, but the exact numbers are one
+                    click away in the same context. */}
+                <div className="mt-6 border-t pt-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold">
+                        {latestForecast.asin
+                          ? t('forecasts.predictionTableForAsin', { asin: latestForecast.asin })
+                          : t('forecasts.predictionTable')}
+                      </h3>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t('forecasts.predictionTableHelp')}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPredictionTableOpen((open) => !open)}
+                    >
+                      {predictionTableOpen ? (
+                        <ChevronUp className="mr-1 h-4 w-4" />
                       ) : (
-                        <span />
+                        <ChevronDown className="mr-1 h-4 w-4" />
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setShowAllPredictions((value) => !value)}
-                      >
-                        {showAllPredictions
-                          ? t('forecasts.showLessPredictions')
-                          : t('forecasts.showAllPredictions')}
-                      </Button>
+                      {predictionTableOpen
+                        ? t('forecasts.hidePredictions')
+                        : t('forecasts.showPredictions')}
+                    </Button>
+                  </div>
+
+                  {predictionTableOpen && (
+                    <div className="mt-3 space-y-3">
+                      {latestForecast.predictions.length > 30 && (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          {!showAllPredictions ? (
+                            <p className="text-xs text-muted-foreground">
+                              {t('forecasts.showingFirstRows', {
+                                count: visiblePredictions.length,
+                                total: latestForecast.predictions.length,
+                              })}
+                            </p>
+                          ) : (
+                            <span />
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setShowAllPredictions((value) => !value)}
+                          >
+                            {showAllPredictions
+                              ? t('forecasts.showLessPredictions')
+                              : t('forecasts.showAllPredictions')}
+                          </Button>
+                        </div>
+                      )}
+                      <div className="rounded-md border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>{t('forecasts.date')}</TableHead>
+                              <TableHead className="text-right">{t('forecasts.predictedValue')}</TableHead>
+                              <TableHead className="text-right">{t('forecasts.lowerBound')}</TableHead>
+                              <TableHead className="text-right">{t('forecasts.upperBound')}</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {visiblePredictions.map((prediction) => (
+                              <TableRow key={prediction.date}>
+                                <TableCell>{formatPredictionDate(prediction.date)}</TableCell>
+                                <TableCell className="text-right font-medium">
+                                  {formatCurrency(prediction.predicted_value)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {formatCurrency(prediction.lower_bound)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {formatCurrency(prediction.upper_bound)}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
                     </div>
                   )}
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t('forecasts.date')}</TableHead>
-                        <TableHead className="text-right">{t('forecasts.predictedValue')}</TableHead>
-                        <TableHead className="text-right">{t('forecasts.lowerBound')}</TableHead>
-                        <TableHead className="text-right">{t('forecasts.upperBound')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {visiblePredictions.map((prediction) => (
-                        <TableRow key={prediction.date}>
-                          <TableCell>{formatPredictionDate(prediction.date)}</TableCell>
-                          <TableCell className="text-right font-medium">
-                            {formatCurrency(prediction.predicted_value)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(prediction.lower_bound)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(prediction.upper_bound)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              )}
+                </div>
+              </CardContent>
             </Card>
           </div>
 
