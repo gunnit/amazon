@@ -8,8 +8,10 @@ import {
   Megaphone,
   Package,
   Pencil,
+  ShieldAlert,
   Sparkles,
   Tag,
+  Trash2,
   X,
 } from 'lucide-react'
 import { downloadBlob } from '@/lib/utils'
@@ -37,6 +39,10 @@ const CATEGORIES: StrategicRecommendation['category'][] = [
 ]
 const ALL_GENERATE_ACCOUNTS_VALUE = '__all_generate_accounts__'
 const ALL_GENERATE_PRODUCTS_VALUE = '__all_generate_products__'
+
+const LOOKBACK_AUTO = 'auto'
+const LOOKBACK_OPTIONS = [LOOKBACK_AUTO, '28', '90', '365'] as const
+type LookbackOption = (typeof LOOKBACK_OPTIONS)[number]
 
 function getContextRecord(
   context: StrategicRecommendation['context']
@@ -111,6 +117,7 @@ export default function Recommendations() {
     ALL_GENERATE_ACCOUNTS_VALUE
   )
   const [selectedGenerateAsin, setSelectedGenerateAsin] = useState(ALL_GENERATE_PRODUCTS_VALUE)
+  const [lookback, setLookback] = useState<LookbackOption>(LOOKBACK_AUTO)
 
   const accountsQuery = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -156,12 +163,18 @@ export default function Recommendations() {
     }
   }, [generateProducts, selectedGenerateAsin])
 
+  const listAccountId =
+    selectedGenerateAccountId === ALL_GENERATE_ACCOUNTS_VALUE
+      ? undefined
+      : selectedGenerateAccountId
+
   const listQuery = useQuery({
-    queryKey: ['recommendations', status, category],
+    queryKey: ['recommendations', status, category, listAccountId ?? 'all'],
     queryFn: () =>
       recommendationsApi.list({
         status,
         category: (category as StrategicRecommendation['category']) || undefined,
+        account_id: listAccountId,
       }),
   })
 
@@ -169,7 +182,7 @@ export default function Recommendations() {
     mutationFn: () =>
       recommendationsApi.generate({
         language,
-        lookback_days: 28,
+        lookback_days: lookback === LOOKBACK_AUTO ? null : Number(lookback),
         account_id:
           selectedGenerateAccountId === ALL_GENERATE_ACCOUNTS_VALUE
             ? undefined
@@ -198,6 +211,21 @@ export default function Recommendations() {
     mutationFn: ({ id, nextStatus }: { id: string; nextStatus: StrategicRecommendation['status'] }) =>
       recommendationsApi.updateStatus(id, { status: nextStatus }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recommendations'] }),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => recommendationsApi.remove(id),
+    onSuccess: () => {
+      toast({ title: t('recommendations.deleted') })
+      queryClient.invalidateQueries({ queryKey: ['recommendations'] })
+    },
+    onError: () => {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: t('recommendations.deleteFailed'),
+      })
+    },
   })
 
   const exportMutation = useMutation({
@@ -303,6 +331,27 @@ export default function Recommendations() {
             </Select>
           </div>
 
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {t('recommendations.lookback')}
+            </p>
+            <Select
+              value={lookback}
+              onValueChange={(v) => setLookback(v as LookbackOption)}
+              disabled={generateMutation.isPending}
+            >
+              <SelectTrigger className="w-full sm:w-[220px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={LOOKBACK_AUTO}>{t('recommendations.lookbackAuto')}</SelectItem>
+                <SelectItem value="28">{t('recommendations.lookback28')}</SelectItem>
+                <SelectItem value="90">{t('recommendations.lookback90')}</SelectItem>
+                <SelectItem value="365">{t('recommendations.lookback365')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           <Button onClick={() => generateMutation.mutate()} disabled={generateMutation.isPending}>
             {generateMutation.isPending ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -331,6 +380,8 @@ export default function Recommendations() {
           </Button>
         </div>
       </div>
+
+      <p className="text-xs text-muted-foreground">{t('recommendations.lookbackHint')}</p>
 
       <div className="flex flex-wrap gap-3">
         <Tabs
@@ -393,12 +444,22 @@ export default function Recommendations() {
             return (
               <Card key={rec.id}>
                 <CardHeader className="space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <Badge variant="outline" className="gap-1">
                       {categoryIcon(rec.category)}
                       {t(`recommendations.category.${rec.category}`)}
                     </Badge>
-                    {priorityBadge(rec.priority)}
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant={rec.confidence === 'low' ? 'destructive' : 'secondary'}
+                        className="gap-1"
+                        title={t(`recommendations.confidence.${rec.confidence}`)}
+                      >
+                        {rec.confidence === 'low' && <ShieldAlert className="h-3 w-3" />}
+                        {t(`recommendations.confidence.${rec.confidence}`)}
+                      </Badge>
+                      {priorityBadge(rec.priority)}
+                    </div>
                   </div>
                   <CardTitle className="text-base leading-snug">{rec.title}</CardTitle>
                   <div className="space-y-2 text-xs text-muted-foreground">
@@ -425,6 +486,12 @@ export default function Recommendations() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {rec.confidence === 'low' && (
+                    <p className="flex items-start gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                      <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      {t('recommendations.lowConfidenceNote')}
+                    </p>
+                  )}
                   <div>
                     <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">
                       {t('recommendations.rationale')}
@@ -464,15 +531,31 @@ export default function Recommendations() {
                       </Button>
                     </div>
                   )}
-                  {rec.status !== 'pending' && (
+                  <div className="flex items-center justify-between pt-1">
+                    {rec.status !== 'pending' ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          statusMutation.mutate({ id: rec.id, nextStatus: 'pending' })
+                        }
+                      >
+                        {t('recommendations.reopen')}
+                      </Button>
+                    ) : (
+                      <span />
+                    )}
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => statusMutation.mutate({ id: rec.id, nextStatus: 'pending' })}
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => deleteMutation.mutate(rec.id)}
+                      disabled={deleteMutation.isPending}
                     >
-                      {t('recommendations.reopen')}
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      {t('recommendations.delete')}
                     </Button>
-                  )}
+                  </div>
                 </CardContent>
               </Card>
             )

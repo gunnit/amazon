@@ -16,18 +16,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
-from app.models.amazon_account import AmazonAccount
+from app.models.amazon_account import AccountType, AmazonAccount
 from app.models.inventory import InventoryData
 from app.models.product import Product
 from app.models.sales_data import SalesData
 from app.models.strategic_recommendation import StrategicRecommendation
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.granularity import Granularity, resolve_granularity
 
 logger = logging.getLogger(__name__)
 
 VALID_CATEGORIES = {"pricing", "advertising", "inventory", "content"}
 VALID_STATUSES = {"pending", "implemented", "dismissed"}
 VALID_PRIORITIES = {"high", "medium", "low"}
+VALID_CONFIDENCE = {"high", "medium", "low"}
+
+# Seller (daily) data is dense, so a 4-week window is enough. Vendor (monthly)
+# data lands one settled row per month and routinely trails several weeks, so a
+# 28-day window can be entirely empty for a perfectly healthy account. Default
+# to a quarter for monthly cadence to avoid false "0 sales / stock-out" alarms.
+DEFAULT_LOOKBACK_DAILY = 28
+DEFAULT_LOOKBACK_MONTHLY = 90
+# When the requested window is empty but the account has data further back, fall
+# back through these widths before concluding there is genuinely nothing to say.
+FALLBACK_LOOKBACK_LADDER = [90, 180, 365]
 
 
 def _priority_to_score(priority: Optional[str]) -> int:
@@ -42,6 +54,11 @@ def _sanitize_category(value: Optional[str]) -> str:
 def _sanitize_priority(value: Optional[str]) -> str:
     val = (value or "").strip().lower()
     return val if val in VALID_PRIORITIES else "medium"
+
+
+def _sanitize_confidence(value: Optional[str]) -> str:
+    val = (value or "").strip().lower()
+    return val if val in VALID_CONFIDENCE else "medium"
 
 
 def _normalize_asin(value: Optional[str]) -> Optional[str]:
@@ -65,7 +82,7 @@ class _StrategicRecAnalysisService:
 
 {lang_instruction}
 
-Organization snapshot (last {snapshot.get('lookback_days')} days):
+Organization snapshot (analysis window: {snapshot.get('date_from')} to {snapshot.get('date_to')}, {snapshot.get('lookback_days')} days):
 {json.dumps(snapshot, ensure_ascii=False, indent=2, default=str)}
 
 Return a JSON object with exactly this structure:
@@ -75,8 +92,9 @@ Return a JSON object with exactly this structure:
     {{
       "category": "pricing|advertising|inventory|content",
       "priority": "high|medium|low",
+      "confidence": "high|medium|low",
       "title": "short imperative title (< 90 chars)",
-      "rationale": "why this action follows from the snapshot, quoting concrete numbers",
+      "rationale": "why this action follows from the snapshot, naming the period/account/metric and quoting concrete numbers",
       "expected_impact": "expected business impact with a directional estimate",
       "context": {{"account_id": "<uuid if account-specific, else omit>", "asins": ["B000..."]}}
     }}
@@ -87,6 +105,9 @@ Rules:
 - Produce 3-6 recommendations ordered by priority.
 - Use exactly one of the four categories above per recommendation.
 - Ground every recommendation in the numbers from the snapshot; do not invent data.
+- The snapshot already covers a window appropriate to each account's reporting cadence (`accounts[].cadence`: vendor accounts report monthly, so their data trails by weeks). NEVER infer a stock-out, dead listing, or "0 units sold" problem from an empty or low window: the snapshot's sales totals are the authoritative figures for the window shown. If `data_sufficiency.status` is "insufficient" for an account, do NOT emit any negative/alarm recommendation for it — at most note that more data is needed (confidence "low").
+- Set `confidence` to "low" when the supporting numbers are thin or trailing, "high" only when the window has solid, recent data directly backing the action.
+- In every `rationale`, state the period analysed and the account/metric it is based on.
 - If `snapshot.filters.selected_asin` is present, sales and inventory are scoped to that ASIN.
 - If `snapshot.filters.selected_asin` is present, ads metrics remain account-level unless a field explicitly says they are ASIN-level.
 - If a recommendation targets a single account or ASIN, include those identifiers in `context`.
@@ -115,6 +136,7 @@ Rules:
                 {
                     "category": _sanitize_category(rec.get("category")),
                     "priority": _sanitize_priority(rec.get("priority")),
+                    "confidence": _sanitize_confidence(rec.get("confidence")),
                     "title": (rec.get("title") or "").strip()[:500],
                     "rationale": (rec.get("rationale") or "").strip(),
                     "expected_impact": (rec.get("expected_impact") or "").strip() or None,
@@ -196,13 +218,39 @@ class StrategicRecommendationsService:
         await self.db.refresh(rec)
         return rec
 
+    async def delete(self, rec_id: UUID, org_id: UUID) -> None:
+        rec = await self.get(rec_id, org_id)
+        if rec is None:
+            raise ValueError("Recommendation not found")
+        await self.db.delete(rec)
+        await self.db.flush()
+
+    # -------------------------------------------------------------- cadence
+    async def _resolve_granularity(
+        self, org_id: UUID, account_id: Optional[UUID]
+    ) -> Granularity:
+        account_ids = [account_id] if account_id is not None else None
+        return await resolve_granularity(self.db, org_id, account_ids)
+
+    @staticmethod
+    def _effective_lookback(
+        requested: Optional[int], granularity: Granularity
+    ) -> int:
+        if requested is not None:
+            return requested
+        # `auto`: pick a window that matches the slowest cadence in scope so a
+        # monthly vendor account is never judged on an empty 4-week window.
+        if granularity in (Granularity.MONTHLY, Granularity.MIXED, Granularity.UNKNOWN):
+            return DEFAULT_LOOKBACK_MONTHLY
+        return DEFAULT_LOOKBACK_DAILY
+
     # --------------------------------------------------------------- generate
     async def generate_for_organization(
         self,
         org_id: UUID,
         *,
         user_id: Optional[UUID] = None,
-        lookback_days: int = 28,
+        lookback_days: Optional[int] = None,
         language: str = "en",
         account_id: Optional[UUID] = None,
         asin: Optional[str] = None,
@@ -212,11 +260,17 @@ class StrategicRecommendationsService:
             raise RuntimeError("ANTHROPIC_API_KEY not configured")
 
         normalized_asin = _normalize_asin(asin)
+
+        granularity = await self._resolve_granularity(org_id, account_id)
+        effective_lookback = self._effective_lookback(lookback_days, granularity)
+
         snapshot = await self._build_org_snapshot(
             org_id,
-            lookback_days,
+            effective_lookback,
             account_id=account_id,
             asin=normalized_asin,
+            granularity=granularity,
+            lookback_requested=lookback_days,
         )
         if not snapshot["accounts"]:
             logger.info("No accounts found for org %s; skipping generation", org_id)
@@ -263,6 +317,7 @@ class StrategicRecommendationsService:
                 category=rec["category"],
                 priority=rec["priority"],
                 priority_score=_priority_to_score(rec["priority"]),
+                confidence=rec.get("confidence", "medium"),
                 title=rec["title"],
                 rationale=rec["rationale"],
                 expected_impact=rec["expected_impact"],
@@ -285,9 +340,10 @@ class StrategicRecommendationsService:
         *,
         account_id: Optional[UUID] = None,
         asin: Optional[str] = None,
+        granularity: Optional[Granularity] = None,
+        lookback_requested: Optional[int] = None,
     ) -> Dict[str, Any]:
         today = date.today()
-        start_date = today - timedelta(days=lookback_days)
 
         normalized_asin = _normalize_asin(asin)
         accounts_stmt = select(AmazonAccount).where(AmazonAccount.organization_id == org_id)
@@ -299,10 +355,21 @@ class StrategicRecommendationsService:
             raise LookupError("Account not found")
         account_ids = [a.id for a in accounts]
 
+        # If the requested window is empty but the account has data further back,
+        # widen it instead of feeding the AI an all-zero snapshot (which is what
+        # produced false "0 sales / stock-out" alarms for monthly vendor data).
+        lookback_days, data_sufficiency = await self._resolve_window(
+            account_ids, lookback_days, today
+        )
+        start_date = today - timedelta(days=lookback_days)
+
         snapshot: Dict[str, Any] = {
             "lookback_days": lookback_days,
+            "lookback_requested": lookback_requested,
+            "granularity": (granularity or Granularity.UNKNOWN).value,
             "date_from": start_date.isoformat(),
             "date_to": today.isoformat(),
+            "data_sufficiency": data_sufficiency,
             "filters": {
                 "account_id": str(account_id) if account_id is not None else None,
                 "selected_asin": normalized_asin,
@@ -483,6 +550,11 @@ class StrategicRecommendationsService:
                     "account_id": str(account.id),
                     "name": account.account_name,
                     "marketplace": account.marketplace_country,
+                    "cadence": (
+                        "monthly"
+                        if account.account_type == AccountType.VENDOR
+                        else "daily"
+                    ),
                     "sales": sales,
                     "ads": ads,
                     "low_stock_skus": (
@@ -494,3 +566,81 @@ class StrategicRecommendationsService:
 
         snapshot["top_asins_by_revenue"] = top_asins
         return snapshot
+
+    async def _resolve_window(
+        self,
+        account_ids: List[UUID],
+        lookback_days: int,
+        today: date,
+    ) -> tuple[int, Dict[str, Any]]:
+        """Pick a window with data and report how trustworthy it is.
+
+        Returns the (possibly widened) lookback plus a ``data_sufficiency`` block
+        so the AI can tell apart "genuinely zero sales" from "the window simply
+        predates the latest settled data" — the latter must never trigger a
+        negative alarm.
+        """
+        if not account_ids:
+            return lookback_days, {"status": "no_accounts"}
+
+        latest = await self._latest_sales_date(account_ids)
+        if latest is None:
+            return lookback_days, {
+                "status": "no_data",
+                "latest_sale_date": None,
+                "lookback_days": lookback_days,
+            }
+
+        ladders = [lookback_days] + [
+            days for days in FALLBACK_LOOKBACK_LADDER if days > lookback_days
+        ]
+        for window in ladders:
+            start = today - timedelta(days=window)
+            units = await self._units_in_window(account_ids, start, today)
+            if units > 0:
+                widened = window != lookback_days
+                return window, {
+                    "status": "ok",
+                    "latest_sale_date": latest.isoformat(),
+                    "requested_lookback_days": lookback_days,
+                    "lookback_days": window,
+                    "window_widened": widened,
+                    "note": (
+                        "Requested window had no sales; widened to the most recent "
+                        "window with settled data."
+                        if widened
+                        else None
+                    ),
+                }
+
+        return lookback_days, {
+            "status": "insufficient",
+            "latest_sale_date": latest.isoformat(),
+            "lookback_days": lookback_days,
+            "note": (
+                "No sales within the analysed windows; latest settled data is "
+                f"{latest.isoformat()}. Do not infer stock-outs or dead listings."
+            ),
+        }
+
+    async def _latest_sales_date(self, account_ids: List[UUID]) -> Optional[date]:
+        result = await self.db.execute(
+            select(func.max(SalesData.date)).where(
+                SalesData.account_id.in_(account_ids),
+                SalesData.asin != DAILY_TOTAL_ASIN,
+            )
+        )
+        return result.scalar()
+
+    async def _units_in_window(
+        self, account_ids: List[UUID], start: date, end: date
+    ) -> int:
+        result = await self.db.execute(
+            select(func.coalesce(func.sum(SalesData.units_ordered), 0)).where(
+                SalesData.account_id.in_(account_ids),
+                SalesData.asin != DAILY_TOTAL_ASIN,
+                SalesData.date >= start,
+                SalesData.date <= end,
+            )
+        )
+        return int(result.scalar() or 0)

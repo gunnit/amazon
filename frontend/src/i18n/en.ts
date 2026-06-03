@@ -1489,6 +1489,21 @@ const en: Record<string, string> = {
   'recommendations.exportSuccess': 'Recommendations exported',
   'recommendations.exportFailed': 'Export failed',
   'recommendations.exportFailedDesc': 'Could not generate the recommendations report.',
+  'recommendations.lookback': 'Analysis window',
+  'recommendations.lookbackAuto': 'Auto (by account cadence)',
+  'recommendations.lookback28': 'Last 28 days',
+  'recommendations.lookback90': 'Last 90 days',
+  'recommendations.lookback365': 'Last 12 months',
+  'recommendations.lookbackHint':
+    'Vendor (monthly) accounts need a wider window than daily Seller accounts. "Auto" picks one that matches the selected account.',
+  'recommendations.confidence': 'Confidence',
+  'recommendations.confidence.high': 'High confidence',
+  'recommendations.confidence.medium': 'Medium confidence',
+  'recommendations.confidence.low': 'Low confidence',
+  'recommendations.lowConfidenceNote': 'Based on limited or trailing data — review before acting.',
+  'recommendations.delete': 'Delete',
+  'recommendations.deleted': 'Recommendation deleted',
+  'recommendations.deleteFailed': 'Could not delete the recommendation.',
 
   // Advertising page
   'nav.advertising': 'Advertising',

@@ -32,6 +32,7 @@ TR = {
         "details_sheet": "Recommendations",
         "category": "Category",
         "priority": "Priority",
+        "confidence": "Confidence",
         "title": "Title",
         "rationale": "Rationale",
         "expected_impact": "Expected impact",
@@ -60,6 +61,7 @@ TR = {
         "details_sheet": "Raccomandazioni",
         "category": "Categoria",
         "priority": "Priorità",
+        "confidence": "Affidabilità",
         "title": "Titolo",
         "rationale": "Motivazione",
         "expected_impact": "Impatto atteso",
@@ -74,6 +76,16 @@ TR = {
         "metric": "Metrica",
         "value": "Valore",
     },
+}
+
+STATUS_LABELS = {
+    "en": {"pending": "Pending", "implemented": "Implemented", "dismissed": "Dismissed"},
+    "it": {"pending": "In sospeso", "implemented": "Implementata", "dismissed": "Scartata"},
+}
+
+CONFIDENCE_LABELS = {
+    "en": {"high": "High", "medium": "Medium", "low": "Low"},
+    "it": {"high": "Alta", "medium": "Media", "low": "Bassa"},
 }
 
 CATEGORY_LABELS = {
@@ -147,6 +159,8 @@ def build_recommendations_workbook_bytes(
     t = TR[lang]
     cat_labels = CATEGORY_LABELS[lang]
     pri_labels = PRIORITY_LABELS[lang]
+    status_labels = STATUS_LABELS[lang]
+    conf_labels = CONFIDENCE_LABELS[lang]
 
     items = list(recommendations)
 
@@ -209,6 +223,7 @@ def build_recommendations_workbook_bytes(
     detail_columns = [
         "category",
         "priority",
+        "confidence",
         "title",
         "rationale",
         "expected_impact",
@@ -220,6 +235,7 @@ def build_recommendations_workbook_bytes(
     detail_headers = [
         t["category"],
         t["priority"],
+        t["confidence"],
         t["title"],
         t["rationale"],
         t["expected_impact"],
@@ -241,12 +257,16 @@ def build_recommendations_workbook_bytes(
             {
                 "category": cat_labels.get(rec.category, rec.category),
                 "priority": pri_labels.get(rec.priority, rec.priority),
+                "confidence": conf_labels.get(
+                    getattr(rec, "confidence", "medium"),
+                    getattr(rec, "confidence", "medium"),
+                ),
                 "title": rec.title,
                 "rationale": rec.rationale,
                 "expected_impact": rec.expected_impact or t["no_value"],
                 "scope_account": scoped_account_label,
                 "scope_asin": scoped_asin_label,
-                "status": rec.status,
+                "status": status_labels.get(rec.status, rec.status),
                 "generated": (
                     rec.generated_at.strftime("%Y-%m-%d %H:%M")
                     if rec.generated_at

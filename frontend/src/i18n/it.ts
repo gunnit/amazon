@@ -1493,6 +1493,21 @@ const it: Record<string, string> = {
   'recommendations.exportSuccess': 'Raccomandazioni esportate',
   'recommendations.exportFailed': 'Esportazione fallita',
   'recommendations.exportFailedDesc': 'Impossibile generare il report delle raccomandazioni.',
+  'recommendations.lookback': 'Finestra di analisi',
+  'recommendations.lookbackAuto': 'Auto (in base alla cadenza account)',
+  'recommendations.lookback28': 'Ultimi 28 giorni',
+  'recommendations.lookback90': 'Ultimi 90 giorni',
+  'recommendations.lookback365': 'Ultimi 12 mesi',
+  'recommendations.lookbackHint':
+    'Gli account Vendor (mensili) richiedono una finestra più ampia rispetto ai Seller (giornalieri). "Auto" sceglie quella adatta all\'account selezionato.',
+  'recommendations.confidence': 'Affidabilità',
+  'recommendations.confidence.high': 'Affidabilità alta',
+  'recommendations.confidence.medium': 'Affidabilità media',
+  'recommendations.confidence.low': 'Affidabilità bassa',
+  'recommendations.lowConfidenceNote': 'Basata su dati limitati o non recenti — verifica prima di agire.',
+  'recommendations.delete': 'Elimina',
+  'recommendations.deleted': 'Raccomandazione eliminata',
+  'recommendations.deleteFailed': 'Impossibile eliminare la raccomandazione.',
 
   // Advertising page
   'nav.advertising': 'Pubblicità',

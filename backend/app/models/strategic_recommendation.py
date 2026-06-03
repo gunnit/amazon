@@ -34,6 +34,7 @@ class StrategicRecommendation(Base):
     category: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     priority: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
     priority_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    confidence: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
 
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     rationale: Mapped[str] = mapped_column(Text, nullable=False)

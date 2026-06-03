@@ -772,6 +772,7 @@ export interface StrategicRecommendation {
   category: 'pricing' | 'advertising' | 'inventory' | 'content'
   priority: 'high' | 'medium' | 'low'
   priority_score: number
+  confidence: 'high' | 'medium' | 'low'
   title: string
   rationale: string
   expected_impact: string | null
@@ -814,8 +815,12 @@ export const recommendationsApi = {
     return response.data
   },
 
+  remove: async (id: string): Promise<void> => {
+    await api.delete(`/recommendations/${id}`)
+  },
+
   generate: async (payload?: {
-    lookback_days?: number
+    lookback_days?: number | null
     language?: 'en' | 'it'
     account_id?: string
     asin?: string

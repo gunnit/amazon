@@ -81,6 +81,20 @@ async def update_recommendation_status(
     return rec
 
 
+@router.delete("/{rec_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_recommendation(
+    rec_id: UUID,
+    db: DbSession,
+    org: CurrentOrganization,
+):
+    service = StrategicRecommendationsService(db)
+    try:
+        await service.delete(rec_id, org.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    await db.commit()
+
+
 @router.post(
     "/generate",
     response_model=StrategicRecommendationGenerateResponse,
