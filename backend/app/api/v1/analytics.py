@@ -1381,6 +1381,19 @@ async def get_per_product_performance(
     count_query = select(func.count()).select_from(base.subquery())
     total = int((await db.execute(count_query)).scalar() or 0)
 
+    # Full catalog size for the scoped accounts, so the UI can clarify that the
+    # period-scoped list ("products with sales in the period") is a subset.
+    catalog_total = int(
+        (
+            await db.execute(
+                select(func.count(func.distinct(Product.asin))).where(
+                    Product.account_id.in_(accounts_query)
+                )
+            )
+        ).scalar()
+        or 0
+    )
+
     sort_expr = {
         "total_revenue": sales_subq.c.total_revenue,
         "total_units": sales_subq.c.total_units,
@@ -1416,7 +1429,9 @@ async def get_per_product_performance(
         )
         for row in rows
     ]
-    return PaginatedProductPerformance(items=items, total=total, offset=offset, limit=limit)
+    return PaginatedProductPerformance(
+        items=items, total=total, offset=offset, limit=limit, catalog_total=catalog_total
+    )
 
 
 @router.get("/product-trends", response_model=ProductTrendsResponse)

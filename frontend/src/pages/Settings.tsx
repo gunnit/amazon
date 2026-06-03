@@ -19,8 +19,17 @@ import { useAuthStore } from '@/store/authStore'
 import { authApi, exportsApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
 import { GoogleSheetsIntegration } from '@/components/settings/GoogleSheetsIntegration'
+import { cn } from '@/lib/utils'
 import type { Language } from '@/store/languageStore'
 import type { ApiKeysResponse } from '@/types'
+
+function maskArn(arn: string): string {
+  // arn:aws:iam::905355900769:role/API -> arn:aws:iam::•••••••••769:role/API
+  return arn.replace(/(arn:aws:iam::)(\d+)(:role\/.*)/, (_, prefix, account, suffix) => {
+    const tail = account.slice(-3)
+    return `${prefix}${'•'.repeat(Math.max(account.length - 3, 0))}${tail}${suffix}`
+  })
+}
 
 export default function Settings() {
   const { user, organization } = useAuthStore()
@@ -54,6 +63,12 @@ export default function Settings() {
   const { data: savedNotifications } = useQuery({
     queryKey: ['notification-preferences'],
     queryFn: () => authApi.getNotificationPreferences(),
+  })
+
+  // Real outbound-email delivery state (SendGrid config + sender).
+  const { data: emailStatus } = useQuery({
+    queryKey: ['email-status'],
+    queryFn: () => authApi.getEmailStatus(),
   })
 
   useEffect(() => {
@@ -444,7 +459,7 @@ export default function Settings() {
                     { label: t('settings.clientSecret'), set: savedApiKeys.has_client_secret },
                     { label: t('settings.awsAccessKey'), set: !!savedApiKeys.sp_api_aws_access_key, value: savedApiKeys.sp_api_aws_access_key },
                     { label: t('settings.awsSecretKey'), set: savedApiKeys.has_aws_secret_key },
-                    { label: t('settings.roleArn'), set: !!savedApiKeys.sp_api_role_arn, value: savedApiKeys.sp_api_role_arn },
+                    { label: t('settings.roleArn'), set: !!savedApiKeys.sp_api_role_arn, value: savedApiKeys.sp_api_role_arn ? maskArn(savedApiKeys.sp_api_role_arn) : undefined },
                     { label: t('accounts.adsClientId'), set: !!savedApiKeys.advertising_client_id, value: savedApiKeys.advertising_client_id },
                     { label: t('accounts.adsClientSecret'), set: savedApiKeys.has_advertising_client_secret },
                   ]
@@ -539,7 +554,7 @@ export default function Settings() {
                     id="roleArn"
                     value={apiKeys.sp_api_role_arn}
                     onChange={(e) => setApiKeys({ ...apiKeys, sp_api_role_arn: e.target.value })}
-                    placeholder={savedApiKeys?.sp_api_role_arn || 'arn:aws:iam::123456789:role/sp-api'}
+                    placeholder={savedApiKeys?.sp_api_role_arn ? maskArn(savedApiKeys.sp_api_role_arn) : 'arn:aws:iam::123456789:role/sp-api'}
                   />
                   <p className="text-xs text-muted-foreground">
                     {t('settings.roleArnHelp')}
@@ -606,6 +621,32 @@ export default function Settings() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {emailStatus && (
+                <div
+                  className={cn(
+                    'flex items-start gap-2 rounded-md border p-3 text-sm',
+                    emailStatus.status === 'configured'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : 'border-amber-200 bg-amber-50 text-amber-800',
+                  )}
+                >
+                  {emailStatus.status === 'configured' ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  )}
+                  <div>
+                    <p className="font-medium">
+                      {emailStatus.status === 'configured'
+                        ? t('settings.emailDeliveryConfigured')
+                        : t('settings.emailDeliveryMissing')}
+                    </p>
+                    {emailStatus.detail && (
+                      <p className="mt-0.5 text-xs opacity-90">{emailStatus.detail}</p>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-medium">{t('settings.dailyDigest')}</p>

@@ -407,6 +407,22 @@ async def update_report_schedule(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
 
+@router.delete("/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_report_schedule(
+    schedule_id: UUID,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """Delete a scheduled report and its run history."""
+    service = ScheduledReportService(db)
+    schedule = await service.get_schedule(schedule_id, organization.id)
+    if not schedule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduled report not found")
+    await service.delete_schedule(schedule)
+    await db.commit()
+
+
 @router.post("/schedules/{schedule_id}/toggle", response_model=ScheduledReportResponse)
 async def toggle_report_schedule(
     schedule_id: UUID,

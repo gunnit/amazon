@@ -47,6 +47,8 @@ import {
 } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
+import { granularityForSelection } from '@/lib/granularity'
+import { GranularityBadge } from '@/components/GranularityBadge'
 import ProductTrendBadge from '@/components/analytics/ProductTrendBadge'
 import ProductTrendSparkline from '@/components/analytics/ProductTrendSparkline'
 import TrendInsightsCard from '@/components/analytics/TrendInsightsCard'
@@ -408,12 +410,13 @@ export default function Analytics() {
   })
 
   const { data: adsVsOrganicData, isLoading: adsVsOrganicLoading } = useQuery<AdsVsOrganicResponse>({
-    queryKey: ['ads-vs-organic', dateRange, trendAccountIds, analyticsGroupBy, selectedAsin],
+    queryKey: ['ads-vs-organic', dateRange, trendAccountIds, analyticsGroupBy, selectedAsin, language],
     queryFn: () => analyticsApi.getAdsVsOrganic({
       date_from: dateRange.start,
       date_to: dateRange.end,
       group_by: analyticsGroupBy,
       account_ids: trendAccountIds.length > 0 ? trendAccountIds : undefined,
+      language,
       ...(selectedAsin !== ALL_ASINS_VALUE ? { asin: selectedAsin } : {}),
     }),
     enabled: activeTab === 'ads-vs-organic',
@@ -428,6 +431,7 @@ export default function Analytics() {
   const adsScopedAccounts = trendAccountIds.length > 0
     ? accountsList.filter((account) => trendAccountIds.includes(account.id))
     : accountsList
+  const adsGranularity = granularityForSelection(accountsList, trendAccountIds)
   const showNoAdsBanner =
     adsScopedAccounts.length > 0 &&
     adsScopedAccounts.every((account) => resolveAdsState(account) !== 'ok')
@@ -528,9 +532,12 @@ export default function Analytics() {
     topProductsChartData.map((product) => Number(product.total_revenue) || 0)
   )
 
+  // The backend may force a monthly cadence for vendor-only data, so label the
+  // buckets with the group_by it actually returned, not the requested one.
+  const adsEffectiveGroupBy = adsVsOrganicData?.group_by ?? analyticsGroupBy
   const adsChartData = (adsVsOrganicData?.time_series || []).map((point) => ({
     ...point,
-    displayDate: formatTimeBucketLabel(point.date, analyticsGroupBy, language),
+    displayDate: formatTimeBucketLabel(point.date, adsEffectiveGroupBy, language),
     chartTotal: point.ad_sales + point.organic_sales,
   }))
   const adsChartAxisMax = getChartAxisMax(
@@ -570,7 +577,12 @@ export default function Analytics() {
           <AccountFilter />
           {activeTab === 'ads-vs-organic' ? (
             <>
-              <GroupByFilter value={analyticsGroupBy} onChange={setAnalyticsGroupBy} />
+              <GroupByFilter
+                value={analyticsGroupBy}
+                onChange={setAnalyticsGroupBy}
+                granularity={adsGranularity}
+              />
+              <GranularityBadge granularity={adsGranularity} />
               <Select value={selectedAsin} onValueChange={setSelectedAsin}>
                 <SelectTrigger className="h-9 w-[220px] text-sm">
                   <SelectValue placeholder={t('analytics.asinFilter')} />
@@ -1475,7 +1487,12 @@ export default function Analytics() {
                       <CardTitle>{t('analytics.topAsinSales')}</CardTitle>
                       <CardDescription>{t('analytics.topAsinSalesDesc')}</CardDescription>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className="space-y-3">
+                      {(adsVsOrganicData?.breakdown_notes || []).map((note, idx) => (
+                        <p key={idx} className="text-xs text-muted-foreground">
+                          {note}
+                        </p>
+                      ))}
                       <AsinBreakdownList
                         items={(adsVsOrganicData?.asin_breakdown || []).slice(0, 8)}
                         onSelectAsin={setSelectedAsin}

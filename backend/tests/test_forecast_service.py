@@ -47,10 +47,9 @@ def _rows(count: int, start: date) -> list[SimpleNamespace]:
 
 
 @pytest.mark.asyncio
-async def test_generate_forecast_retries_with_longer_lookback_for_asin():
+async def test_generate_forecast_for_asin_with_limited_daily_history():
     account_id = uuid4()
     session = FakeAsyncSession([
-        _rows(6, date(2026, 1, 1)),
         _rows(15, date(2025, 10, 1)),
     ])
     service = ForecastService(session)  # type: ignore[arg-type]
@@ -62,7 +61,7 @@ async def test_generate_forecast_retries_with_longer_lookback_for_asin():
         model="simple",
     )
 
-    assert session.execute_calls == 2
+    assert session.execute_calls == 1
     assert session.flushed is True
     assert session.refreshed is True
     assert forecast.asin == "B0TESTASIN"
@@ -73,10 +72,9 @@ async def test_generate_forecast_retries_with_longer_lookback_for_asin():
 
 
 @pytest.mark.asyncio
-async def test_generate_forecast_still_fails_when_asin_history_is_insufficient():
+async def test_generate_forecast_fails_when_history_is_insufficient():
     account_id = uuid4()
     session = FakeAsyncSession([
-        _rows(3, date(2026, 1, 1)),
         _rows(5, date(2025, 10, 1)),
     ])
     service = ForecastService(session)  # type: ignore[arg-type]
@@ -89,7 +87,7 @@ async def test_generate_forecast_still_fails_when_asin_history_is_insufficient()
             model="simple",
         )
 
-    assert session.execute_calls == 2
+    assert session.execute_calls == 1
     assert session.added == []
 
 
@@ -116,6 +114,57 @@ async def test_generate_forecast_sets_confidence_level_from_mape(monkeypatch):
     assert forecast.confidence_level == "high"
     assert forecast.data_quality_notes is not None
     assert "Less than 28 days of data" in forecast.data_quality_notes
+
+
+def _monthly_rows(start: date, count: int) -> list[SimpleNamespace]:
+    """One row per calendar month, values cycling to look like real sales."""
+    rows = []
+    for i in range(count):
+        month_index = (start.year * 12 + start.month - 1) + i
+        d = date(month_index // 12, month_index % 12 + 1, 1)
+        rows.append(SimpleNamespace(date=d, value=5000 + (i % 6) * 500))
+    return rows
+
+
+@pytest.mark.asyncio
+async def test_monthly_forecast_projects_into_the_future_when_data_is_stale():
+    """A stale vendor series must never emit a single point in the past — the
+    forecast has to start at the current month and go forward."""
+    account_id = uuid4()
+    # 24 months ending two months before today, so the last data month is stale.
+    today = date.today().replace(day=1)
+    last_data = date(
+        (today.year * 12 + today.month - 1 - 2) // 12,
+        (today.year * 12 + today.month - 1 - 2) % 12 + 1,
+        1,
+    )
+    start = date(
+        (last_data.year * 12 + last_data.month - 1 - 23) // 12,
+        (last_data.year * 12 + last_data.month - 1 - 23) % 12 + 1,
+        1,
+    )
+    session = FakeAsyncSession([_monthly_rows(start, 24)])
+    service = ForecastService(session)  # type: ignore[arg-type]
+
+    forecast = await service.generate_forecast(
+        account_id=account_id,
+        asin=None,
+        horizon_days=90,
+        model="prophet",
+    )
+
+    assert forecast.model_used == "monthly"
+    pred_dates = [
+        date.fromisoformat(p["date"]) if isinstance(p["date"], str) else p["date"]
+        for p in forecast.predictions
+    ]
+    assert len(pred_dates) == 3
+    # First prediction is the current month, every prediction is >= today.
+    assert pred_dates[0] == today
+    assert all(d >= today for d in pred_dates)
+    # Months are consecutive and forward.
+    assert pred_dates == sorted(pred_dates)
+    assert pred_dates[0] != pred_dates[1]
 
 
 @pytest.mark.asyncio

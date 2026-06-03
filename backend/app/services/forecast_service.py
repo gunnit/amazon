@@ -56,19 +56,33 @@ class ForecastService:
             strategy = self._choose_monthly_strategy(n_points)
             chosen_model = strategy["model"]
             horizon_months = max(1, round(horizon_days / 30))
+            # Anchor so the first predicted month (anchor + 1) is the later of:
+            #   - the month after the last real data point, and
+            #   - the current month.
+            # This keeps a stale vendor series projecting into the future (the
+            # current month onward) instead of emitting a point already in the
+            # past, while a fresh series still starts the month after its data.
+            last_month = max(date(d["date"].year, d["date"].month, 1) for d in historical_data)
+            prev_month = self._add_month(date.today().replace(day=1), -1)
+            anchor_month = max(last_month, prev_month)
             logger.info(
                 f"Forecast strategy: {strategy['label']} | {n_points} monthly points | "
-                f"model={chosen_model} | horizon={horizon_months}mo (requested {horizon_days}d)"
+                f"model={chosen_model} | horizon={horizon_months}mo (requested {horizon_days}d) | "
+                f"anchor={anchor_month.isoformat()}"
             )
-            predictions = self._monthly_forecast(historical_data, horizon_months)
+            predictions = self._monthly_forecast(
+                historical_data, horizon_months, anchor_month=anchor_month
+            )
             mape, rmse = self._monthly_metrics(historical_data)
             confidence_level = self._determine_confidence_level(
                 mape, n_points=n_points, values=[d["value"] for d in historical_data]
             )
-            data_quality_notes = self._build_monthly_quality_notes(historical_data, mape)
-            # Predictions are calendar months (see quality note), but the stored
-            # horizon mirrors the requested span so the UI label stays meaningful.
-            horizon_days_stored = horizon_days
+            data_quality_notes = self._build_monthly_quality_notes(
+                historical_data, mape, last_month=last_month
+            )
+            # Predictions are calendar months. Store the actual forward span in
+            # days (≈30 per month) so the UI/exports describe the real horizon.
+            horizon_days_stored = horizon_months * 30
         else:
             # Daily cadence: fill gaps for a continuous series, then use Prophet.
             historical_data = self._fill_date_gaps(historical_data)
@@ -96,7 +110,9 @@ class ForecastService:
                 predictions = self._simple_forecast(historical_data, simple_horizon)
 
             mape, rmse = await self._calculate_metrics(historical_data, chosen_model, strategy)
-            confidence_level = self._determine_confidence_level(mape)
+            confidence_level = self._determine_confidence_level(
+                mape, n_points=n_days, values=[d["value"] for d in historical_data]
+            )
             data_quality_notes = self._build_data_quality_notes(historical_data, strategy, mape)
             horizon_days_stored = len(predictions)
 
@@ -184,10 +200,17 @@ class ForecastService:
         self,
         historical_data: List[Dict],
         horizon_months: int,
+        anchor_month: Optional[date] = None,
     ) -> List[Dict]:
         """Forecast a monthly series via month-of-year seasonal averages with a
         damped level adjustment. Predictions stay in the ballpark of recent
-        monthly sales and never go negative."""
+        monthly sales and never go negative.
+
+        Predictions always start at the month after ``anchor_month`` (the first
+        of that month). The anchor defaults to the last historical month, but
+        callers pass the current month when the data is stale so the forecast
+        projects into the future instead of emitting months already in the past.
+        """
         # Normalize to one value per calendar month (last 24 months matter most).
         by_month: Dict[date, float] = {}
         for d in historical_data:
@@ -221,11 +244,17 @@ class ForecastService:
         )
 
         last_month = months_sorted[-1] if months_sorted else date.today().replace(day=1)
+        start_from = anchor_month or last_month
+        # The number of damping steps reflects distance from the last *real*
+        # month, so a stale series does not reset the level offset to full
+        # strength on the first projected month.
+        damping_base = self._month_distance(last_month, start_from)
         predictions = []
         for i in range(1, horizon_months + 1):
-            pred_date = self._add_month(last_month, i)
+            pred_date = self._add_month(start_from, i)
             base = moy_avg.get(pred_date.month) or overall_avg
-            value = max(0.0, base + level_offset * (0.6 ** (i - 1)))
+            steps = damping_base + i - 1
+            value = max(0.0, base + level_offset * (0.6 ** steps))
             predictions.append({
                 "date": pred_date.isoformat(),
                 "value": round(value, 2),
@@ -233,6 +262,11 @@ class ForecastService:
                 "upper": round(value + 1.96 * std_dev, 2),
             })
         return predictions
+
+    @staticmethod
+    def _month_distance(a: date, b: date) -> int:
+        """Whole-month distance from ``a`` to ``b`` (>= 0)."""
+        return max(0, (b.year * 12 + b.month) - (a.year * 12 + a.month))
 
     def _monthly_metrics(
         self,
@@ -267,11 +301,29 @@ class ForecastService:
         self,
         historical_data: List[Dict],
         mape: Optional[float],
+        last_month: Optional[date] = None,
     ) -> List[str]:
         notes: List[str] = ["Monthly vendor data — values represent calendar months, not days"]
-        n_points = len(historical_data)
-        if n_points < 24:
+        # Distinct calendar months drive reliability, not raw row count (a month
+        # can carry several intra-month rows for vendor series).
+        n_months = len({date(d["date"].year, d["date"].month, 1) for d in historical_data})
+        if n_months < 12:
+            notes.append("Short history — fewer than 12 months limits reliability")
+        elif n_months < 24:
             notes.append("Less than 24 months of history")
+
+        values = [d["value"] for d in historical_data]
+        mean_val = sum(values) / len(values) if values else 0.0
+        if mean_val > 0:
+            std_dev = (sum((v - mean_val) ** 2 for v in values) / len(values)) ** 0.5
+            if std_dev / mean_val >= 0.5:
+                notes.append("High month-to-month variability lowers reliability")
+
+        if last_month is not None:
+            stale_months = self._month_distance(last_month, date.today().replace(day=1))
+            if stale_months >= 2:
+                notes.append("Latest data is over a month old — forecast starts from the current month")
+
         if mape is None:
             notes.append("Historical validation unavailable")
         elif mape >= 30:
@@ -537,7 +589,10 @@ class ForecastService:
         reported as 'high' on the basis of an unvalidatable metric. Fall back
         to a data-driven level from history length and variance instead.
         """
-        if mape is None:
+        # A MAPE of exactly 0 means the holdout predictions matched actuals
+        # perfectly — for real sales that is a degenerate/uninformative holdout,
+        # not genuine accuracy. Don't let it inflate confidence to "high".
+        if mape is None or mape <= 0:
             if not n_points:
                 return None
             cv = 0.0

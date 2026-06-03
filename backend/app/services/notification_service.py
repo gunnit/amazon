@@ -5,12 +5,24 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Actionable error states surfaced to operators and the UI (Italian copy).
+EMAIL_ERROR_NOT_CONFIGURED = "Invio email non configurato: chiave SendGrid mancante sul server."
+
+
+def _sender_unverified_message(from_email: str) -> str:
+    return (
+        f"Mittente {from_email} non verificato su SendGrid: "
+        "verifica la Sender Identity sull'account SendGrid per abilitare l'invio."
+    )
+
 
 class NotificationService:
     """Service for sending notifications."""
 
     def __init__(self, sendgrid_api_key: Optional[str] = None):
         self.sendgrid_api_key = sendgrid_api_key
+        # Holds the actionable reason for the most recent failed send, or None.
+        self.last_error: Optional[str] = None
 
     async def send_email(
         self,
@@ -20,9 +32,17 @@ class NotificationService:
         from_email: str = "noreply@niuexa.ai",
         attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
-        """Send email using SendGrid."""
+        """Send email using SendGrid.
+
+        On failure, ``self.last_error`` carries an actionable Italian message
+        (e.g. an unverified sender) so callers can show it instead of a
+        generic "failed".
+        """
+        self.last_error = None
+
         if not self.sendgrid_api_key:
             logger.warning("SendGrid API key not configured")
+            self.last_error = EMAIL_ERROR_NOT_CONFIGURED
             return False
 
         try:
@@ -48,11 +68,34 @@ class NotificationService:
             sg = SendGridAPIClient(self.sendgrid_api_key)
             response = sg.send(message)
 
-            return response.status_code in [200, 201, 202]
+            if response.status_code in [200, 201, 202]:
+                return True
+
+            self.last_error = f"SendGrid ha risposto con stato {response.status_code}."
+            logger.warning("SendGrid send returned status %s", response.status_code)
+            return False
 
         except Exception as e:
-            logger.exception(f"Failed to send email: {e}")
+            self.last_error = self._classify_send_error(e, from_email)
+            logger.error("Failed to send email via SendGrid: %s", self.last_error)
             return False
+
+    @staticmethod
+    def _classify_send_error(error: Exception, from_email: str) -> str:
+        """Turn a raw SendGrid exception into an actionable Italian message."""
+        status_code = getattr(error, "status_code", None)
+        body = getattr(error, "body", None)
+        if isinstance(body, (bytes, bytearray)):
+            body = body.decode("utf-8", errors="replace")
+        body_text = (body or "").lower()
+
+        if status_code == 403 or "sender identity" in body_text or "verified sender" in body_text:
+            return _sender_unverified_message(from_email)
+        if status_code == 401 or "authorization grant" in body_text:
+            return "Chiave SendGrid non valida o revocata: aggiorna le credenziali sul server."
+        if status_code:
+            return f"Invio email fallito (SendGrid {status_code})."
+        return "Invio email fallito per un errore SendGrid imprevisto."
 
     async def send_alert(
         self,

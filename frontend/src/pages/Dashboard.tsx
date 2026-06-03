@@ -41,6 +41,8 @@ import { analyticsApi, accountsApi } from '@/services/api'
 import { formatCurrency, formatNumber, formatPercent, cn } from '@/lib/utils'
 import { AREA_FILL, CHART_PRIMARY, CHART_SERIES } from '@/lib/chart-theme'
 import { buildDashboardSearchParams, resolveDashboardScope } from '@/lib/dashboardScope'
+import { granularityForAccountTypes } from '@/lib/granularity'
+import { GranularityBadge } from '@/components/GranularityBadge'
 import { FilterBar, DateRangeFilter, AccountFilter, ComparisonFilter } from '@/components/filters'
 import ProductTrendBadge from '@/components/analytics/ProductTrendBadge'
 import ProductTrendSparkline from '@/components/analytics/ProductTrendSparkline'
@@ -386,6 +388,7 @@ export default function Dashboard() {
   const hasSeller = sellerAccountIds.length > 0
   const hasVendor = vendorAccountIds.length > 0
   const mixed = hasSeller && hasVendor
+  const granularity = granularityForAccountTypes(inScopeAccounts.map((a) => a.account_type))
 
   const { data: kpis, isLoading: kpisLoading, isError: kpisError } = useQuery<DashboardKPIs>({
     queryKey: ['dashboard-kpis', dateRange, effectiveAccountIds],
@@ -531,8 +534,25 @@ export default function Dashboard() {
   // Per-type series for the vendor-only and mixed chart paths.
   const sellerRevenue = sellerTrends?.find((t) => t.metric_name === 'revenue')
   const sellerUnits = sellerTrends?.find((t) => t.metric_name === 'units')
-  const vendorRevenue = vendorTrends?.find((t) => t.metric_name === 'revenue')
-  const vendorUnits = vendorTrends?.find((t) => t.metric_name === 'units')
+
+  // Vendor reporting is monthly, but raw points can carry off-month dates
+  // (settlement adjustments). Roll them up to one bucket per month — a pure
+  // display sum that leaves the totals untouched — so each month is a single
+  // legible bar instead of several stray spikes.
+  const toMonthly = (trend: TrendData | undefined): TrendData | undefined => {
+    if (!trend) return trend
+    const byMonth = new Map<string, number>()
+    for (const point of trend.data_points) {
+      const monthKey = point.date.slice(0, 7) + '-01'
+      byMonth.set(monthKey, (byMonth.get(monthKey) ?? 0) + point.value)
+    }
+    const data_points = Array.from(byMonth.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, value]) => ({ date, value }))
+    return { ...trend, data_points }
+  }
+  const vendorRevenue = toMonthly(vendorTrends?.find((t) => t.metric_name === 'revenue'))
+  const vendorUnits = toMonthly(vendorTrends?.find((t) => t.metric_name === 'units'))
 
   const vendorColor = CHART_SERIES[2]
 
@@ -559,6 +579,12 @@ export default function Dashboard() {
   const tickFormatter = (value: string) =>
     new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   const labelFormatter = (label: string) => new Date(label + 'T00:00:00').toLocaleDateString()
+  // Vendor points are monthly (date = first of month); show month/year so the
+  // bars don't read as a single day's sale on a daily-formatted axis.
+  const monthTickFormatter = (value: string) =>
+    new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+  const monthLabelFormatter = (label: string) =>
+    new Date(label + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
   const currency = kpis?.currency || 'EUR'
   const compactCurrency = new Intl.NumberFormat('en-US', {
@@ -786,7 +812,10 @@ export default function Dashboard() {
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">{t('dashboard.revenueTrend')}</CardTitle>
+            <div className="flex items-start justify-between gap-2">
+              <CardTitle className="text-base">{t('dashboard.revenueTrend')}</CardTitle>
+              <GranularityBadge granularity={granularity} />
+            </div>
             <CardDescription className="text-xs">
               {revenueTrendDescription}
             </CardDescription>
@@ -826,11 +855,11 @@ export default function Dashboard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={vendorRevenue.data_points}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="date" tickFormatter={tickFormatter} />
+                    <XAxis dataKey="date" tickFormatter={monthTickFormatter} />
                     <YAxis tickFormatter={(value) => compactCurrency.format(value)} />
                     <Tooltip
                       formatter={(value: number) => [formatCurrency(value, currency), t('dashboard.seriesVendor')]}
-                      labelFormatter={labelFormatter}
+                      labelFormatter={monthLabelFormatter}
                     />
                     <Bar dataKey="value" fill={vendorColor} fillOpacity={0.85} radius={[4, 4, 0, 0]} maxBarSize={36} />
                   </BarChart>
@@ -866,7 +895,10 @@ export default function Dashboard() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">{t('dashboard.unitsTrend')}</CardTitle>
+            <div className="flex items-start justify-between gap-2">
+              <CardTitle className="text-base">{t('dashboard.unitsTrend')}</CardTitle>
+              <GranularityBadge granularity={granularity} />
+            </div>
             <CardDescription className="text-xs">
               {unitsTrendDescription}
             </CardDescription>
@@ -906,11 +938,11 @@ export default function Dashboard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={vendorUnits.data_points}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="date" tickFormatter={tickFormatter} />
+                    <XAxis dataKey="date" tickFormatter={monthTickFormatter} />
                     <YAxis />
                     <Tooltip
                       formatter={(value: number) => [formatNumber(value), t('dashboard.seriesVendor')]}
-                      labelFormatter={labelFormatter}
+                      labelFormatter={monthLabelFormatter}
                     />
                     <Bar dataKey="value" fill={vendorColor} fillOpacity={0.85} radius={[4, 4, 0, 0]} maxBarSize={36} />
                   </BarChart>

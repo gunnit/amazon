@@ -144,6 +144,16 @@ export const authApi = {
     await api.put('/auth/me/notifications', data)
   },
 
+  getEmailStatus: async (): Promise<{
+    status: 'configured' | 'missing_credentials' | 'error'
+    provider: string
+    from_email: string | null
+    detail: string | null
+  }> => {
+    const response = await api.get('/auth/me/email-status')
+    return response.data
+  },
+
   deleteAccount: async (): Promise<void> => {
     await api.delete('/auth/me')
   },
@@ -299,6 +309,10 @@ export const reportsApi = {
     return response.data
   },
 
+  deleteSchedule: async (scheduleId: string): Promise<void> => {
+    await api.delete(`/reports/schedules/${scheduleId}`)
+  },
+
   listScheduleRuns: async (scheduleId: string, limit = 20): Promise<ScheduledReportRun[]> => {
     const response = await api.get(`/reports/schedules/${scheduleId}/runs`, { params: { limit } })
     return response.data
@@ -326,8 +340,13 @@ export const googleSheetsApi = {
   getConnection: async (): Promise<GoogleSheetsConnection | null> => {
     try {
       const response = await api.get('/google-sheets/connection')
+      // Backend returns 200 with { connected: false } when nothing is linked.
+      if (response.data?.connected === false) {
+        return null
+      }
       return response.data
     } catch (error) {
+      // Tolerate older backends that still answer 404 for "no connection".
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         return null
       }
@@ -460,6 +479,7 @@ export const analyticsApi = {
     account_id?: string
     account_ids?: string[]
     asin?: string
+    language?: 'en' | 'it'
   }): Promise<AdsVsOrganicResponse> => {
     const response = await api.get('/analytics/ads-vs-organic', { params })
     return response.data
@@ -752,6 +772,7 @@ export interface StrategicRecommendation {
   category: 'pricing' | 'advertising' | 'inventory' | 'content'
   priority: 'high' | 'medium' | 'low'
   priority_score: number
+  confidence: 'high' | 'medium' | 'low'
   title: string
   rationale: string
   expected_impact: string | null
@@ -794,8 +815,12 @@ export const recommendationsApi = {
     return response.data
   },
 
+  remove: async (id: string): Promise<void> => {
+    await api.delete(`/recommendations/${id}`)
+  },
+
   generate: async (payload?: {
-    lookback_days?: number
+    lookback_days?: number | null
     language?: 'en' | 'it'
     account_id?: string
     asin?: string
@@ -841,6 +866,8 @@ export const exportsApi = {
     start_date: string
     end_date: string
     account_ids?: string[]
+    group_by?: string
+    language?: 'en' | 'it'
   }): Promise<Blob> => {
     const response = await api.post('/exports/powerpoint', null, {
       params,

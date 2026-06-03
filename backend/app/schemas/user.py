@@ -1,6 +1,6 @@
 """User and authentication schemas."""
 from datetime import datetime
-from typing import Optional, List
+from typing import Literal, Optional, List
 from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
 
@@ -116,6 +116,14 @@ class NotificationPreferences(BaseModel):
     daily_digest: bool = True
     alert_emails: bool = True
     sync_notifications: bool = False
+
+
+class EmailDeliveryStatus(BaseModel):
+    """Read model describing whether outbound email can actually be delivered."""
+    status: Literal["configured", "missing_credentials", "error"]
+    provider: str = "sendgrid"
+    from_email: Optional[str] = None
+    detail: Optional[str] = None
 
 
 class Token(BaseModel):

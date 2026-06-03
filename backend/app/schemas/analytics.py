@@ -177,7 +177,9 @@ class AdsVsOrganicResponse(BaseModel):
     summary: AdsVsOrganicSummary
     time_series: List[AdsVsOrganicTimeSeriesPoint]
     asin_breakdown: Optional[List[AdsVsOrganicAsinBreakdownItem]] = None
+    breakdown_notes: List[str] = Field(default_factory=list)
     group_by: str = "day"
+    granularity: str = "unknown"
     asin: Optional[str] = None
     attribution_notes: List[str] = Field(default_factory=list)
 
@@ -213,6 +215,7 @@ class PaginatedProductPerformance(BaseModel):
     total: int
     offset: int
     limit: int
+    catalog_total: int = 0
 
 
 class CompetitorAnalysis(BaseModel):

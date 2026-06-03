@@ -1,6 +1,7 @@
 import { TrendingDown, TrendingUp, Minus } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useTranslation } from '@/i18n'
+import { formatEur, isUsablePrice, usablePrices } from '@/lib/market-research'
 import type { ProductSnapshot, CompetitorSnapshot } from '@/types'
 
 interface MarketPositionSummaryProps {
@@ -65,16 +66,23 @@ export default function MarketPositionSummary({
 }: MarketPositionSummaryProps) {
   const { t } = useTranslation()
 
-  const avgPrice = average(competitors.map((item) => item.price))
+  const competitorPrices = usablePrices(competitors)
+  const avgPrice = competitorPrices.length > 0
+    ? competitorPrices.reduce((sum, value) => sum + value, 0) / competitorPrices.length
+    : null
   const avgBsr = average(competitors.map((item) => item.bsr))
   const avgReviews = average(competitors.map((item) => item.review_count))
   const avgRating = average(competitors.map((item) => item.rating))
 
+  // Only compare the product's price against the cohort when it is itself a
+  // trustworthy value; otherwise we'd anchor the gap on a sentinel price.
+  const productPriceUsable = isUsablePrice(product.price, [product, ...competitors])
+
   const metrics: MetricSummary[] = [
     {
       label: t('marketResearch.price'),
-      value: product.price != null ? `$${product.price.toFixed(2)}` : '—',
-      ...describeMetric(product.price, avgPrice, true, t),
+      value: product.price != null ? formatEur(product.price) : '—',
+      ...describeMetric(productPriceUsable ? product.price : null, avgPrice, true, t),
     },
     {
       label: t('marketResearch.bsr'),

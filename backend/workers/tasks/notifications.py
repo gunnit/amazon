@@ -202,6 +202,7 @@ def send_alert(alert_ids: list[str]):
             )
 
             delivered = any(results.values())
+            failure_reason = service.last_error or "All configured channels failed"
             for alert in sendable_alerts:
                 alert.last_notification_attempt_at = now
                 if delivered:
@@ -210,7 +211,7 @@ def send_alert(alert_ids: list[str]):
                     alert.notification_error = None
                 else:
                     alert.notification_status = "failed"
-                    alert.notification_error = "All configured channels failed"
+                    alert.notification_error = failure_reason
 
             await db.commit()
             return {

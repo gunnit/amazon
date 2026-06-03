@@ -22,6 +22,17 @@ import { accountsApi, analyticsApi } from '@/services/api'
 import { formatCurrency, formatNumber, cn } from '@/lib/utils'
 import type { AdsConnectionState, AdvertisingInsights, AmazonAccount, CampaignInsight } from '@/types'
 
+// Backend advertising recommendations come back as raw English sentences.
+// Map the known ones to localized copy; pass anything else through unchanged.
+const RECOMMENDATION_KEYS: Record<string, string> = {
+  'No advertising spend recorded for the selected period.': 'advertising.recNoSpend',
+}
+
+function localizeRecommendation(rec: string, t: (key: string) => string): string {
+  const key = RECOMMENDATION_KEYS[rec.trim()]
+  return key ? t(key) : rec
+}
+
 function resolveAdsState(account: AmazonAccount): AdsConnectionState {
   if (account.ads_connection_state) return account.ads_connection_state
   if (account.has_ads_client_credentials === false) return 'missing_client_credentials'
@@ -246,7 +257,7 @@ export default function Advertising() {
               {data.recommendations.map((rec, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
                   <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
-                  {rec}
+                  {localizeRecommendation(rec, t)}
                 </li>
               ))}
             </ul>

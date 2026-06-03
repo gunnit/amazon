@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { useTranslation } from '@/i18n'
+import { formatEur, formatBsr, usablePrices } from '@/lib/market-research'
 import type { MarketSearchResult } from '@/types'
 
 interface MarketSearchResultsTableProps {
@@ -14,16 +15,6 @@ interface MarketSearchResultsTableProps {
 type SortField = 'price' | 'bsr' | 'brand' | 'title'
 type SortDir = 'asc' | 'desc'
 
-function formatPrice(val: number | null): string {
-  if (val == null) return '--'
-  return `$${val.toFixed(2)}`
-}
-
-function formatBsr(val: number | null): string {
-  if (val == null) return '--'
-  return val.toLocaleString()
-}
-
 export default function MarketSearchResultsTable({
   results,
   referenceAsin,
@@ -34,10 +25,11 @@ export default function MarketSearchResultsTable({
   const [sortField, setSortField] = useState<SortField | null>(null)
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
-  const prices = results.map((r) => r.price).filter((p): p is number => p != null)
+  const prices = usablePrices(results)
   const bsrs = results.map((r) => r.bsr).filter((b): b is number => b != null)
   const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : null
   const maxBsr = bsrs.length > 0 ? Math.max(...bsrs) : null
+  const usablePriceSet = new Set(prices)
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -70,7 +62,7 @@ export default function MarketSearchResultsTable({
   }
 
   const getPriceBadge = (price: number | null) => {
-    if (price == null || avgPrice == null) return null
+    if (price == null || avgPrice == null || !usablePriceSet.has(price)) return null
     const diff = ((price - avgPrice) / avgPrice) * 100
     if (Math.abs(diff) < 5) return null
     if (diff < 0) {
@@ -195,7 +187,7 @@ export default function MarketSearchResultsTable({
                 </td>
                 <td className="p-3 text-right">
                   <div className="flex items-center justify-end">
-                    <span className="font-mono text-xs">{formatPrice(result.price)}</span>
+                    <span className="font-mono text-xs">{formatEur(result.price)}</span>
                     {getPriceBadge(result.price)}
                   </div>
                 </td>

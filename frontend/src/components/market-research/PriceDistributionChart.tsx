@@ -11,6 +11,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { CHART_PRIMARY } from '@/lib/chart-theme'
 import { useTranslation } from '@/i18n'
+import { formatEurCompact, usablePrices } from '@/lib/market-research'
 import type { MarketSearchResult } from '@/types'
 
 interface PriceDistributionChartProps {
@@ -24,7 +25,7 @@ function buildBuckets(prices: number[]): { label: string; count: number; midpoin
   const max = Math.max(...prices)
 
   if (min === max) {
-    return [{ label: `$${min.toFixed(0)}`, count: prices.length, midpoint: min }]
+    return [{ label: formatEurCompact(min), count: prices.length, midpoint: min }]
   }
 
   const range = max - min
@@ -39,7 +40,7 @@ function buildBuckets(prices: number[]): { label: string; count: number; midpoin
       i === bucketCount - 1 ? p >= lo && p <= hi : p >= lo && p < hi
     ).length
     buckets.push({
-      label: `$${lo.toFixed(0)}-${hi.toFixed(0)}`,
+      label: `${formatEurCompact(lo)}-${formatEurCompact(hi)}`,
       count,
       midpoint: (lo + hi) / 2,
     })
@@ -50,7 +51,7 @@ function buildBuckets(prices: number[]): { label: string; count: number; midpoin
 
 export default function PriceDistributionChart({ results }: PriceDistributionChartProps) {
   const { t } = useTranslation()
-  const prices = results.map((r) => r.price).filter((p): p is number => p != null)
+  const prices = usablePrices(results)
 
   if (prices.length < 2) return null
 

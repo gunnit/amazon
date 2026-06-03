@@ -43,7 +43,9 @@ TR = {
         "rmse": "RMSE",
         "total_predicted": "Total Predicted Value",
         "avg_daily": "Average Daily Value",
+        "avg_monthly": "Average Monthly Value",
         "peak_day": "Peak Day",
+        "peak_month": "Peak Month",
         "peak_value": "Peak Value",
         "summary_sheet": "Forecast Summary",
         "data_sheet": "Daily Forecast",
@@ -82,7 +84,9 @@ TR = {
         "rmse": "RMSE",
         "total_predicted": "Valore Totale Previsto",
         "avg_daily": "Valore Medio Giornaliero",
+        "avg_monthly": "Media Mensile",
         "peak_day": "Giorno di Picco",
+        "peak_month": "Mese di Picco",
         "peak_value": "Valore di Picco",
         "summary_sheet": "Riepilogo Previsione",
         "data_sheet": "Previsione Giornaliera",
@@ -321,14 +325,26 @@ def build_forecast_workbook_bytes(
         ],
     )
 
+    # Monthly (vendor) forecasts must not be labelled as daily averages or
+    # carry a day-of-week peak — those are meaningless at monthly cadence.
+    avg_label = t["avg_monthly"] if is_monthly else t["avg_daily"]
+    peak_label = t["peak_month"] if is_monthly else t["peak_day"]
+    if peak_pred:
+        peak_cell = (
+            str(peak_pred["date"]) if is_monthly
+            else f"{peak_pred['date']} ({_day_name(peak_pred['date'])})"
+        )
+    else:
+        peak_cell = "N/A"
+
     summary_columns = ["section", "metric", "current_value"]
     summary_headers = [t["section"], t["metric"], t["value"]]
     summary_rows = [
         {"section": t["model_metrics"], "metric": t["mape"], "current_value": mape_cell},
         {"section": t["model_metrics"], "metric": t["rmse"], "current_value": round(rmse, 2) if rmse is not None else "N/A"},
         {"section": t["forecast_summary"], "metric": t["total_predicted"], "current_value": round(total, 2)},
-        {"section": t["forecast_summary"], "metric": t["avg_daily"], "current_value": round(avg_daily, 2)},
-        {"section": t["forecast_summary"], "metric": t["peak_day"], "current_value": f"{peak_pred['date']} ({_day_name(peak_pred['date'])})" if peak_pred else "N/A"},
+        {"section": t["forecast_summary"], "metric": avg_label, "current_value": round(avg_daily, 2)},
+        {"section": t["forecast_summary"], "metric": peak_label, "current_value": peak_cell},
         {"section": t["forecast_summary"], "metric": t["peak_value"], "current_value": round(peak_pred["value"], 2) if peak_pred else "N/A"},
     ]
     renderer.write_summary_sheet(ws_summary, summary_rows, summary_columns, summary_headers, start_row=next_row)
@@ -503,6 +519,10 @@ def process_forecast_export_job(job_id: str):
 
                     await _set_progress("Creating PDF report...", 85)
                     title = "Forecast Insights Report" if job.language != "it" else "Report Insight Forecast"
+                    pred_dates = [
+                        date.fromisoformat(p["date"]) if isinstance(p["date"], str) else p["date"]
+                        for p in (context.forecast.predictions or [])
+                    ]
                     pdf_bytes = ForecastInsightsPdfBuilder(
                         title=title,
                         account_name=context.account_name,
@@ -515,6 +535,7 @@ def process_forecast_export_job(job_id: str):
                         metrics=_build_metrics(context.forecast),
                         analysis=analysis,
                         language=job.language,
+                        is_monthly=_is_monthly(pred_dates),
                     ).build()
 
                 await _set_progress("Packaging files...", 95)

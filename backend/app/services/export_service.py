@@ -135,6 +135,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "data_sources": "Data Sources",
         "note_per_asin_totals": "Per-ASIN figures (Product/Category sheets) come from Amazon's by-ASIN report and may differ from the account-level daily total shown above.",
         "no_data_available": "No data available for the selected period.",
+        "revenue_confirmed": "Revenue (confirmed sales)",
+        "revenue_by_asin": "Estimated revenue (by ASIN)",
+        "skus": "SKUs",
+        "source_note_title": "Note on data source",
+        "note_revenue_source": "This sheet shows estimated revenue from Amazon's by-ASIN report. The total can differ from the confirmed-sales total in the Sales Report sheet, which is based on Amazon's daily settled figures.",
     },
     "it": {
         "section": "Sezione",
@@ -245,6 +250,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "data_sources": "Fonti Dati",
         "note_per_asin_totals": "I valori per ASIN (fogli Prodotti/Categoria) provengono dal report per-ASIN di Amazon e possono differire dal totale giornaliero a livello account riportato sopra.",
         "no_data_available": "Nessun dato disponibile per il periodo selezionato.",
+        "revenue_confirmed": "Fatturato (vendite confermate)",
+        "revenue_by_asin": "Fatturato stimato (per ASIN)",
+        "skus": "SKU",
+        "source_note_title": "Nota sulla fonte dei dati",
+        "note_revenue_source": "Questo foglio mostra il fatturato stimato dal report per ASIN di Amazon. Il totale può differire dal fatturato da vendite confermate del foglio Report Vendite, basato sui dati giornalieri liquidati da Amazon.",
     },
 }
 
@@ -292,6 +302,39 @@ def _safe_divide(numerator: float, denominator: float) -> float:
     if denominator == 0:
         return 0.0
     return numerator / denominator
+
+
+_CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£"}
+
+# Excel number format for monetary cells. Cells stay numeric (so totals remain
+# exact and computable); an Italian Excel renders this as 1.234.567,89 €.
+EUR_MONEY_FORMAT = '#,##0.00\\ "€"'
+# Data-sheet columns that always hold monetary amounts. The summary sheet's
+# current/previous columns are intentionally excluded because they mix money,
+# units and counts in a single column.
+_MONEY_COLUMNS = {
+    "revenue",
+    "average_order_value",
+    "average_selling_price",
+    "spend",
+    "attributed_sales_7d",
+    "daily_budget",
+    "cpc",
+}
+
+
+def format_money_eu(value: float, currency: str = "EUR") -> str:
+    """Format a monetary value in European/Italian style (1.234.567,89)."""
+    formatted = f"{value:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+    symbol = _CURRENCY_SYMBOLS.get(currency)
+    if symbol:
+        return f"{formatted} {symbol}"
+    return f"{formatted} {currency}"
+
+
+def format_int_eu(value: float) -> str:
+    """Format an integer with European thousands separators (1.234.567)."""
+    return f"{int(round(value)):,}".replace(",", ".")
 
 
 class ExportService:
@@ -523,10 +566,19 @@ class ExportService:
             for sheet_info in collected["sheets"]:
                 ws = wb.create_sheet(title=sheet_info["name"][:31])
                 cols = sheet_info["columns"]
-                hdrs = [self._text(lang, c) for c in cols]
-                renderer.write_data_sheet(ws, sheet_info["rows"], cols, hdrs)
+                overrides = sheet_info.get("header_overrides") or {}
+                hdrs = [self._text(lang, overrides.get(c, c)) for c in cols]
+                start_row = 1
+                note_key = sheet_info.get("note")
+                if note_key:
+                    start_row = self._write_sheet_note(ws, renderer, len(cols), lang, note_key)
+                money_formats = {c: EUR_MONEY_FORMAT for c in cols if c in _MONEY_COLUMNS}
+                renderer.write_data_sheet(
+                    ws, sheet_info["rows"], cols, hdrs, start_row=start_row,
+                    number_formats=money_formats,
+                )
                 if not sheet_info["rows"]:
-                    ws.cell(row=3, column=1, value=self._text(lang, "no_data_available"))
+                    ws.cell(row=start_row + 2, column=1, value=self._text(lang, "no_data_available"))
 
         output = io.BytesIO()
         wb.save(output)
@@ -561,6 +613,38 @@ class ExportService:
         ws.column_dimensions["A"].width = 22
         ws.column_dimensions["B"].width = 48
         ws.sheet_view.showGridLines = False
+
+    def _write_sheet_note(
+        self,
+        ws: Any,
+        renderer: Any,
+        num_cols: int,
+        lang: Language,
+        note_key: str,
+    ) -> int:
+        """Write a visible coloured note banner at the top of a sheet.
+
+        Returns the row where the data table should start.
+        """
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        span = max(num_cols, 4)
+        title = self._text(lang, "source_note_title")
+        body = self._text(lang, note_key)
+
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=span)
+        cell = ws.cell(row=1, column=1, value=f"⚠ {title}")
+        cell.font = Font(name="Calibri", bold=True, size=11, color="7A4F01")
+        cell.fill = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid")
+        cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+
+        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=span)
+        cell = ws.cell(row=2, column=1, value=body)
+        cell.font = Font(name="Calibri", size=10, color="7A4F01")
+        cell.fill = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid")
+        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True, indent=1)
+        ws.row_dimensions[2].height = 32
+        return 4
 
     # ── Data collectors (shared by CSV and Excel) ─────────────────────
 
@@ -601,7 +685,7 @@ class ExportService:
             )
 
         summary_rows.extend([
-            self._metric_row(lang, "performance", "revenue", current_summary["revenue"],
+            self._metric_row(lang, "performance", "revenue_confirmed", current_summary["revenue"],
                              previous_summary["revenue"] if previous_summary else "",
                              _percent_change(current_summary["revenue"], previous_summary["revenue"]) if previous_summary else None, "currency_unit"),
             self._metric_row(lang, "performance", "units", current_summary["units"],
@@ -630,7 +714,7 @@ class ExportService:
 
         summary_columns = ["section", "metric", "current_value", "previous_value", "change_percent", "unit", "notes"]
         trend_columns = ["report_date", "revenue", "units", "orders", "average_order_value", "average_selling_price", "units_per_order", "currency"]
-        product_columns = ["account_name", "asin", "sku", "title", "brand", "category", "units", "revenue", "orders", "average_selling_price", "revenue_share", "currency"]
+        product_columns = ["account_name", "asin", "skus", "title", "brand", "category", "units", "revenue", "orders", "average_selling_price", "revenue_share", "currency"]
         category_columns = ["category", "revenue", "units", "orders", "average_order_value", "average_selling_price", "revenue_share", "currency"]
 
         return {
@@ -638,8 +722,20 @@ class ExportService:
             "summary_columns": summary_columns,
             "sheets": [
                 {"name": self._text(lang, "sheet_sales_trend"), "rows": trend_rows, "columns": trend_columns},
-                {"name": self._text(lang, "sheet_product_performance"), "rows": product_rows, "columns": product_columns},
-                {"name": self._text(lang, "sheet_category_breakdown"), "rows": category_rows, "columns": category_columns},
+                {
+                    "name": self._text(lang, "sheet_product_performance"),
+                    "rows": product_rows,
+                    "columns": product_columns,
+                    "note": "note_revenue_source",
+                    "header_overrides": {"revenue": "revenue_by_asin"},
+                },
+                {
+                    "name": self._text(lang, "sheet_category_breakdown"),
+                    "rows": category_rows,
+                    "columns": category_columns,
+                    "note": "note_revenue_source",
+                    "header_overrides": {"revenue": "revenue_by_asin"},
+                },
             ],
         }
 
@@ -917,7 +1013,7 @@ class ExportService:
                 self._metric_row(
                     lang,
                     "performance",
-                    "revenue",
+                    "revenue_confirmed",
                     current_summary["revenue"],
                     previous_summary["revenue"] if previous_summary else "",
                     _percent_change(current_summary["revenue"], previous_summary["revenue"]) if previous_summary else None,
@@ -987,7 +1083,7 @@ class ExportService:
         return [
             ("00_summary.csv", self._csv_bytes(summary_rows, ["section", "metric", "current_value", "previous_value", "change_percent", "unit", "notes"], lang)),
             ("01_daily_trend.csv", self._csv_bytes(trend_rows, ["report_date", "revenue", "units", "orders", "average_order_value", "average_selling_price", "units_per_order", "currency"], lang)),
-            ("02_product_performance.csv", self._csv_bytes(product_rows, ["account_name", "asin", "sku", "title", "brand", "category", "units", "revenue", "orders", "average_selling_price", "revenue_share", "currency"], lang)),
+            ("02_product_performance.csv", self._csv_bytes(product_rows, ["account_name", "asin", "skus", "title", "brand", "category", "units", "revenue", "orders", "average_selling_price", "revenue_share", "currency"], lang)),
             ("03_category_breakdown.csv", self._csv_bytes(category_rows, ["category", "revenue", "units", "orders", "average_order_value", "average_selling_price", "revenue_share", "currency"], lang)),
         ]
 
@@ -1432,25 +1528,61 @@ class ExportService:
         )
 
         rows = (await self.db.execute(query)).all()
-        total_revenue = sum(_as_float(row.revenue) for row in rows)
-        output: list[dict[str, Any]] = []
+
+        # The same ASIN can surface on multiple rows (e.g. an empty SKU plus a
+        # real SKU coming from the catalog join). Aggregate by account+ASIN so the
+        # client never counts a product twice, and list its SKUs in one column.
+        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        order: list[tuple[str, str]] = []
         for row in rows:
-            revenue = _as_float(row.revenue)
-            units = _as_int(row.units)
-            output.append(
-                {
+            key = (row.account_name, row.asin)
+            entry = grouped.get(key)
+            if entry is None:
+                entry = {
                     "account_name": row.account_name,
                     "asin": row.asin,
-                    "sku": row.sku or "",
+                    "skus": set(),
                     "title": row.title or "",
                     "brand": row.brand or "",
                     "category": row.category or "Uncategorized",
+                    "units": 0,
+                    "revenue": 0.0,
+                    "orders": 0,
+                    "currency": row.currency or "EUR",
+                }
+                grouped[key] = entry
+                order.append(key)
+            if row.sku:
+                entry["skus"].add(row.sku)
+            entry["units"] += _as_int(row.units)
+            entry["revenue"] += _as_float(row.revenue)
+            entry["orders"] += _as_int(row.orders)
+            if not entry["title"] and row.title:
+                entry["title"] = row.title
+
+        total_revenue = sum(entry["revenue"] for entry in grouped.values())
+        merged = sorted(
+            (grouped[key] for key in order),
+            key=lambda e: (-e["revenue"], e["asin"]),
+        )
+        output: list[dict[str, Any]] = []
+        for entry in merged:
+            revenue = entry["revenue"]
+            units = entry["units"]
+            output.append(
+                {
+                    "account_name": entry["account_name"],
+                    "asin": entry["asin"],
+                    "skus": ", ".join(sorted(entry["skus"])),
+                    "title": entry["title"],
+                    "brand": entry["brand"],
+                    "category": entry["category"],
                     "units": units,
                     "revenue": _round(revenue),
-                    "orders": _as_int(row.orders),
+                    "orders": entry["orders"],
                     "average_selling_price": _round(_safe_divide(revenue, units)),
                     "revenue_share": _round(_safe_divide(revenue * 100, total_revenue)),
-                    "currency": row.currency or "EUR",
+                    "currency": entry["currency"],
                 }
             )
         return output

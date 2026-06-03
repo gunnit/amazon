@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
-import { Download, History, Loader2, Mail, Pencil, Play, Plus } from 'lucide-react'
+import { Download, History, Loader2, Mail, Pencil, Play, Plus, Trash2 } from 'lucide-react'
 
 import { useAuthStore } from '@/store/authStore'
 import { accountsApi, reportsApi } from '@/services/api'
@@ -39,6 +39,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { ConfirmDialog } from '@/components/catalog/ConfirmDialog'
 
 type ScheduleConfig = {
   weekday?: number
@@ -132,14 +133,29 @@ function getTimezoneOptions(currentTimezone: string) {
   return Array.from(new Set([currentTimezone, ...supported])).slice(0, 200)
 }
 
+const DISPLAY_TIMEZONE = 'Europe/Rome'
+
 function formatTimestamp(value: string | null) {
   if (!value) return '—'
-  return new Date(value).toLocaleString()
+  return new Date(value).toLocaleString(undefined, { timeZone: DISPLAY_TIMEZONE })
 }
 
-function toBadgeVariant(status: string | null): 'default' | 'secondary' | 'destructive' {
-  if (status === 'delivered') return 'default'
+type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline'
+
+// Generation/last-run status: only a real generation failure is destructive.
+// A generated-but-undelivered run stays neutral/positive, never red.
+function runBadgeVariant(status: string | null): BadgeVariant {
+  if (status === 'delivered' || status === 'generated') return 'default'
   if (status === 'failed') return 'destructive'
+  return 'secondary'
+}
+
+// Delivery status: "not configured" is an actionable amber-style note (outline),
+// not a hard failure. Only a genuine send failure is destructive.
+function deliveryBadgeVariant(status: string | null): BadgeVariant {
+  if (status === 'sent' || status === 'delivered') return 'default'
+  if (status === 'failed') return 'destructive'
+  if (status === 'not_configured') return 'outline'
   return 'secondary'
 }
 
@@ -154,6 +170,7 @@ export function ScheduledReportsPanel() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState<ScheduledReport | null>(null)
   const [historySchedule, setHistorySchedule] = useState<ScheduledReport | null>(null)
+  const [scheduleToDelete, setScheduleToDelete] = useState<ScheduledReport | null>(null)
   const [formState, setFormState] = useState<FormState>(() => buildDefaultForm(defaultTimezone))
 
   useEffect(() => {
@@ -248,6 +265,16 @@ export function ScheduledReportsPanel() {
     onError: () => toast({ variant: 'destructive', title: t('scheduledReports.runFailed') }),
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: (scheduleId: string) => reportsApi.deleteSchedule(scheduleId),
+    onSuccess: async () => {
+      await invalidate()
+      setScheduleToDelete(null)
+      toast({ title: t('scheduledReports.deleted') })
+    },
+    onError: () => toast({ variant: 'destructive', title: t('scheduledReports.deleteFailed') }),
+  })
+
   const downloadMutation = useMutation({
     mutationFn: async (run: ScheduledReportRun) => {
       const blob = await reportsApi.downloadScheduleRun(run.id)
@@ -311,8 +338,10 @@ export function ScheduledReportsPanel() {
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="font-semibold">{schedule.name}</h3>
-                        <Badge variant={toBadgeVariant(schedule.last_run_status)}>
-                          {schedule.last_run_status || t('scheduledReports.notRunYet')}
+                        <Badge variant={runBadgeVariant(schedule.last_run_status)}>
+                          {schedule.last_run_status
+                            ? t(`scheduledReports.lastStatus.${schedule.last_run_status}`)
+                            : t('scheduledReports.notRunYet')}
                         </Badge>
                         <Badge variant="secondary">{schedule.format.toUpperCase()}</Badge>
                         <Badge variant="secondary">{t(`scheduledReports.${schedule.frequency}`)}</Badge>
@@ -326,6 +355,9 @@ export function ScheduledReportsPanel() {
                         <span>{t('scheduledReports.timezone')}: {schedule.timezone}</span>
                         <span>{t('scheduledReports.accountsCount', { n: schedule.account_ids.length || accounts.length })}</span>
                       </div>
+                      <p className="text-xs text-muted-foreground">
+                        {t('scheduledReports.timesNote', { tz: DISPLAY_TIMEZONE })}
+                      </p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
@@ -358,6 +390,15 @@ export function ScheduledReportsPanel() {
                       >
                         <History className="mr-2 h-4 w-4" />
                         {t('scheduledReports.history')}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setScheduleToDelete(schedule)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        {t('scheduledReports.delete')}
                       </Button>
                     </div>
                   </div>
@@ -656,7 +697,9 @@ export function ScheduledReportsPanel() {
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[760px]">
           <DialogHeader>
             <DialogTitle>{historySchedule?.name}</DialogTitle>
-            <DialogDescription>{t('scheduledReports.historySubtitle')}</DialogDescription>
+            <DialogDescription>
+              {t('scheduledReports.historySubtitle')} · {t('scheduledReports.timesNote', { tz: DISPLAY_TIMEZONE })}
+            </DialogDescription>
           </DialogHeader>
           {runsLoading ? (
             <div className="flex h-24 items-center justify-center">
@@ -672,8 +715,13 @@ export function ScheduledReportsPanel() {
                 <div key={run.id} className="rounded-lg border p-4">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={toBadgeVariant(run.status)}>{run.status}</Badge>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={runBadgeVariant(run.status)}>
+                          {t(`scheduledReports.status.${run.status}`)}
+                        </Badge>
+                        <Badge variant={deliveryBadgeVariant(run.delivery_status)}>
+                          {t('scheduledReports.delivery.label')}: {t(`scheduledReports.delivery.${run.delivery_status}`)}
+                        </Badge>
                         <span className="text-sm text-muted-foreground">{formatTimestamp(run.triggered_at)}</span>
                       </div>
                       <p className="text-sm text-muted-foreground">
@@ -684,7 +732,15 @@ export function ScheduledReportsPanel() {
                         {run.recipients.join(', ')}
                       </p>
                       {run.error_message ? (
-                        <p className="text-sm text-destructive">{run.error_message}</p>
+                        <p
+                          className={
+                            run.status === 'failed'
+                              ? 'text-sm text-destructive'
+                              : 'text-sm text-amber-600 dark:text-amber-500'
+                          }
+                        >
+                          {run.error_message}
+                        </p>
                       ) : (
                         <p className="text-sm text-muted-foreground">{run.progress_step || '—'}</p>
                       )}
@@ -702,6 +758,21 @@ export function ScheduledReportsPanel() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={!!scheduleToDelete}
+        onOpenChange={(open) => {
+          if (!open) setScheduleToDelete(null)
+        }}
+        title={t('scheduledReports.deleteTitle')}
+        description={t('scheduledReports.deleteConfirm', { name: scheduleToDelete?.name ?? '' })}
+        confirmLabel={t('scheduledReports.delete')}
+        cancelLabel={t('common.cancel')}
+        destructive
+        onConfirm={() => {
+          if (scheduleToDelete) deleteMutation.mutate(scheduleToDelete.id)
+        }}
+      />
     </>
   )
 }

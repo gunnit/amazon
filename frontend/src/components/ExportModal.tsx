@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { format } from 'date-fns'
-import { Download, Loader2, CalendarIcon, Building2, ChevronDown } from 'lucide-react'
+import { Download, Loader2, CalendarIcon, Building2, ChevronDown, FileSpreadsheet, Presentation, FileText } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -33,6 +33,13 @@ import type { DateRange } from 'react-day-picker'
 type ReportType = 'sales' | 'inventory' | 'advertising'
 type DatePreset = '7' | '14' | '30' | '60' | '90' | '12m' | 'ytd' | 'lastyear' | 'custom'
 type TemplateType = 'clean' | 'corporate' | 'executive'
+type ExportFormat = 'excel' | 'powerpoint' | 'csv'
+
+const FORMAT_OPTIONS: { id: ExportFormat; nameKey: string; descKey: string; icon: typeof FileSpreadsheet }[] = [
+  { id: 'excel', nameKey: 'export.formatExcel', descKey: 'export.formatExcelDesc', icon: FileSpreadsheet },
+  { id: 'powerpoint', nameKey: 'export.formatPowerpoint', descKey: 'export.formatPowerpointDesc', icon: Presentation },
+  { id: 'csv', nameKey: 'export.formatCsv', descKey: 'export.formatCsvDesc', icon: FileText },
+]
 
 const PRESET_OPTIONS: { value: DatePreset; key: string }[] = [
   { value: '7', key: 'filter.last7days' },
@@ -173,12 +180,15 @@ interface ExportModalProps {
 }
 
 export function ExportModal({ open, onOpenChange }: ExportModalProps) {
-  const { t } = useTranslation()
+  const { t, language: uiLanguage } = useTranslation()
   const { toast } = useToast()
 
   // Local state (independent from page filters)
   const [reportTypes, setReportTypes] = useState<Set<ReportType>>(new Set(['sales', 'inventory']))
-  const [language, setLanguage] = useState<'en' | 'it'>('en')
+  // Export language defaults to the UI language so client documents come out
+  // in the language the user is already working in.
+  const [language, setLanguage] = useState<'en' | 'it'>(uiLanguage)
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('excel')
   const [datePreset, setDatePreset] = useState<DatePreset>('12m')
   const [customStartDate, setCustomStartDate] = useState<string | null>(null)
   const [customEndDate, setCustomEndDate] = useState<string | null>(null)
@@ -193,6 +203,11 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
     queryFn: () => accountsApi.list(),
     enabled: open,
   })
+
+  // Keep the export language aligned with the UI language each time the modal opens.
+  useEffect(() => {
+    if (open) setLanguage(uiLanguage)
+  }, [open, uiLanguage])
 
   const toggleReportType = (type: ReportType) => {
     setReportTypes((prev) => {
@@ -234,19 +249,45 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
     setIsExporting(true)
     try {
       const dateRange = computeDateRange(datePreset, customStartDate, customEndDate)
-      const blob = await exportsApi.exportExcelBundle({
-        report_types: Array.from(reportTypes),
-        start_date: dateRange.start,
-        end_date: dateRange.end,
-        account_ids: selectedAccountIds.length > 0 ? selectedAccountIds : undefined,
-        group_by: reportTypes.has('sales') ? 'day' : undefined,
-        low_stock_only: reportTypes.has('inventory') ? false : undefined,
-        language,
-        include_comparison: true,
-        template: selectedTemplate,
-      })
+      const accountIds = selectedAccountIds.length > 0 ? selectedAccountIds : undefined
+      const types = Array.from(reportTypes)
 
-      downloadBlob(blob, `inthezon_export_${dateRange.start}_${dateRange.end}_${language}_${selectedTemplate}.xlsx`)
+      if (exportFormat === 'powerpoint') {
+        const blob = await exportsApi.exportPowerPoint({
+          start_date: dateRange.start,
+          end_date: dateRange.end,
+          account_ids: accountIds,
+          group_by: 'month',
+          language,
+        })
+        downloadBlob(blob, `inthezon_presentation_${dateRange.start}_${dateRange.end}_${language}.pptx`)
+      } else if (exportFormat === 'csv') {
+        const blob = await exportsApi.exportBundle({
+          report_types: types,
+          start_date: dateRange.start,
+          end_date: dateRange.end,
+          account_ids: accountIds,
+          group_by: reportTypes.has('sales') ? 'day' : undefined,
+          low_stock_only: reportTypes.has('inventory') ? false : undefined,
+          language,
+          include_comparison: true,
+        })
+        downloadBlob(blob, `inthezon_export_${dateRange.start}_${dateRange.end}_${language}.zip`)
+      } else {
+        const blob = await exportsApi.exportExcelBundle({
+          report_types: types,
+          start_date: dateRange.start,
+          end_date: dateRange.end,
+          account_ids: accountIds,
+          group_by: reportTypes.has('sales') ? 'day' : undefined,
+          low_stock_only: reportTypes.has('inventory') ? false : undefined,
+          language,
+          include_comparison: true,
+          template: selectedTemplate,
+        })
+        downloadBlob(blob, `inthezon_export_${dateRange.start}_${dateRange.end}_${language}_${selectedTemplate}.xlsx`)
+      }
+
       toast({ title: t('export.success') })
       onOpenChange(false)
     } catch {
@@ -302,7 +343,36 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
             )}
           </div>
 
-          {/* Template Selection */}
+          {/* Format Selection */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">{t('export.format')}</label>
+            <div className="grid grid-cols-3 gap-3">
+              {FORMAT_OPTIONS.map((fmt) => {
+                const Icon = fmt.icon
+                return (
+                  <button
+                    key={fmt.id}
+                    type="button"
+                    onClick={() => setExportFormat(fmt.id)}
+                    className={`rounded-lg border-2 p-2.5 text-left transition-all hover:shadow-sm ${
+                      exportFormat === fmt.id
+                        ? 'border-primary bg-primary/5 shadow-sm'
+                        : 'border-border hover:border-border/80'
+                    }`}
+                  >
+                    <Icon className="h-5 w-5 text-primary" />
+                    <p className="text-xs font-medium mt-2">{t(fmt.nameKey)}</p>
+                    <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">
+                      {t(fmt.descKey)}
+                    </p>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Template Selection (Excel only) */}
+          {exportFormat === 'excel' && (
           <div className="space-y-2">
             <label className="text-sm font-medium">{t('export.template')}</label>
             <div className="grid grid-cols-3 gap-3">
@@ -328,6 +398,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
               ))}
             </div>
           </div>
+          )}
 
           {/* Language + Date Range */}
           <div className="grid grid-cols-2 gap-4">

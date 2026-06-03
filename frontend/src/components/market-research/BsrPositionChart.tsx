@@ -11,6 +11,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { CHART_PRIMARY } from '@/lib/chart-theme'
 import { useTranslation } from '@/i18n'
+import { formatEur, formatEurCompact, isUsablePrice } from '@/lib/market-research'
 import type { MarketSearchResult } from '@/types'
 
 interface BsrPositionChartProps {
@@ -26,7 +27,15 @@ interface DataPoint {
   isReference: boolean
 }
 
-function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: DataPoint }> }) {
+function CustomTooltip({
+  active,
+  payload,
+  priceLabel,
+}: {
+  active?: boolean
+  payload?: Array<{ payload: DataPoint }>
+  priceLabel: string
+}) {
   if (!active || !payload || payload.length === 0) return null
 
   const data = payload[0].payload
@@ -35,7 +44,7 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
       <p className="text-xs font-mono mb-0.5">{data.asin}</p>
       <p className="text-xs text-muted-foreground truncate max-w-[200px]">{data.title}</p>
       <div className="flex gap-3 mt-1 text-xs">
-        <span>Price: <strong>${data.price.toFixed(2)}</strong></span>
+        <span>{priceLabel}: <strong>{formatEur(data.price)}</strong></span>
         <span>BSR: <strong>{data.bsr.toLocaleString()}</strong></span>
       </div>
     </div>
@@ -44,9 +53,10 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
 
 export default function BsrPositionChart({ results, referenceAsin }: BsrPositionChartProps) {
   const { t } = useTranslation()
+  const priceLabel = t('marketResearch.price')
 
   const data: DataPoint[] = results
-    .filter((r) => r.price != null && r.bsr != null)
+    .filter((r) => r.bsr != null && isUsablePrice(r.price, results))
     .map((r) => ({
       price: r.price!,
       bsr: r.bsr!,
@@ -69,12 +79,12 @@ export default function BsrPositionChart({ results, referenceAsin }: BsrPosition
             <XAxis
               type="number"
               dataKey="price"
-              name="Price"
+              name={priceLabel}
               tick={{ fontSize: 11 }}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(v: number) => `$${v}`}
-              label={{ value: 'Price', position: 'bottom', fontSize: 11, offset: -5 }}
+              tickFormatter={(v: number) => formatEurCompact(v)}
+              label={{ value: priceLabel, position: 'bottom', fontSize: 11, offset: -5 }}
             />
             <YAxis
               type="number"
@@ -87,7 +97,7 @@ export default function BsrPositionChart({ results, referenceAsin }: BsrPosition
               tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v.toString()}
               label={{ value: 'BSR', angle: -90, position: 'insideLeft', fontSize: 11, offset: 20 }}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={<CustomTooltip priceLabel={priceLabel} />} />
             <Scatter data={data}>
               {data.map((entry, idx) => (
                 <Cell

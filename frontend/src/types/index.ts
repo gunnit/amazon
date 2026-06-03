@@ -214,7 +214,9 @@ export interface AdsVsOrganicResponse {
   summary: AdsVsOrganicSummary
   time_series: AdsVsOrganicTimeSeriesPoint[]
   asin_breakdown: AdsVsOrganicAsinBreakdownItem[] | null
+  breakdown_notes: string[]
   group_by: 'day' | 'week' | 'month'
+  granularity: 'daily' | 'monthly' | 'mixed' | 'unknown'
   asin: string | null
   attribution_notes: string[]
 }
@@ -259,6 +261,7 @@ export interface PaginatedProductPerformance {
   total: number
   offset: number
   limit: number
+  catalog_total: number
 }
 
 export type PerProductSortKey = 'revenue' | 'units' | 'orders' | 'acos' | 'roas' | 'ad_spend'

@@ -11,7 +11,7 @@ from app.db.session import get_db
 from app.models.user import User, Organization, OrganizationMember, UserRole
 from app.schemas.user import (
     UserCreate, UserUpdate, UserResponse, UserLogin, Token,
-    PasswordChange, NotificationPreferences,
+    PasswordChange, NotificationPreferences, EmailDeliveryStatus,
     ForgotPasswordRequest, ResetPasswordRequest,
     OrganizationCreate, OrganizationUpdate, OrganizationResponse,
     OrganizationApiKeysUpdate, OrganizationApiKeysResponse,
@@ -328,6 +328,25 @@ async def update_notification_preferences(
     organization.settings = current_settings
     await db.flush()
     return prefs_in
+
+
+@router.get("/me/email-status", response_model=EmailDeliveryStatus)
+async def get_email_delivery_status(_current_user: CurrentUser):
+    """Report whether outbound email is deliverable, without sending anything."""
+    if not settings.SENDGRID_API_KEY:
+        return EmailDeliveryStatus(
+            status="missing_credentials",
+            from_email=settings.SENDGRID_FROM_EMAIL,
+            detail="Invio email non configurato: chiave SendGrid mancante sul server.",
+        )
+    return EmailDeliveryStatus(
+        status="configured",
+        from_email=settings.SENDGRID_FROM_EMAIL,
+        detail=(
+            f"Invio email attivo tramite il mittente {settings.SENDGRID_FROM_EMAIL}. "
+            "La consegna richiede che questo mittente sia verificato su SendGrid."
+        ),
+    )
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)

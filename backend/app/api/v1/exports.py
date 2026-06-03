@@ -3,11 +3,12 @@ from typing import Dict, List, Optional
 from datetime import date, timedelta
 from uuid import UUID
 import io
+import os
 import logging
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 from app.models.amazon_account import AmazonAccount
@@ -53,6 +54,319 @@ def _forecast_export_job_to_response(job: ForecastExportJob) -> ForecastExportJo
         created_at=job.created_at.isoformat() if job.created_at else "",
         completed_at=job.completed_at.isoformat() if job.completed_at else None,
     )
+
+
+# Brand palette sampled from the Niuexa/Libera "Inthezon — Strategia Amazon" deck.
+# The deck's dominant field is a near-black deep navy; the lockup carries a
+# red→teal→blue→gold accent strip under "INSPIRE MORE.".
+_PPT_NAVY = (7, 8, 12)            # cover / band background (deep navy-black)
+_PPT_INK = (31, 41, 55)          # titles on light slides
+_PPT_GREY = (90, 90, 90)
+_PPT_WHITE = (255, 255, 255)
+_PPT_BODY = (40, 40, 40)
+_PPT_ACCENT = (0, 94, 132)       # brand blue from the accent strip (#005E84)
+_PPT_ACCENT_STRIP = [
+    (207, 41, 43),   # red
+    (18, 176, 177),  # teal
+    (0, 94, 132),    # blue
+    (206, 157, 62),  # gold
+]
+_PPT_FONT = "Nunito"
+
+_PPT_LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "inthezon_logo.png")
+
+
+class _PowerPointBuilder:
+    """Builds a Niuexa/Libera-branded, Italian/European-formatted sales deck."""
+
+    def __init__(self, is_it: bool) -> None:
+        from pptx import Presentation
+
+        self.is_it = is_it
+        self.prs = Presentation()
+        self.width = self.prs.slide_width
+        self.height = self.prs.slide_height
+
+    def _blank(self):
+        return self.prs.slides.add_slide(self.prs.slide_layouts[6])
+
+    def _rgb(self, rgb):
+        from pptx.dml.color import RGBColor
+
+        return RGBColor(*rgb)
+
+    def _set_font(self, font):
+        font.name = _PPT_FONT
+
+    def _accent_strip(self, slide, left, top, width, height):
+        """Draw the brand's multicolour accent strip (red→teal→blue→gold)."""
+        from pptx.util import Inches
+
+        seg = width / len(_PPT_ACCENT_STRIP)
+        for i, col in enumerate(_PPT_ACCENT_STRIP):
+            bar = slide.shapes.add_shape(
+                1, Inches(left + seg * i), Inches(top), Inches(seg), Inches(height)
+            )
+            bar.fill.solid()
+            bar.fill.fore_color.rgb = self._rgb(col)
+            bar.line.fill.background()
+            bar.shadow.inherit = False
+
+    def _textbox(self, slide, left, top, width, height, text, size, *, bold=False,
+                 color=_PPT_INK, align=None):
+        from pptx.util import Inches, Pt
+
+        box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
+        para = box.text_frame.paragraphs[0]
+        para.text = text
+        para.font.size = Pt(size)
+        para.font.bold = bold
+        para.font.color.rgb = self._rgb(color)
+        self._set_font(para.font)
+        if align is not None:
+            para.alignment = align
+        box.text_frame.word_wrap = True
+        return box
+
+    def cover(self, title, period, scope_label, scope_caption, period_caption,
+              source_caption, source_value, footer):
+        from pptx.util import Inches, Pt
+
+        slide = self._blank()
+        # Full-bleed dark band so the white-on-navy logo lockup sits seamlessly.
+        band = slide.shapes.add_shape(1, Inches(0), Inches(0), self.width, Inches(3.7))
+        band.fill.solid()
+        band.fill.fore_color.rgb = self._rgb(_PPT_NAVY)
+        band.line.fill.background()
+        band.shadow.inherit = False
+
+        slide_w_in = self.width / 914400
+        if os.path.exists(_PPT_LOGO_PATH):
+            logo_w = 3.6
+            logo_h = logo_w * 282 / 880
+            slide.shapes.add_picture(
+                _PPT_LOGO_PATH, Inches(0.6), Inches(0.55),
+                Inches(logo_w), Inches(logo_h),
+            )
+        self._textbox(slide, 0.6, 2.15, slide_w_in - 1.2, 1.0, title, 32,
+                      bold=True, color=_PPT_WHITE)
+        self._textbox(slide, 0.6, 3.05, slide_w_in - 1.2, 0.5, period, 16,
+                      color=_PPT_WHITE)
+
+        self._accent_strip(slide, 0.6, 4.0, 3.2, 0.08)
+
+        rows = [
+            (scope_caption, scope_label),
+            (period_caption, period),
+            (source_caption, source_value),
+        ]
+        top = 4.4
+        for caption, value in rows:
+            self._textbox(slide, 0.6, top, 2.6, 0.4, caption, 12, bold=True, color=_PPT_GREY)
+            self._textbox(slide, 3.2, top, 6.2, 0.4, value, 12, color=_PPT_BODY)
+            top += 0.5
+        self._textbox(slide, 0.6, 6.9, 9, 0.4, footer, 11, color=_PPT_GREY)
+
+    def _slide_title(self, slide, title, subtitle=None):
+        self._textbox(slide, 0.6, 0.45, 9, 0.8, title, 28, bold=True, color=_PPT_INK)
+        self._accent_strip(slide, 0.6, 1.18, 1.4, 0.06)
+        if subtitle is not None:
+            self._textbox(slide, 0.6, 1.3, 9, 0.4, subtitle, 12, color=_PPT_GREY)
+
+    def executive_summary(self, title, lines, scope_label, period):
+        from pptx.util import Inches, Pt
+
+        slide = self._blank()
+        self._slide_title(slide, title, f"{period}  ·  {scope_label}")
+        box = slide.shapes.add_textbox(
+            Inches(0.6), Inches(2.0), Inches(8.8), Inches(4.0)
+        )
+        tf = box.text_frame
+        tf.word_wrap = True
+        for idx, line in enumerate(lines):
+            para = tf.paragraphs[0] if idx == 0 else tf.add_paragraph()
+            para.text = f"•  {line}"
+            para.font.size = Pt(16)
+            para.font.color.rgb = self._rgb(_PPT_BODY)
+            self._set_font(para.font)
+            para.space_after = Pt(14)
+
+    def kpi_slide(self, title, subtitle, kpis):
+        from pptx.util import Inches, Pt
+        from pptx.enum.text import PP_ALIGN
+
+        slide = self._blank()
+        self._slide_title(slide, title, subtitle)
+
+        box_w, box_h, gap, cols = Inches(2.9), Inches(1.4), Inches(0.1), 3
+        for index, (label, value) in enumerate(kpis):
+            row, col = divmod(index, cols)
+            left = Inches(0.5) + (box_w + gap) * col
+            top = Inches(2.0) + (box_h + gap) * row
+            shape = slide.shapes.add_shape(1, left, top, box_w, box_h)
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = self._rgb(_PPT_NAVY)
+            shape.line.fill.background()
+            shape.shadow.inherit = False
+            tf = shape.text_frame
+            tf.word_wrap = True
+            p_label = tf.paragraphs[0]
+            p_label.text = label
+            p_label.font.size = Pt(12)
+            p_label.font.color.rgb = self._rgb(_PPT_WHITE)
+            self._set_font(p_label.font)
+            p_label.alignment = PP_ALIGN.CENTER
+            p_value = tf.add_paragraph()
+            p_value.text = value
+            p_value.font.size = Pt(22)
+            p_value.font.bold = True
+            p_value.font.color.rgb = self._rgb(_PPT_WHITE)
+            self._set_font(p_value.font)
+            p_value.alignment = PP_ALIGN.CENTER
+
+    def trend_slide(self, title, trend_rows, value_caption):
+        from pptx.util import Inches
+        from pptx.chart.data import CategoryChartData
+        from pptx.enum.chart import XL_CHART_TYPE
+
+        slide = self._blank()
+        self._slide_title(slide, title)
+
+        chart_data = CategoryChartData()
+        chart_data.categories = [
+            r["report_date"].isoformat() if hasattr(r["report_date"], "isoformat")
+            else str(r["report_date"])
+            for r in trend_rows
+        ]
+        chart_data.add_series(value_caption, [float(r["revenue"]) for r in trend_rows])
+        gframe = slide.shapes.add_chart(
+            XL_CHART_TYPE.COLUMN_CLUSTERED,
+            Inches(0.5), Inches(1.7), Inches(9), Inches(4.8),
+            chart_data,
+        )
+        self._brand_chart(gframe.chart)
+
+    def _brand_chart(self, chart):
+        from pptx.dml.color import RGBColor
+
+        chart.has_legend = False
+        plot = chart.plots[0]
+        for series in plot.series:
+            series.format.fill.solid()
+            series.format.fill.fore_color.rgb = RGBColor(*_PPT_ACCENT)
+        try:
+            chart.font.name = _PPT_FONT
+        except Exception:
+            pass
+
+    def top_products_slide(self, title, note, headers, rows):
+        from pptx.util import Inches, Pt
+        from pptx.enum.text import PP_ALIGN
+
+        slide = self._blank()
+        self._slide_title(slide, title, note)
+
+        n_rows = len(rows) + 1
+        n_cols = len(headers)
+        table_shape = slide.shapes.add_table(
+            n_rows, n_cols, Inches(0.5), Inches(1.9), Inches(9), Inches(0.4 * n_rows)
+        )
+        table = table_shape.table
+        table.columns[0].width = Inches(1.6)
+        table.columns[1].width = Inches(4.4)
+        table.columns[2].width = Inches(1.3)
+        table.columns[3].width = Inches(1.7)
+
+        for c, header in enumerate(headers):
+            cell = table.cell(0, c)
+            cell.text = header
+            para = cell.text_frame.paragraphs[0]
+            para.font.bold = True
+            para.font.size = Pt(12)
+            para.font.color.rgb = self._rgb(_PPT_WHITE)
+            self._set_font(para.font)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = self._rgb(_PPT_NAVY)
+
+        for r, row in enumerate(rows, start=1):
+            for c, value in enumerate(row):
+                cell = table.cell(r, c)
+                cell.text = str(value)
+                para = cell.text_frame.paragraphs[0]
+                para.font.size = Pt(11)
+                self._set_font(para.font)
+                if c >= 2:
+                    para.alignment = PP_ALIGN.RIGHT
+
+    def agency_slide(self, title, description, services_caption, services,
+                     contacts_caption, contacts, footer):
+        from pptx.util import Inches, Pt
+
+        slide = self._blank()
+        band = slide.shapes.add_shape(1, Inches(0), Inches(0), self.width, Inches(1.5))
+        band.fill.solid()
+        band.fill.fore_color.rgb = self._rgb(_PPT_NAVY)
+        band.line.fill.background()
+        band.shadow.inherit = False
+
+        slide_w_in = self.width / 914400
+        if os.path.exists(_PPT_LOGO_PATH):
+            logo_w = 2.8
+            logo_h = logo_w * 282 / 880
+            slide.shapes.add_picture(
+                _PPT_LOGO_PATH, Inches(0.6), Inches(0.35),
+                Inches(logo_w), Inches(logo_h),
+            )
+        self._accent_strip(slide, 0.6, 1.75, 2.0, 0.07)
+
+        self._textbox(slide, 0.6, 2.0, slide_w_in - 1.2, 0.6, title, 24,
+                      bold=True, color=_PPT_INK)
+
+        box = slide.shapes.add_textbox(
+            Inches(0.6), Inches(2.7), Inches(slide_w_in - 1.2), Inches(1.6)
+        )
+        tf = box.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.text = description
+        p.font.size = Pt(13)
+        p.font.color.rgb = self._rgb(_PPT_BODY)
+        self._set_font(p.font)
+
+        self._textbox(slide, 0.6, 4.5, 4.4, 0.4, services_caption, 12,
+                      bold=True, color=_PPT_ACCENT)
+        sbox = slide.shapes.add_textbox(Inches(0.6), Inches(4.9), Inches(4.4), Inches(2.0))
+        stf = sbox.text_frame
+        stf.word_wrap = True
+        for idx, svc in enumerate(services):
+            para = stf.paragraphs[0] if idx == 0 else stf.add_paragraph()
+            para.text = f"•  {svc}"
+            para.font.size = Pt(12)
+            para.font.color.rgb = self._rgb(_PPT_BODY)
+            self._set_font(para.font)
+            para.space_after = Pt(6)
+
+        self._textbox(slide, 5.4, 4.5, 4.0, 0.4, contacts_caption, 12,
+                      bold=True, color=_PPT_ACCENT)
+        cbox = slide.shapes.add_textbox(Inches(5.4), Inches(4.9), Inches(4.0), Inches(2.0))
+        ctf = cbox.text_frame
+        ctf.word_wrap = True
+        for idx, line in enumerate(contacts):
+            para = ctf.paragraphs[0] if idx == 0 else ctf.add_paragraph()
+            para.text = line
+            para.font.size = Pt(12)
+            para.font.color.rgb = self._rgb(_PPT_BODY)
+            self._set_font(para.font)
+            para.space_after = Pt(6)
+
+        self._textbox(slide, 0.6, 6.95, slide_w_in - 1.2, 0.4, footer, 10,
+                      color=_PPT_GREY)
+
+    def to_bytes(self) -> io.BytesIO:
+        output = io.BytesIO()
+        self.prs.save(output)
+        output.seek(0)
+        return output
 
 
 @router.post("/csv")
@@ -328,174 +642,161 @@ async def export_to_powerpoint(
     start_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
     end_date: date = Query(default_factory=lambda: date.today()),
     account_ids: Optional[List[UUID]] = Query(default=None),
+    group_by: str = Query(default="month", regex="^(day|week|month)$"),
     template: str = Query(default="default"),
-    language: str = Query(default="en", regex="^(en|it)$"),
+    language: str = Query(default="it", regex="^(en|it)$"),
 ):
-    """Generate PowerPoint presentation."""
-    from pptx import Presentation
-    from pptx.util import Inches, Pt
-    from pptx.dml.color import RGBColor
-    from pptx.enum.text import PP_ALIGN
+    """Generate an Italian, European-formatted PowerPoint deck."""
+    from app.services.export_service import format_money_eu, format_int_eu
 
-    accounts_result = await db.execute(
-        select(AmazonAccount).where(AmazonAccount.organization_id == organization.id)
-    )
-    all_accounts = list(accounts_result.scalars().all())
-    if account_ids:
-        wanted = set(account_ids)
-        scoped_accounts = [a for a in all_accounts if a.id in wanted]
-    else:
-        scoped_accounts = all_accounts
+    export_service = ExportService(db)
+    scoped_accounts = await export_service._get_accounts(organization.id, account_ids)
     scoped_account_ids = [a.id for a in scoped_accounts]
 
-    # Totals come from the same daily aggregate rows used everywhere else
-    # (export_service, sales reports). Summing per-ASIN rows alongside the
-    # DAILY_TOTAL_ASIN aggregate double-counts revenue/units/orders.
-    totals_revenue = 0.0
-    totals_units = 0
-    totals_orders = 0
-    active_asins = 0
-    currency = "EUR"
-    if scoped_account_ids:
-        totals_query = (
-            select(
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
-                func.sum(SalesData.units_ordered).label("units"),
-                func.sum(SalesData.total_order_items).label("orders"),
-                func.max(SalesData.currency).label("currency"),
-            )
-            .where(
-                SalesData.account_id.in_(scoped_account_ids),
-                SalesData.asin == DAILY_TOTAL_ASIN,
-                SalesData.date >= start_date,
-                SalesData.date <= end_date,
-            )
-        )
-        totals = (await db.execute(totals_query)).one()
-        totals_revenue = float(totals.revenue or 0)
-        totals_units = int(totals.units or 0)
-        totals_orders = int(totals.orders or 0)
-        currency = totals.currency or "EUR"
+    summary = await export_service._sales_summary(scoped_account_ids, start_date, end_date)
+    trend_rows = await export_service._sales_trend_rows(
+        scoped_account_ids, start_date, end_date, group_by
+    )
+    product_rows = await export_service._sales_product_rows(
+        scoped_account_ids, start_date, end_date
+    )
 
-        active_asins_query = (
-            select(func.count(func.distinct(SalesData.asin)))
-            .where(
-                SalesData.account_id.in_(scoped_account_ids),
-                SalesData.asin != DAILY_TOTAL_ASIN,
-                SalesData.date >= start_date,
-                SalesData.date <= end_date,
-            )
-        )
-        active_asins = int((await db.execute(active_asins_query)).scalar() or 0)
+    currency = "EUR"
+    for row in trend_rows:
+        if row.get("currency"):
+            currency = row["currency"]
+            break
 
     is_it = language == "it"
 
-    def _label(en: str, it: str) -> str:
+    def L(en: str, it: str) -> str:
         return it if is_it else en
 
-    def _money(value: float) -> str:
-        if currency == "EUR":
-            return f"€{value:,.2f}"
-        if currency == "USD":
-            return f"${value:,.2f}"
-        if currency == "GBP":
-            return f"£{value:,.2f}"
-        return f"{value:,.2f} {currency}"
-
-    def _safe_divide(a: float, b: float) -> float:
-        return (a / b) if b else 0.0
+    def money(value: float) -> str:
+        return format_money_eu(value, currency)
 
     scope_label = (
         ", ".join(a.account_name for a in scoped_accounts)
         if scoped_accounts
-        else _label("All accounts", "Tutti gli account")
+        else L("All accounts", "Tutti gli account")
     )
     if len(scope_label) > 80:
         scope_label = scope_label[:77] + "…"
 
-    prs = Presentation()
-
-    title_slide_layout = prs.slide_layouts[0]
-    slide = prs.slides.add_slide(title_slide_layout)
-    slide.shapes.title.text = _label(
-        "Amazon Performance Report", "Report Prestazioni Amazon"
-    )
-    slide.placeholders[1].text = (
-        f"{start_date.isoformat()} — {end_date.isoformat()}\n"
-        f"{_label('Account scope', 'Ambito account')}: {scope_label}\n"
-        f"{_label('Generated by Inthezon', 'Generato da Inthezon')}"
-    )
-
-    blank_slide_layout = prs.slide_layouts[6]
-    slide = prs.slides.add_slide(blank_slide_layout)
-
-    txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.4), Inches(9), Inches(0.8))
-    title_para = txBox.text_frame.paragraphs[0]
-    title_para.text = _label("Key Performance Indicators", "Indicatori di Performance")
-    title_para.font.size = Pt(28)
-    title_para.font.bold = True
-
-    period_box = slide.shapes.add_textbox(
-        Inches(0.5), Inches(1.15), Inches(9), Inches(0.4)
-    )
-    period_para = period_box.text_frame.paragraphs[0]
-    period_para.text = (
-        f"{_label('Period', 'Periodo')}: {start_date.isoformat()} — {end_date.isoformat()}  ·  "
-        f"{_label('Scope', 'Ambito')}: {scope_label}"
-    )
-    period_para.font.size = Pt(12)
-    period_para.font.color.rgb = RGBColor(90, 90, 90)
-
-    kpis = [
-        (_label("Total Revenue", "Fatturato Totale"), _money(totals_revenue)),
-        (_label("Units Sold", "Unità Vendute"), f"{totals_units:,}"),
-        (_label("Total Orders", "Ordini Totali"), f"{totals_orders:,}"),
-        (
-            _label("Avg. Order Value", "Valore Medio Ordine"),
-            _money(_safe_divide(totals_revenue, totals_orders)),
+    builder = _PowerPointBuilder(is_it=is_it)
+    builder.cover(
+        title=L("Amazon Performance Report", "Report Prestazioni Amazon"),
+        period=f"{start_date.isoformat()} — {end_date.isoformat()}",
+        scope_label=scope_label,
+        scope_caption=L("Account scope", "Ambito account"),
+        period_caption=L("Period", "Periodo"),
+        source_caption=L("Data source", "Fonte dati"),
+        source_value=L(
+            "Amazon SP-API — confirmed daily sales",
+            "Amazon SP-API — vendite giornaliere confermate",
         ),
-        (
-            _label("Avg. Selling Price", "Prezzo Medio Vendita"),
-            _money(_safe_divide(totals_revenue, totals_units)),
+        footer=L("Generated by Inthezon", "Generato da Inthezon"),
+    )
+
+    builder.executive_summary(
+        title=L("Executive Summary", "Sintesi Esecutiva"),
+        lines=[
+            L(
+                f"Confirmed revenue of {money(summary['revenue'])} over the selected period.",
+                f"Fatturato confermato di {money(summary['revenue'])} nel periodo selezionato.",
+            ),
+            L(
+                f"{format_int_eu(summary['units'])} units sold across {format_int_eu(summary['orders'])} orders.",
+                f"{format_int_eu(summary['units'])} unità vendute su {format_int_eu(summary['orders'])} ordini.",
+            ),
+            L(
+                f"Average order value of {money(summary['average_order_value'])} "
+                f"and {format_int_eu(summary['active_asins'])} active ASINs.",
+                f"Valore medio ordine di {money(summary['average_order_value'])} "
+                f"e {format_int_eu(summary['active_asins'])} ASIN attivi.",
+            ),
+        ],
+        scope_label=scope_label,
+        period=f"{start_date.isoformat()} — {end_date.isoformat()}",
+    )
+
+    builder.kpi_slide(
+        title=L("Key Performance Indicators", "Indicatori di Performance"),
+        subtitle=f"{L('Period', 'Periodo')}: {start_date.isoformat()} — {end_date.isoformat()}  ·  "
+        f"{L('Scope', 'Ambito')}: {scope_label}",
+        kpis=[
+            (L("Total Revenue", "Fatturato Totale"), money(summary["revenue"])),
+            (L("Units Sold", "Unità Vendute"), format_int_eu(summary["units"])),
+            (L("Total Orders", "Ordini Totali"), format_int_eu(summary["orders"])),
+            (L("Avg. Order Value", "Valore Medio Ordine"), money(summary["average_order_value"])),
+            (L("Avg. Selling Price", "Prezzo Medio Vendita"), money(summary["average_selling_price"])),
+            (L("Active ASINs", "ASIN Attivi"), format_int_eu(summary["active_asins"])),
+        ],
+    )
+
+    if trend_rows:
+        builder.trend_slide(
+            title=L("Revenue Trend", "Andamento Fatturato"),
+            trend_rows=trend_rows,
+            value_caption=L("Revenue", "Fatturato"),
+        )
+
+    if product_rows:
+        builder.top_products_slide(
+            title=L("Top Products", "Prodotti Principali"),
+            note=L(
+                "Estimated revenue from Amazon's by-ASIN report.",
+                "Fatturato stimato dal report per ASIN di Amazon.",
+            ),
+            headers=[
+                L("ASIN", "ASIN"),
+                L("Product", "Prodotto"),
+                L("Units", "Unità"),
+                L("Revenue", "Fatturato"),
+            ],
+            rows=[
+                (
+                    r["asin"],
+                    (r["title"] or "")[:42],
+                    format_int_eu(r["units"]),
+                    money(r["revenue"]),
+                )
+                for r in product_rows[:10]
+            ],
+        )
+
+    builder.agency_slide(
+        title=L("About the agency", "Chi siamo"),
+        description=L(
+            "Inthezon is the Amazon consulting practice of Libera Brand Building "
+            "Group, an independent Italian communication group. We design "
+            "omnichannel strategies that grow brand value on the marketplaces, "
+            "combining creativity, technology, trend analysis and media planning.",
+            "Inthezon è la practice di consulenza Amazon di Libera Brand Building "
+            "Group, gruppo di comunicazione italiano e indipendente. Realizziamo "
+            "strategie omnicanale per accrescere il valore del brand sui "
+            "marketplace, unendo creatività, tecnologia, trend analysis e media "
+            "planning.",
         ),
-        (_label("Active ASINs", "ASIN Attivi"), f"{active_asins:,}"),
-    ]
+        services_caption=L("Amazon consulting", "Consulenza Amazon"),
+        services=[
+            L("Profile & account management", "Gestione profilo e account"),
+            L("Media planning & advertising", "Media planning e advertising"),
+            L("Catalogue & content optimization", "Ottimizzazione catalogo e contenuti"),
+            L("Performance analytics & reporting", "Analisi performance e reporting"),
+        ],
+        contacts_caption=L("Contacts", "Contatti"),
+        contacts=[
+            "Libera Brand Building Group",
+            "Via Andreis 18 — Torino",
+            "Via Rutilia 10/8 — Milano",
+            "liberabrandbuilding.group",
+        ],
+        footer=L("Generated by Inthezon", "Generato da Inthezon"),
+    )
 
-    box_width = Inches(2.9)
-    box_height = Inches(1.4)
-    gap = Inches(0.1)
-    columns = 3
-    for index, (label, value) in enumerate(kpis):
-        row = index // columns
-        col = index % columns
-        left = Inches(0.5) + (box_width + gap) * col
-        top = Inches(1.8) + (box_height + gap) * row
-
-        shape = slide.shapes.add_shape(1, left, top, box_width, box_height)
-        shape.fill.solid()
-        shape.fill.fore_color.rgb = RGBColor(31, 78, 121)
-        shape.line.fill.background()
-
-        tf = shape.text_frame
-        tf.word_wrap = True
-        p_label = tf.paragraphs[0]
-        p_label.text = label
-        p_label.font.size = Pt(12)
-        p_label.font.color.rgb = RGBColor(255, 255, 255)
-        p_label.alignment = PP_ALIGN.CENTER
-
-        p_value = tf.add_paragraph()
-        p_value.text = value
-        p_value.font.size = Pt(22)
-        p_value.font.bold = True
-        p_value.font.color.rgb = RGBColor(255, 255, 255)
-        p_value.alignment = PP_ALIGN.CENTER
-
-    output = io.BytesIO()
-    prs.save(output)
-    output.seek(0)
-
-    filename = f"inthezon_presentation_{start_date}_{end_date}.pptx"
+    output = builder.to_bytes()
+    filename = f"inthezon_presentation_{start_date}_{end_date}_{language}.pptx"
 
     return StreamingResponse(
         output,

@@ -1,5 +1,6 @@
 import { useTranslation } from '@/i18n'
 import { Badge } from '@/components/ui/badge'
+import { formatEur } from '@/lib/market-research'
 import type { ProductSnapshot, CompetitorSnapshot } from '@/types'
 
 interface CompetitorTableProps {
@@ -10,11 +11,6 @@ interface CompetitorTableProps {
 function formatValue(val: number | null | undefined): string {
   if (val == null) return '—'
   return val.toLocaleString()
-}
-
-function formatPrice(val: number | null | undefined): string {
-  if (val == null) return '—'
-  return `$${val.toFixed(2)}`
 }
 
 function formatRating(val: number | null | undefined): string {
@@ -88,7 +84,7 @@ export default function CompetitorTable({ product, competitors }: CompetitorTabl
                 {data.title || '—'}
               </td>
               <td className={`py-2 px-3 text-right ${isSource ? '' : cellClass(compare(product.price, data.price, true))}`}>
-                {formatPrice(data.price)}
+                {formatEur(data.price)}
               </td>
               <td className={`py-2 px-3 text-right ${isSource ? '' : cellClass(compare(product.bsr, data.bsr, true))}`}>
                 {formatValue(data.bsr)}

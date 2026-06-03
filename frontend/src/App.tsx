@@ -21,6 +21,7 @@ import Settings from '@/pages/Settings'
 import Advertising from '@/pages/Advertising'
 import Alerts from '@/pages/Alerts'
 import Accounts from '@/pages/Accounts'
+import NotFound from '@/pages/NotFound'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -61,7 +62,7 @@ function App() {
   }
 
   return (
-    <>
+    <ErrorBoundary>
       <Routes>
         <Route path="/login" element={
           isAuthenticated ? <Navigate to="/" replace /> : <Login />
@@ -101,10 +102,16 @@ function App() {
           <Route path="recommendations" element={<Recommendations />} />
           <Route path="alerts" element={<Alerts />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="*" element={<NotFound />} />
         </Route>
+
+        <Route
+          path="*"
+          element={isAuthenticated ? <Navigate to="/" replace /> : <Navigate to="/login" replace />}
+        />
       </Routes>
       <Toaster />
-    </>
+    </ErrorBoundary>
   )
 }
 

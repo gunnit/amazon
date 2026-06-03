@@ -67,6 +67,27 @@ def _fmt_price(value: Optional[float]) -> str:
     return f"\u20ac{value:,.2f}"
 
 
+def _usable_prices(values: List[Optional[float]]) -> List[float]:
+    """Positive prices with repeated-sentinel placeholders removed.
+
+    Mirrors the frontend/comparison-matrix sanitization so the PDF averages
+    and ranges never include a placeholder amount echoed across listings.
+    """
+    positive = [float(v) for v in values if v is not None and float(v) > 0]
+    if len(positive) < 3:
+        return positive
+
+    counts: Dict[float, int] = {}
+    for value in positive:
+        counts[value] = counts.get(value, 0) + 1
+    sentinels = {
+        value
+        for value, count in counts.items()
+        if count >= 3 and count / len(positive) >= 0.3
+    }
+    return [value for value in positive if value not in sentinels]
+
+
 def _fmt_number(value: Optional[int | float], decimals: int = 0) -> str:
     if value is None:
         return "—"
@@ -143,7 +164,23 @@ class MarketResearchPdfBuilder:
         self.ai: dict = _latin1_safe(report.ai_analysis or {})
         self.is_market_search = (report.title or "").startswith("Market Search:")
         self.title = _latin1_safe(report.title or "")
+        self.search_query = self._extract_search_query(report.title)
         self._styles = self._build_styles()
+
+    @staticmethod
+    def _extract_search_query(title: Optional[str]) -> Optional[str]:
+        """Recover the original keyword/brand query from a market-search title.
+
+        Titles are stored as ``Market Search: <query> (<n> products)`` so the
+        PDF can show the real query the user typed instead of a reference ASIN.
+        """
+        if not title or not title.startswith("Market Search:"):
+            return None
+        query = title[len("Market Search:"):].strip()
+        # Strip a trailing " (N products)" suffix when present.
+        if query.endswith(")") and "(" in query:
+            query = query[: query.rfind("(")].strip()
+        return _latin1_safe(query) or None
 
     def _t(self, key: str) -> str:
         return t(key, self.lang)
@@ -334,9 +371,21 @@ class MarketResearchPdfBuilder:
 
         # Metadata
         meta_items = []
-        if self.product.get("asin"):
-            label = self._t("cover_source_asin") if not self.is_market_search else self._t("cover_search_query")
-            meta_items.append(f"<b>{label}:</b>  {self.product.get('asin', '—')}")
+        if self.is_market_search:
+            # Show the real keyword/brand the user searched, plus the reference
+            # ASIN that anchored the comparison (not as the "query").
+            if self.search_query:
+                meta_items.append(
+                    f"<b>{self._t('cover_search_query')}:</b>  {self.search_query}"
+                )
+            if self.product.get("asin"):
+                meta_items.append(
+                    f"<b>{self._t('cover_source_asin')}:</b>  {self.product.get('asin')}"
+                )
+        elif self.product.get("asin"):
+            meta_items.append(
+                f"<b>{self._t('cover_source_asin')}:</b>  {self.product.get('asin', '—')}"
+            )
         if self.report.marketplace:
             meta_items.append(f"<b>{self._t('cover_marketplace')}:</b>  {self.report.marketplace}")
         if self.report.completed_at:
@@ -442,7 +491,7 @@ class MarketResearchPdfBuilder:
         # Market Overview (4-metric grid)
         all_products = [self.product] + self.competitors if self.product else self.competitors
         if all_products:
-            prices = [p.get("price") for p in all_products if p.get("price") is not None]
+            prices = _usable_prices([p.get("price") for p in all_products])
             bsrs = [p.get("bsr") for p in all_products if p.get("bsr") is not None]
             brands = set(p.get("brand") for p in all_products if p.get("brand"))
 

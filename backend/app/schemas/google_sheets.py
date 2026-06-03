@@ -26,13 +26,19 @@ class WeeklyScheduleConfig(DailyScheduleConfig):
 
 
 class GoogleSheetsConnectionResponse(BaseModel):
-    """Read model for a Google Sheets OAuth connection."""
+    """Read model for a Google Sheets OAuth connection.
 
-    id: UUID
-    google_email: str
-    is_active: bool
-    connected_at: datetime
-    scopes: list[str]
+    Always returned with HTTP 200. When no connection exists, ``connected`` is
+    ``False`` and the connection fields are ``None`` so the client can probe the
+    state without a noisy 404 on every page load.
+    """
+
+    connected: bool = True
+    id: Optional[UUID] = None
+    google_email: Optional[str] = None
+    is_active: Optional[bool] = None
+    connected_at: Optional[datetime] = None
+    scopes: list[str] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

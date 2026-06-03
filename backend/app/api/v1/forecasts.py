@@ -113,7 +113,6 @@ async def list_forecasts(
         select(Forecast)
         .where(Forecast.account_id.in_(accounts_query))
         .order_by(Forecast.generated_at.desc())
-        .limit(limit)
     )
 
     if forecast_type:
@@ -122,8 +121,23 @@ async def list_forecasts(
     result = await db.execute(query)
     forecasts = result.scalars().all()
 
-    responses = []
+    # Keep only the most recent forecast per (account, ASIN). Regenerating a
+    # forecast inserts a new row, so without this the list shows the same
+    # account/ASIN 2–4 times. Rows are already newest-first, so the first one
+    # seen per key wins.
+    seen: set[tuple] = set()
+    deduped = []
     for f in forecasts:
+        key = (f.account_id, f.asin)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(f)
+        if len(deduped) >= limit:
+            break
+
+    responses = []
+    for f in deduped:
         historical = await _fetch_historical(db, f.account_id, f.asin)
         responses.append(_build_response(f, historical))
     return responses

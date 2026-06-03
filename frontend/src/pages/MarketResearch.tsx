@@ -26,6 +26,7 @@ import {
 import { useToast } from '@/components/ui/use-toast'
 import { marketResearchApi, accountsApi, catalogApi } from '@/services/api'
 import { cn, formatDate, formatNumber, formatPercent } from '@/lib/utils'
+import { formatEur, hasCompetitiveMetrics } from '@/lib/market-research'
 import { useTranslation } from '@/i18n'
 import { useLanguageStore } from '@/store/languageStore'
 import AsinInput from '@/components/market-research/AsinInput'
@@ -67,8 +68,6 @@ function reportTypeLabelKey(report: { title?: string | null } | null | undefined
     : 'marketResearch.productAnalysisTab'
 }
 
-const eurFormatter = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' })
-
 type ComparisonResult = 'better' | 'worse' | 'neutral'
 
 function isLowerBetterDimension(name: ComparisonDimension['name']): boolean {
@@ -97,7 +96,7 @@ function formatDimensionValue(
 
   switch (name) {
     case 'price':
-      return eurFormatter.format(value)
+      return formatEur(value)
     case 'rating':
       return value.toFixed(1)
     case 'bsr':
@@ -352,6 +351,14 @@ export default function MarketResearch() {
       competitor.review_count != null ||
       competitor.rating != null,
   )
+
+  // Radar and position benchmarks need a non-price metric (BSR/reviews/rating).
+  // With price alone the radar collapses to one axis and looks fabricated, so
+  // we hide it and say so instead of charting a meaningless shape.
+  const competitiveMetricsAvailable = hasCompetitiveMetrics([
+    ...(selectedReport?.product_snapshot ? [selectedReport.product_snapshot] : []),
+    ...(selectedReport?.competitor_data || []),
+  ])
 
   // When a report finishes (completed/failed), refresh the list so the badge updates
   useEffect(() => {
@@ -773,9 +780,23 @@ export default function MarketResearch() {
                 </Card>
               )}
 
-              <div className="grid gap-4 md:grid-cols-2">
+              {selectedReport.product_snapshot && selectedReport.competitor_data && !competitiveMetricsAvailable && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <AlertCircle className="h-5 w-5 text-amber-500" />
+                      {t('marketResearch.competitiveMetricsUnavailable')}
+                    </CardTitle>
+                    <CardDescription>
+                      {t('marketResearch.competitiveMetricsUnavailableDesc')}
+                    </CardDescription>
+                  </CardHeader>
+                </Card>
+              )}
+
+              <div className={cn('grid gap-4 md:grid-cols-2', !competitiveMetricsAvailable && 'hidden')}>
                 {/* Radar Chart */}
-                {selectedReport.product_snapshot && selectedReport.competitor_data && (
+                {competitiveMetricsAvailable && selectedReport.product_snapshot && selectedReport.competitor_data && (
                   <Card>
                     <CardHeader>
                       <CardTitle>{t('marketResearch.radarTitle')}</CardTitle>
@@ -856,7 +877,7 @@ export default function MarketResearch() {
                   </Card>
                 )}
 
-                {selectedReport.product_snapshot && selectedReport.competitor_data && (
+                {competitiveMetricsAvailable && selectedReport.product_snapshot && selectedReport.competitor_data && (
                   <MarketPositionSummary
                     product={selectedReport.product_snapshot}
                     competitors={selectedReport.competitor_data}
@@ -889,17 +910,21 @@ export default function MarketResearch() {
                       <div className="rounded-lg border px-4 py-3 md:w-[240px]">
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-xs font-medium text-muted-foreground">
-                            {t('marketResearch.overallScore')}
+                            {competitiveMetricsAvailable
+                              ? t('marketResearch.overallScore')
+                              : t('marketResearch.pricePositionScore')}
                           </p>
                           <Badge variant="secondary">
                             {comparisonMatrix.overall_score != null
                               ? `${comparisonMatrix.overall_score.toFixed(1)}/100`
-                              : 'N/A'}
+                              : t('marketResearch.noData')}
                           </Badge>
                         </div>
                         <Progress value={comparisonMatrix.overall_score ?? 0} className="mt-3 h-2" />
                         <p className="mt-2 text-xs text-muted-foreground">
-                          {t('marketResearch.overallScoreHelper')}
+                          {competitiveMetricsAvailable
+                            ? t('marketResearch.overallScoreHelper')
+                            : t('marketResearch.pricePositionScoreHelper')}
                         </p>
                       </div>
                     </CardHeader>
