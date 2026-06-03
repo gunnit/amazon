@@ -1,6 +1,6 @@
 """Add confidence level to strategic recommendations.
 
-Revision ID: 025_add_recommendation_confidence
+Revision ID: 025_recommendation_confidence
 Revises: 024_sales_data_traffic_cols
 Create Date: 2026-06-03
 """
@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "025_add_recommendation_confidence"
+revision = "025_recommendation_confidence"
 down_revision = "024_sales_data_traffic_cols"
 branch_labels = None
 depends_on = None
