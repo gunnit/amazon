@@ -841,6 +841,8 @@ export const exportsApi = {
     start_date: string
     end_date: string
     account_ids?: string[]
+    group_by?: string
+    language?: 'en' | 'it'
   }): Promise<Blob> => {
     const response = await api.post('/exports/powerpoint', null, {
       params,
