@@ -210,7 +210,9 @@ export function PerProductPerformanceTable({ dateRange, accountIds, enabled }: P
               {!query.isLoading && items.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
-                    {t('analytics.perProduct.empty')}
+                    {search
+                      ? t('analytics.perProduct.emptySearch')
+                      : t('analytics.perProduct.empty')}
                   </TableCell>
                 </TableRow>
               )}

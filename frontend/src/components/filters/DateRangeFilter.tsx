@@ -32,8 +32,16 @@ export function DateRangeFilter() {
   const { datePreset, customStartDate, customEndDate, setDatePreset, setCustomDateRange } =
     useFilterStore()
   const [calendarOpen, setCalendarOpen] = useState(false)
+  // A fresh, in-progress selection. Driving the calendar from this alone (rather
+  // than seeding it with the already-applied range) guarantees the first click
+  // starts a new range instead of extending the previous one.
   const [pendingRange, setPendingRange] = useState<DateRange | undefined>(undefined)
   const { t } = useTranslation()
+
+  const openCalendar = () => {
+    setPendingRange(undefined)
+    setCalendarOpen(true)
+  }
 
   const handlePresetChange = (value: string) => {
     if (value === 'custom') {
@@ -41,7 +49,7 @@ export function DateRangeFilter() {
       // Defer opening the popover so the Select's own dropdown finishes closing.
       // Without this, Radix can treat the Select's close-click as a click-outside
       // for the freshly-mounted Popover and immediately close it again.
-      setTimeout(() => setCalendarOpen(true), 60)
+      setTimeout(openCalendar, 60)
     } else {
       setCalendarOpen(false)
       setPendingRange(undefined)
@@ -49,15 +57,28 @@ export function DateRangeFilter() {
     }
   }
 
-  const handleDateSelect = (range: DateRange | undefined) => {
-    setPendingRange(range)
-    if (range?.from && range?.to) {
-      const start = format(range.from, 'yyyy-MM-dd')
-      const end = format(range.to, 'yyyy-MM-dd')
-      setCustomDateRange(start, end)
-      setCalendarOpen(false)
+  const handleCalendarOpenChange = (open: boolean) => {
+    if (open) {
+      // Always begin a clean selection so a stale range can't be extended.
       setPendingRange(undefined)
     }
+    setCalendarOpen(open)
+  }
+
+  // Build the range ourselves from the clicked day so behaviour is deterministic:
+  // the first click of a new selection starts the range, the second closes it.
+  const handleDateSelect = (_range: DateRange | undefined, selectedDay: Date) => {
+    const inProgress = pendingRange?.from && !pendingRange?.to
+    if (!inProgress) {
+      setPendingRange({ from: selectedDay, to: undefined })
+      return
+    }
+
+    const from = pendingRange!.from!
+    const [start, end] = selectedDay < from ? [selectedDay, from] : [from, selectedDay]
+    setCustomDateRange(format(start, 'yyyy-MM-dd'), format(end, 'yyyy-MM-dd'))
+    setCalendarOpen(false)
+    setPendingRange(undefined)
   }
 
   const displayLabel =
@@ -65,10 +86,10 @@ export function DateRangeFilter() {
       ? `${format(new Date(customStartDate + 'T00:00:00'), 'MMM d, yyyy')} - ${format(new Date(customEndDate + 'T00:00:00'), 'MMM d, yyyy')}`
       : undefined
 
-  const calendarFrom =
-    pendingRange?.from ?? (customStartDate ? new Date(customStartDate + 'T00:00:00') : undefined)
-  const calendarTo =
-    pendingRange?.to ?? (customEndDate ? new Date(customEndDate + 'T00:00:00') : undefined)
+  const calendarFrom = pendingRange?.from
+  const calendarTo = pendingRange?.to
+  const defaultMonth =
+    calendarFrom ?? (customStartDate ? new Date(customStartDate + 'T00:00:00') : subMonths(new Date(), 1))
 
   return (
     <div className="flex items-center gap-2">
@@ -93,7 +114,7 @@ export function DateRangeFilter() {
       {/* Always render the Popover when in custom mode so its mount lifecycle
           doesn't race with the Select close event. */}
       {datePreset === 'custom' && (
-        <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+        <Popover open={calendarOpen} onOpenChange={handleCalendarOpenChange}>
           <PopoverTrigger asChild>
             <Button variant="outline" size="sm" className="h-9 text-xs whitespace-nowrap">
               {displayLabel ?? t('filter.pickDates')}
@@ -110,7 +131,7 @@ export function DateRangeFilter() {
               selected={{ from: calendarFrom, to: calendarTo }}
               onSelect={handleDateSelect}
               numberOfMonths={2}
-              defaultMonth={calendarFrom ?? subMonths(new Date(), 1)}
+              defaultMonth={defaultMonth}
               disabled={{ after: new Date() }}
             />
           </PopoverContent>
