@@ -183,6 +183,8 @@ const it: Record<string, string> = {
   'dashboard.trendDescMixed': 'Attività giornaliera seller con i totali mensili vendor sovrapposti.',
   'dashboard.seriesSeller': 'Seller (giornaliero)',
   'dashboard.seriesVendor': 'Vendor (mensile)',
+  'granularity.monthly': 'Dati mensili Vendor',
+  'granularity.mixed': 'Dati misti: Vendor mensile + Seller giornaliero',
   'dashboard.trendingProducts': 'Prodotti in trend',
   'dashboard.trendingProductsDesc': 'Top prodotti in crescita e in calo sulle ultime 2 settimane, confrontando gli ultimi 7 giorni con i 7 precedenti.',
   'dashboard.topRisingProducts': 'Top prodotti in crescita',

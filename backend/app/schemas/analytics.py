@@ -178,6 +178,7 @@ class AdsVsOrganicResponse(BaseModel):
     time_series: List[AdsVsOrganicTimeSeriesPoint]
     asin_breakdown: Optional[List[AdsVsOrganicAsinBreakdownItem]] = None
     group_by: str = "day"
+    granularity: str = "unknown"
     asin: Optional[str] = None
     attribution_notes: List[str] = Field(default_factory=list)
 

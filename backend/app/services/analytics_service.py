@@ -6,10 +6,12 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, cast, Date, and_
 
+from app.models.amazon_account import AmazonAccount
 from app.models.sales_data import SalesData
 from app.models.advertising import AdvertisingMetrics, AdvertisingCampaign, AdvertisingMetricsByAsin
 from app.models.product import Product, BSRHistory
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.granularity import Granularity, granularity_for_account_types
 
 
 class AnalyticsService:
@@ -288,6 +290,17 @@ class AnalyticsService:
             "roas": sales / cost if cost > 0 else 0,
         }
 
+    async def _resolve_granularity(self, account_ids: List[UUID]) -> Granularity:
+        """Resolve granularity from the resolved in-scope account ids."""
+        if not account_ids:
+            return Granularity.UNKNOWN
+        account_types = (
+            await self.db.execute(
+                select(AmazonAccount.account_type).where(AmazonAccount.id.in_(account_ids))
+            )
+        ).scalars().all()
+        return granularity_for_account_types(account_types)
+
     async def get_ads_vs_organic(
         self,
         account_ids: List[UUID],
@@ -300,6 +313,12 @@ class AnalyticsService:
         """Compare total sales with ad-attributed sales for the selected period."""
         self._validate_group_by(group_by)
         asin = self._normalize_optional_asin(asin)
+
+        granularity = await self._resolve_granularity(account_ids)
+        # Monthly (vendor-only) data cannot be split into coherent daily/weekly
+        # buckets, so force a monthly cadence regardless of the requested group.
+        if granularity == Granularity.MONTHLY and group_by != "month":
+            group_by = "month"
 
         current_series = await self._fetch_ads_vs_organic_series(
             account_ids=account_ids,
@@ -353,6 +372,7 @@ class AnalyticsService:
             "time_series": current_series,
             "asin_breakdown": None,
             "group_by": group_by,
+            "granularity": granularity.value,
             "asin": asin,
             "attribution_notes": attribution_notes,
         }

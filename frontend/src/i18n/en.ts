@@ -183,6 +183,8 @@ const en: Record<string, string> = {
   'dashboard.trendDescMixed': 'Seller daily activity with vendor monthly totals overlaid.',
   'dashboard.seriesSeller': 'Seller (daily)',
   'dashboard.seriesVendor': 'Vendor (monthly)',
+  'granularity.monthly': 'Monthly Vendor data',
+  'granularity.mixed': 'Mixed data: Vendor monthly + Seller daily',
   'dashboard.trendingProducts': 'Trending Products',
   'dashboard.trendingProductsDesc': 'Top risers and decliners based on the last 7 days versus the previous 7 days.',
   'dashboard.topRisingProducts': 'Top Rising Products',

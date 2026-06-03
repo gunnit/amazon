@@ -20,6 +20,8 @@ import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
 import { ExportModal } from '@/components/ExportModal'
 import { ScheduledReportsPanel } from '@/components/ScheduledReportsPanel'
+import { granularityForSelection } from '@/lib/granularity'
+import { GranularityBadge } from '@/components/GranularityBadge'
 import type { AdvertisingMetricsItem, AmazonAccount, InventoryReportItem, SalesAggregated } from '@/types'
 
 type ReportTab = 'sales' | 'inventory' | 'advertising'
@@ -44,6 +46,12 @@ export default function Reports() {
   } = filterState
 
   const dateRange = getFilterDateRange({ datePreset, customStartDate, customEndDate })
+
+  const { data: allAccounts = [] } = useQuery<AmazonAccount[]>({
+    queryKey: ['accounts'],
+    queryFn: () => accountsApi.list(),
+  })
+  const salesGranularity = granularityForSelection(allAccounts, accountIds)
 
   const handleResetAll = () => {
     resetDashboard()
@@ -143,7 +151,11 @@ export default function Reports() {
             <DateRangeFilter />
             <AccountFilter />
             {activeTab === 'sales' && (
-              <GroupByFilter value={reportsGroupBy} onChange={setReportsGroupBy} />
+              <GroupByFilter
+                value={reportsGroupBy}
+                onChange={setReportsGroupBy}
+                granularity={salesGranularity}
+              />
             )}
             {activeTab === 'inventory' && (
               <ToggleFilter
@@ -192,7 +204,10 @@ export default function Reports() {
 
           <Card>
             <CardHeader>
-              <CardTitle>{groupByLabel}</CardTitle>
+              <div className="flex items-start justify-between gap-2">
+                <CardTitle>{groupByLabel}</CardTitle>
+                <GranularityBadge granularity={salesGranularity} />
+              </div>
               <CardDescription>
                 {dateRange.start} to {dateRange.end}
               </CardDescription>
