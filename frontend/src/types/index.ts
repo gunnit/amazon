@@ -214,6 +214,7 @@ export interface AdsVsOrganicResponse {
   summary: AdsVsOrganicSummary
   time_series: AdsVsOrganicTimeSeriesPoint[]
   asin_breakdown: AdsVsOrganicAsinBreakdownItem[] | null
+  breakdown_notes: string[]
   group_by: 'day' | 'week' | 'month'
   granularity: 'daily' | 'monthly' | 'mixed' | 'unknown'
   asin: string | null

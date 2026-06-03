@@ -410,12 +410,13 @@ export default function Analytics() {
   })
 
   const { data: adsVsOrganicData, isLoading: adsVsOrganicLoading } = useQuery<AdsVsOrganicResponse>({
-    queryKey: ['ads-vs-organic', dateRange, trendAccountIds, analyticsGroupBy, selectedAsin],
+    queryKey: ['ads-vs-organic', dateRange, trendAccountIds, analyticsGroupBy, selectedAsin, language],
     queryFn: () => analyticsApi.getAdsVsOrganic({
       date_from: dateRange.start,
       date_to: dateRange.end,
       group_by: analyticsGroupBy,
       account_ids: trendAccountIds.length > 0 ? trendAccountIds : undefined,
+      language,
       ...(selectedAsin !== ALL_ASINS_VALUE ? { asin: selectedAsin } : {}),
     }),
     enabled: activeTab === 'ads-vs-organic',
@@ -1486,7 +1487,12 @@ export default function Analytics() {
                       <CardTitle>{t('analytics.topAsinSales')}</CardTitle>
                       <CardDescription>{t('analytics.topAsinSalesDesc')}</CardDescription>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className="space-y-3">
+                      {(adsVsOrganicData?.breakdown_notes || []).map((note, idx) => (
+                        <p key={idx} className="text-xs text-muted-foreground">
+                          {note}
+                        </p>
+                      ))}
                       <AsinBreakdownList
                         items={(adsVsOrganicData?.asin_breakdown || []).slice(0, 8)}
                         onSelectAsin={setSelectedAsin}

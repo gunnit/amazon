@@ -460,6 +460,7 @@ export const analyticsApi = {
     account_id?: string
     account_ids?: string[]
     asin?: string
+    language?: 'en' | 'it'
   }): Promise<AdsVsOrganicResponse> => {
     const response = await api.get('/analytics/ads-vs-organic', { params })
     return response.data

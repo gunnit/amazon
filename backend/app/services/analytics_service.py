@@ -6,7 +6,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, cast, Date, and_
 
-from app.models.amazon_account import AmazonAccount
+from app.models.amazon_account import AccountType, AmazonAccount
 from app.models.sales_data import SalesData
 from app.models.advertising import AdvertisingMetrics, AdvertisingCampaign, AdvertisingMetricsByAsin
 from app.models.product import Product, BSRHistory
@@ -371,6 +371,7 @@ class AnalyticsService:
             },
             "time_series": current_series,
             "asin_breakdown": None,
+            "breakdown_notes": [],
             "group_by": group_by,
             "granularity": granularity.value,
             "asin": asin,
@@ -378,12 +379,14 @@ class AnalyticsService:
         }
 
         if asin is None:
-            response["asin_breakdown"] = await self._fetch_asin_breakdown(
+            breakdown, breakdown_notes = await self._fetch_asin_breakdown(
                 account_ids=account_ids,
                 date_from=date_from,
                 date_to=date_to,
-                total_sales=current_totals["total_sales"],
+                language=language,
             )
+            response["asin_breakdown"] = breakdown
+            response["breakdown_notes"] = breakdown_notes
 
         return response
 
@@ -502,25 +505,87 @@ class AnalyticsService:
         account_ids: List[UUID],
         date_from: date,
         date_to: date,
-        total_sales: float,
-    ) -> List[Dict[str, Any]]:
-        """Return a sales breakdown by ASIN for the current period."""
-        if not account_ids:
-            return []
+        language: str = "en",
+    ) -> tuple[List[Dict[str, Any]], List[str]]:
+        """Return a sales breakdown by ASIN for the current period.
 
-        breakdown_query = (
+        Vendor per-ASIN rows are settled monthly figures, so summing them over a
+        period is correct and reconciles with the account sentinel. Seller
+        per-ASIN rows are a trailing-window snapshot re-stamped on every sync,
+        so summing the same ASIN across dates multiplies its sales many times
+        over. We therefore aggregate vendor and seller accounts separately: sum
+        the vendor rows and, for each seller account, take the single most
+        complete snapshot date. Shares are computed against the breakdown's own
+        total so they always stay coherent (no ASIN above 100%)."""
+        if not account_ids:
+            return [], []
+
+        types_rows = (
+            await self.db.execute(
+                select(AmazonAccount.id, AmazonAccount.account_type).where(
+                    AmazonAccount.id.in_(account_ids)
+                )
+            )
+        ).all()
+        vendor_ids = [r.id for r in types_rows if r.account_type == AccountType.VENDOR]
+        seller_ids = [r.id for r in types_rows if r.account_type == AccountType.SELLER]
+
+        contributions: Dict[str, float] = {}
+        has_seller_snapshot = False
+
+        if vendor_ids:
+            for row in await self._sum_asin_sales(vendor_ids, date_from, date_to):
+                contributions[row.asin] = contributions.get(row.asin, 0.0) + self._as_float(
+                    row.total_sales
+                )
+
+        for seller_id in seller_ids:
+            snapshot_date = await self._latest_full_snapshot_date(
+                seller_id, date_from, date_to
+            )
+            if snapshot_date is None:
+                continue
+            has_seller_snapshot = True
+            for row in await self._sum_asin_sales(
+                [seller_id], snapshot_date, snapshot_date
+            ):
+                contributions[row.asin] = contributions.get(row.asin, 0.0) + self._as_float(
+                    row.total_sales
+                )
+
+        if not contributions:
+            return [], []
+
+        titles = await self._asin_titles(account_ids, list(contributions.keys()))
+        breakdown_total = sum(contributions.values())
+
+        ranked = sorted(contributions.items(), key=lambda kv: (-kv[1], kv[0]))[:25]
+        breakdown = [
+            {
+                "asin": asin,
+                "title": titles.get(asin),
+                "total_sales": self._round_money(value),
+                "sales_share_pct": self._round_percent(self._share(value, breakdown_total)),
+            }
+            for asin, value in ranked
+        ]
+
+        notes: List[str] = []
+        if has_seller_snapshot:
+            notes.append(
+                "Per gli account Seller la ripartizione per ASIN usa lo snapshot più completo del periodo (i report per-ASIN di Amazon sono cumulativi e non si possono sommare per giorno). Il totale dell'account resta basato sulle vendite confermate."
+                if language == "it"
+                else "For Seller accounts the per-ASIN breakdown uses the period's most complete snapshot (Amazon's by-ASIN reports are cumulative and cannot be summed per day). The account total stays based on confirmed sales."
+            )
+
+        return breakdown, notes
+
+    async def _sum_asin_sales(self, account_ids, date_from: date, date_to: date):
+        """Sum per-ASIN sales for the given accounts and date range."""
+        query = (
             select(
                 SalesData.asin.label("asin"),
-                func.max(Product.title).label("title"),
                 func.sum(SalesData.ordered_product_sales).label("total_sales"),
-            )
-            .select_from(SalesData)
-            .outerjoin(
-                Product,
-                and_(
-                    Product.account_id == SalesData.account_id,
-                    Product.asin == SalesData.asin,
-                ),
             )
             .where(
                 SalesData.account_id.in_(account_ids),
@@ -529,22 +594,52 @@ class AnalyticsService:
                 SalesData.date <= date_to,
             )
             .group_by(SalesData.asin)
-            .order_by(func.sum(SalesData.ordered_product_sales).desc(), SalesData.asin)
-            .limit(25)
         )
-        rows = (await self.db.execute(breakdown_query)).all()
+        return (await self.db.execute(query)).all()
 
-        return [
-            {
-                "asin": row.asin,
-                "title": row.title,
-                "total_sales": self._round_money(self._as_float(row.total_sales)),
-                "sales_share_pct": self._round_percent(
-                    self._share(self._as_float(row.total_sales), total_sales)
-                ),
-            }
-            for row in rows
-        ]
+    async def _latest_full_snapshot_date(
+        self, account_id: UUID, date_from: date, date_to: date
+    ) -> Optional[date]:
+        """Return the snapshot date with the most per-ASIN sales for a seller.
+
+        Seller per-ASIN rows are trailing-window snapshots, so we pick the date
+        whose snapshot carries the most sales to best approximate the account's
+        product mix without double-counting overlapping windows."""
+        query = (
+            select(
+                SalesData.date.label("date"),
+                func.sum(SalesData.ordered_product_sales).label("total_sales"),
+            )
+            .where(
+                SalesData.account_id == account_id,
+                SalesData.asin != DAILY_TOTAL_ASIN,
+                SalesData.date >= date_from,
+                SalesData.date <= date_to,
+            )
+            .group_by(SalesData.date)
+            .order_by(func.sum(SalesData.ordered_product_sales).desc(), SalesData.date.desc())
+            .limit(1)
+        )
+        row = (await self.db.execute(query)).first()
+        if row is None or self._as_float(row.total_sales) <= 0:
+            return None
+        return row.date
+
+    async def _asin_titles(self, account_ids, asins) -> Dict[str, Optional[str]]:
+        """Resolve product titles for a set of ASINs in scope."""
+        if not asins:
+            return {}
+        rows = (
+            await self.db.execute(
+                select(Product.asin, func.max(Product.title).label("title"))
+                .where(
+                    Product.account_id.in_(account_ids),
+                    Product.asin.in_(asins),
+                )
+                .group_by(Product.asin)
+            )
+        ).all()
+        return {row.asin: row.title for row in rows}
 
     def _bucket_expression(self, column, group_by: str):
         """Return a normalized SQL expression for the requested time bucket."""
