@@ -29,7 +29,10 @@ from app.services.scheduled_report_utils import compute_next_run_at, resolve_rep
 
 logger = logging.getLogger(__name__)
 
-RUN_TERMINAL_STATUS = {"delivered", "failed"}
+# A run is terminal once generation has finished, regardless of delivery: a
+# generated artifact is a usable deliverable even when email is unconfigured or
+# bounces. Only genuine generation failures use "failed".
+RUN_TERMINAL_STATUS = {"generated", "delivered", "failed"}
 
 
 def _filename_slug(name: str) -> str:
@@ -210,6 +213,10 @@ class ScheduledReportService:
         await self.db.flush()
         await self.db.refresh(schedule)
         return schedule
+
+    async def delete_schedule(self, schedule: ScheduledReport) -> None:
+        await self.db.delete(schedule)
+        await self.db.flush()
 
     async def list_runs(self, schedule_id: UUID, organization_id: UUID, limit: int = 20) -> list[ScheduledReportRun]:
         result = await self.db.execute(
@@ -459,47 +466,51 @@ def deliver_scheduled_report_run_job(run_id: str) -> None:
             if not schedule:
                 return
 
+            # Generation already succeeded by the time we get here. A delivery
+            # problem must not retroactively mark the run "failed": the artifact
+            # stays downloadable and the run stays "generated" with a separate,
+            # actionable delivery_status.
             if not run.artifact_data_compressed:
+                # No artifact means generation actually failed upstream.
                 run.status = "failed"
+                run.generation_status = "failed"
                 run.delivery_status = "failed"
                 run.error_message = "Artifact is not available for delivery"
+                run.progress_step = "Generation failed"
                 run.completed_at = utcnow()
                 schedule.last_run_status = "failed"
                 await db.commit()
                 return
 
-            if not settings.SENDGRID_API_KEY:
-                run.delivery_status = "failed"
-                run.status = "failed"
-                run.error_message = (
-                    "Email delivery is not configured: SENDGRID_API_KEY is missing. "
-                    "The report artifact is available to download from the run history."
-                )
+            def _mark_not_configured(message: str) -> None:
+                run.delivery_status = "not_configured"
+                run.status = "generated"
+                run.error_message = message
                 run.progress_step = "Delivery not configured"
                 run.completed_at = utcnow()
-                schedule.last_run_status = "failed"
+                schedule.last_run_status = "generated"
                 schedule.last_run_at = run.completed_at
+
+            if not settings.SENDGRID_API_KEY:
+                _mark_not_configured(
+                    "Invio email non configurato: chiave SendGrid mancante sul server. "
+                    "Il report e stato generato ed e scaricabile dallo storico."
+                )
                 await db.commit()
                 return
 
             if not run.recipients_snapshot:
-                run.delivery_status = "failed"
-                run.status = "failed"
-                run.error_message = (
-                    "Email delivery is not configured: no recipients are set on this schedule. "
-                    "Add at least one recipient or download the artifact manually."
+                _mark_not_configured(
+                    "Invio email non configurato: nessun destinatario impostato. "
+                    "Aggiungi almeno un destinatario o scarica il report manualmente."
                 )
-                run.progress_step = "Delivery not configured"
-                run.completed_at = utcnow()
-                schedule.last_run_status = "failed"
-                schedule.last_run_at = run.completed_at
                 await db.commit()
                 return
 
             try:
                 run.delivery_status = "processing"
                 run.progress_step = "Sending email"
-                schedule.last_run_status = "processing"
+                schedule.last_run_status = "generated"
                 await db.commit()
 
                 service = NotificationService(sendgrid_api_key=settings.SENDGRID_API_KEY)
@@ -518,28 +529,33 @@ def deliver_scheduled_report_run_job(run_id: str) -> None:
                         }
                     ],
                 )
-                if not sent:
-                    raise ValueError(
-                        "SendGrid rejected the email — check the API key, sender identity, "
-                        "and recipient list."
-                    )
 
-                run.delivery_status = "delivered"
-                run.status = "delivered"
-                run.progress_step = "Delivered"
                 run.completed_at = utcnow()
-                run.error_message = None
-                schedule.last_run_status = "delivered"
+                if sent:
+                    run.delivery_status = "sent"
+                    run.status = "delivered"
+                    run.progress_step = "Delivered"
+                    run.error_message = None
+                    schedule.last_run_status = "delivered"
+                else:
+                    # Delivery failed but the artifact is intact and downloadable.
+                    run.delivery_status = "failed"
+                    run.status = "generated"
+                    run.error_message = service.last_error or (
+                        "Invio email fallito: verifica chiave SendGrid, mittente e destinatari."
+                    )
+                    run.progress_step = "Delivery failed"
+                    schedule.last_run_status = "generated"
                 schedule.last_run_at = run.completed_at
                 await db.commit()
             except Exception as exc:
                 logger.exception("Scheduled report delivery failed for run %s", run_id)
                 run.delivery_status = "failed"
-                run.status = "failed"
+                run.status = "generated"
                 run.error_message = str(exc)[:500]
                 run.progress_step = "Delivery failed"
                 run.completed_at = utcnow()
-                schedule.last_run_status = "failed"
+                schedule.last_run_status = "generated"
                 schedule.last_run_at = run.completed_at
                 await db.commit()
 

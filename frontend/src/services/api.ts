@@ -309,6 +309,10 @@ export const reportsApi = {
     return response.data
   },
 
+  deleteSchedule: async (scheduleId: string): Promise<void> => {
+    await api.delete(`/reports/schedules/${scheduleId}`)
+  },
+
   listScheduleRuns: async (scheduleId: string, limit = 20): Promise<ScheduledReportRun[]> => {
     const response = await api.get(`/reports/schedules/${scheduleId}/runs`, { params: { limit } })
     return response.data

@@ -120,7 +120,7 @@ def recover_stuck_scheduled_report_runs():
             )
             runs = result.scalars().all()
             for run in runs:
-                if run.generation_status == "generated" and run.delivery_status != "delivered":
+                if run.generation_status == "generated" and run.delivery_status in ("pending", "processing"):
                     deliver_scheduled_report_run_task.delay(str(run.id))
                     redelivered += 1
                 else:
