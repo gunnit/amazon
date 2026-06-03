@@ -23,6 +23,8 @@ import {
   ChevronDown,
   ChevronUp,
   Info,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -104,6 +106,32 @@ const DATA_QUALITY_NOTE_KEYS: Record<string, string> = {
   'High variance detected': 'forecasts.note.highVariance',
   'Using simplified model due to limited history': 'forecasts.note.simpleModel',
   'Historical validation error is high': 'forecasts.note.highValidationError',
+  'Monthly vendor data — values represent calendar months, not days': 'forecasts.note.monthlyData',
+  'Short history — fewer than 12 months limits reliability': 'forecasts.note.shortMonthlyHistory',
+  'Less than 24 months of history': 'forecasts.note.lessThan24Months',
+  'High month-to-month variability lowers reliability': 'forecasts.note.highMonthlyVariability',
+  'Latest data is over a month old — forecast starts from the current month': 'forecasts.note.staleData',
+  'Historical validation unavailable': 'forecasts.note.validationUnavailable',
+}
+
+// Notes that signal the forecast itself is not trustworthy (short/volatile
+// history). When present alongside low confidence we show an honest
+// "insufficient data" explanation rather than just a bare low number.
+const INSUFFICIENT_DATA_NOTES = new Set<string>([
+  'Short history — fewer than 12 months limits reliability',
+  'High month-to-month variability lowers reliability',
+  'Less than 28 days of data',
+  'High variance detected',
+])
+
+function isMonthlyForecast(forecast?: Forecast | null): boolean {
+  if (!forecast || forecast.predictions.length < 2) {
+    return forecast?.model_used === 'monthly'
+  }
+  const a = new Date(`${forecast.predictions[0].date}T00:00:00`)
+  const b = new Date(`${forecast.predictions[1].date}T00:00:00`)
+  const gapDays = Math.abs((b.getTime() - a.getTime()) / 86_400_000)
+  return gapDays >= 20 || forecast.model_used === 'monthly'
 }
 
 const CONFIDENCE_BADGE_VARIANTS: Record<ForecastConfidenceLevel, 'success' | 'warning' | 'destructive'> = {
@@ -447,6 +475,8 @@ export default function Forecasts() {
   const [exportModalOpen, setExportModalOpen] = useState(false)
   const [predictionTableOpen, setPredictionTableOpen] = useState(false)
   const [showAllPredictions, setShowAllPredictions] = useState(false)
+  const [showConfidenceBands, setShowConfidenceBands] = useState(true)
+  const [pastedAsin, setPastedAsin] = useState('')
 
   const { data: accounts } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -493,10 +523,19 @@ export default function Forecasts() {
       return
     }
 
+    // A pasted ASIN overrides the dropdown so users can forecast a product that
+    // is not (yet) in the eligible list.
+    const typedAsin = pastedAsin.trim().toUpperCase()
+    if (typedAsin && !/^[A-Z0-9]{10}$/.test(typedAsin)) {
+      toast({ variant: 'destructive', title: t('forecasts.asinInvalid') })
+      return
+    }
+    const asin = typedAsin || (selectedAsin !== ALL_ASINS_VALUE ? selectedAsin : undefined)
+
     generateMutation.mutate({
       account_id: selectedAccount,
       horizon_days: parseInt(forecastHorizon),
-      ...(selectedAsin !== ALL_ASINS_VALUE ? { asin: selectedAsin } : {}),
+      ...(asin ? { asin } : {}),
     })
   }
 
@@ -517,13 +556,25 @@ export default function Forecasts() {
   const confidenceBadgeVariant = confidenceLevel
     ? CONFIDENCE_BADGE_VARIANTS[confidenceLevel]
     : 'outline'
+  const rawNotes = useMemo(
+    () => latestForecast?.data_quality_notes ?? [],
+    [latestForecast?.data_quality_notes]
+  )
   const dataQualityNotes = useMemo(
     () =>
-      (latestForecast?.data_quality_notes ?? []).map(
+      rawNotes.map(
         (note) => DATA_QUALITY_NOTE_KEYS[note] ? t(DATA_QUALITY_NOTE_KEYS[note]) : note
       ),
-    [latestForecast?.data_quality_notes, t]
+    [rawNotes, t]
   )
+  const isMonthly = useMemo(() => isMonthlyForecast(latestForecast), [latestForecast])
+  // Honest "insufficient data" state: low confidence backed by a short/volatile
+  // history note (not just a bare low MAPE the user can't interpret).
+  const insufficientReasons = useMemo(
+    () => rawNotes.filter((n) => INSUFFICIENT_DATA_NOTES.has(n)),
+    [rawNotes]
+  )
+  const showInsufficientState = confidenceLevel === 'low' && insufficientReasons.length > 0
   const visiblePredictions = useMemo(
     () =>
       latestForecast
@@ -665,6 +716,7 @@ export default function Forecasts() {
                 onValueChange={(value) => {
                   setSelectedAccount(value)
                   setSelectedAsin(ALL_ASINS_VALUE)
+                  setPastedAsin('')
                 }}
               >
                 <SelectTrigger className="w-[200px]">
@@ -744,6 +796,22 @@ export default function Forecasts() {
               </Select>
             </div>
             <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="forecast-asin-paste">
+                {t('forecasts.asinPasteLabel')}
+              </label>
+              <input
+                id="forecast-asin-paste"
+                type="text"
+                value={pastedAsin}
+                onChange={(e) => setPastedAsin(e.target.value)}
+                placeholder={t('forecasts.asinPastePlaceholder')}
+                spellCheck={false}
+                autoComplete="off"
+                disabled={!selectedAccount}
+                className="flex h-10 w-[180px] rounded-md border border-input bg-background px-3 py-2 font-mono text-sm uppercase ring-offset-background placeholder:text-muted-foreground placeholder:font-sans placeholder:normal-case focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </div>
+            <div className="space-y-2">
               <label className="text-sm font-medium">{t('forecasts.horizon')}</label>
               <Select value={forecastHorizon} onValueChange={setForecastHorizon}>
                 <SelectTrigger className="w-[150px]">
@@ -792,6 +860,9 @@ export default function Forecasts() {
                           {t(`forecasts.confidence.${confidenceLevel}`)}
                         </Badge>
                       )}
+                      {isMonthly && (
+                        <Badge variant="outline">{t('forecasts.monthlyCadence')}</Badge>
+                      )}
                     </div>
                     <CardDescription>
                       {t('forecasts.predictionDesc', {
@@ -809,20 +880,46 @@ export default function Forecasts() {
                       <Download className="mr-1 h-4 w-4" />
                       {t('export.button')}
                     </Button>
-                    <Badge variant="secondary">
+                    <Button
+                      variant={showConfidenceBands ? 'secondary' : 'outline'}
+                      size="sm"
+                      aria-pressed={showConfidenceBands}
+                      title={t('forecasts.toggleBands')}
+                      onClick={() => setShowConfidenceBands((v) => !v)}
+                    >
+                      {showConfidenceBands ? (
+                        <Eye className="mr-1 h-4 w-4" />
+                      ) : (
+                        <EyeOff className="mr-1 h-4 w-4" />
+                      )}
                       {(latestForecast.confidence_interval * 100).toFixed(0)}% CI
-                    </Badge>
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
-                {confidenceLevel === 'low' && (
+                {showInsufficientState ? (
+                  <Alert variant="warning" className="mb-4">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>{t('forecasts.insufficientTitle')}</AlertTitle>
+                    <AlertDescription>
+                      <p>{t('forecasts.insufficientDesc')}</p>
+                      <ul className="mt-2 list-disc space-y-0.5 pl-5">
+                        {insufficientReasons.map((note) => (
+                          <li key={note}>
+                            {DATA_QUALITY_NOTE_KEYS[note] ? t(DATA_QUALITY_NOTE_KEYS[note]) : note}
+                          </li>
+                        ))}
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                ) : confidenceLevel === 'low' ? (
                   <Alert variant="warning" className="mb-4">
                     <AlertTriangle className="h-4 w-4" />
                     <AlertTitle>{t('forecasts.lowConfidenceTitle')}</AlertTitle>
                     <AlertDescription>{t('forecasts.lowConfidenceWarning')}</AlertDescription>
                   </Alert>
-                )}
+                ) : null}
                 <div className="h-[400px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={chartData}>
@@ -844,23 +941,27 @@ export default function Forecasts() {
                         width={50}
                       />
                       <Tooltip content={<CustomTooltip />} />
-                      <Area
-                        type="monotone"
-                        dataKey="ci_base"
-                        stackId="ci"
-                        stroke="none"
-                        fill="transparent"
-                        connectNulls={false}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="ci_range"
-                        stackId="ci"
-                        stroke="none"
-                        fill={CHART_PRIMARY}
-                        fillOpacity={0.14}
-                        connectNulls={false}
-                      />
+                      {showConfidenceBands && (
+                        <Area
+                          type="monotone"
+                          dataKey="ci_base"
+                          stackId="ci"
+                          stroke="none"
+                          fill="transparent"
+                          connectNulls={false}
+                        />
+                      )}
+                      {showConfidenceBands && (
+                        <Area
+                          type="monotone"
+                          dataKey="ci_range"
+                          stackId="ci"
+                          stroke="none"
+                          fill={CHART_PRIMARY}
+                          fillOpacity={0.14}
+                          connectNulls={false}
+                        />
+                      )}
                       <Line
                         type="monotone"
                         dataKey="historical_value"
@@ -906,10 +1007,12 @@ export default function Forecasts() {
                     />
                     <span>{t('forecasts.forecast')}</span>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="inline-block h-3 w-5 rounded-sm bg-primary/15" />
-                    <span>{t('forecasts.confidenceInterval')}</span>
-                  </div>
+                  {showConfidenceBands && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-block h-3 w-5 rounded-sm bg-primary/15" />
+                      <span>{t('forecasts.confidenceInterval')}</span>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -919,7 +1022,14 @@ export default function Forecasts() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <CardTitle>{t('forecasts.predictionTable')}</CardTitle>
-                    <CardDescription>{t('forecasts.predictionTableDesc')}</CardDescription>
+                    <CardDescription>
+                      {isMonthly
+                        ? t('forecasts.predictionTableDescMonthly')
+                        : t('forecasts.predictionTableDesc')}
+                    </CardDescription>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('forecasts.predictionTableHelp')}
+                    </p>
                   </div>
                   <Button
                     variant="outline"

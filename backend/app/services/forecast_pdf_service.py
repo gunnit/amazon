@@ -19,6 +19,12 @@ def _fmt_number(value: Optional[float], digits: int = 2) -> str:
     return f"{value:,.{digits}f}"
 
 
+def _fmt_eur(value: Optional[float]) -> str:
+    if value is None:
+        return "N/A"
+    return f"EUR {value:,.2f}"
+
+
 class ForecastInsightsPdfBuilder:
     """Build a PDF report from forecast data and AI insights."""
 
@@ -36,6 +42,7 @@ class ForecastInsightsPdfBuilder:
         metrics: Dict[str, Optional[float | str]],
         analysis: Dict[str, Any],
         language: str = "en",
+        is_monthly: bool = False,
     ):
         self.title = title
         self.account_name = account_name
@@ -48,6 +55,7 @@ class ForecastInsightsPdfBuilder:
         self.metrics = metrics
         self.analysis = analysis
         self.language = language
+        self.is_monthly = is_monthly
         self.styles = self._build_styles()
 
     def _build_styles(self) -> Dict[str, ParagraphStyle]:
@@ -134,6 +142,12 @@ class ForecastInsightsPdfBuilder:
                 "high": "Alta",
                 "medium": "Media",
                 "low": "Bassa",
+                "total_forecast": "Fatturato totale previsto",
+                "avg_period": "Media mensile" if self.is_monthly else "Media giornaliera",
+                "peak_period": "Mese di picco" if self.is_monthly else "Giorno di picco",
+                "peak_value": "Fatturato di picco",
+                "mape": "MAPE",
+                "rmse": "RMSE",
             }
         return {
             "account": "Account",
@@ -156,7 +170,22 @@ class ForecastInsightsPdfBuilder:
             "high": "High",
             "medium": "Medium",
             "low": "Low",
+            "total_forecast": "Total Forecast Revenue",
+            "avg_period": "Average Monthly" if self.is_monthly else "Average Daily",
+            "peak_period": "Peak Month" if self.is_monthly else "Peak Day",
+            "peak_value": "Peak Revenue",
+            "mape": "MAPE",
+            "rmse": "RMSE",
         }
+
+    def _horizon_label(self) -> str:
+        if self.is_monthly:
+            months = max(1, round(self.horizon_days / 30))
+            if self.language == "it":
+                return f"{months} {'mese' if months == 1 else 'mesi'}"
+            return f"{months} {'month' if months == 1 else 'months'}"
+        suffix = "giorni" if self.language == "it" else "days"
+        return f"{self.horizon_days} {suffix}"
 
     def build(self) -> bytes:
         labels = self._labels()
@@ -178,7 +207,7 @@ class ForecastInsightsPdfBuilder:
             [labels["asin"], self.asin or "All Products"],
             [labels["type"], self.forecast_type],
             [labels["model"], self.model_used],
-            [labels["horizon"], f"{self.horizon_days} days"],
+            [labels["horizon"], self._horizon_label()],
             [labels["confidence"], f"{int(self.confidence_interval * 100)}%"],
             [
                 labels["generated"],
@@ -210,13 +239,14 @@ class ForecastInsightsPdfBuilder:
         elements.append(Paragraph(self.analysis.get("summary", ""), self.styles["body"]))
 
         elements.append(Paragraph(labels["kpis"], self.styles["section"]))
+        mape_val = self.metrics.get("mape")
         kpi_rows = [
-            ["Total Forecast", _fmt_number(self.metrics.get("total_predicted"))],
-            ["Average Daily", _fmt_number(self.metrics.get("avg_daily"))],
-            ["Peak Day", str(self.metrics.get("peak_day") or "N/A")],
-            ["Peak Value", _fmt_number(self.metrics.get("peak_value"))],
-            ["MAPE", _fmt_number(self.metrics.get("mape")) if self.metrics.get("mape") is not None else "N/A"],
-            ["RMSE", _fmt_number(self.metrics.get("rmse")) if self.metrics.get("rmse") is not None else "N/A"],
+            [labels["total_forecast"], _fmt_eur(self.metrics.get("total_predicted"))],
+            [labels["avg_period"], _fmt_eur(self.metrics.get("avg_daily"))],
+            [labels["peak_period"], str(self.metrics.get("peak_day") or "N/A")],
+            [labels["peak_value"], _fmt_eur(self.metrics.get("peak_value"))],
+            [labels["mape"], f"{_fmt_number(mape_val)}%" if mape_val is not None else "N/A"],
+            [labels["rmse"], _fmt_eur(self.metrics.get("rmse"))],
         ]
         kpi_table = Table(kpi_rows, colWidths=[5.0 * cm, 10.8 * cm])
         kpi_table.setStyle(
