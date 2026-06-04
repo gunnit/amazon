@@ -42,6 +42,9 @@ class FakeResult:
     def scalars(self):
         return FakeScalarResult(self._rows)
 
+    def scalar(self):
+        return self._rows[0] if self._rows else None
+
     def scalar_one_or_none(self):
         return FakeScalarResult(self._rows).one_or_none()
 
@@ -91,6 +94,10 @@ def _inventory_row(asin: str, snapshot_date: date, current_inventory: int):
     return SimpleNamespace(asin=asin, snapshot_date=snapshot_date, current_inventory=current_inventory)
 
 
+def _recent_sales_row(asin: str, day: date, revenue: float, units: int):
+    return SimpleNamespace(asin=asin, date=day, revenue=revenue, units=units)
+
+
 def test_score_renormalizes_without_optional_signals():
     score = _score_components(50.0, 25.0, None)
     assert score == pytest.approx(42.65, abs=0.01)
@@ -120,6 +127,13 @@ async def test_get_product_trends_classifies_rising_declining_and_stable_product
                 *_make_window_rows("B0UP", date(2026, 3, 18), previous_revenue=100, current_revenue=140, previous_units=7, current_units=10),
                 *_make_window_rows("B0DOWN", date(2026, 3, 18), previous_revenue=200, current_revenue=120, previous_units=14, current_units=8),
                 *_make_window_rows("B0STABLE", date(2026, 3, 18), previous_revenue=100, current_revenue=103, previous_units=7, current_units=7),
+            ],
+            [],
+            [date(2026, 3, 31)],
+            [
+                _recent_sales_row("B0UP", date(2026, 3, 24), 18.0, 2),
+                _recent_sales_row("B0UP", date(2026, 3, 31), 20.0, 3),
+                _recent_sales_row("B0DOWN", date(2026, 3, 31), 17.0, 2),
             ],
             [
                 _metadata_row(account_id, "B0UP", "Winner", "Kitchen", current_bsr=800),
@@ -161,7 +175,11 @@ async def test_get_product_trends_classifies_rising_declining_and_stable_product
     assert products["B0STABLE"]["trend_class"] == "stable"
     assert "Sales +40% vs previous 7 days" in products["B0UP"]["supporting_signals"]
     assert "BSR improved by 400 positions" in products["B0UP"]["supporting_signals"]
-    assert len(products["B0UP"]["recent_sales"]) == 14
+    assert [point["date"] for point in products["B0UP"]["recent_sales"]] == [
+        date(2026, 3, 24),
+        date(2026, 3, 31),
+    ]
+    assert products["B0UP"]["recent_sales"][-1]["revenue"] == 20.0
 
 
 @pytest.mark.asyncio
@@ -171,6 +189,11 @@ async def test_get_product_trends_handles_missing_bsr_and_review_data():
         [
             [
                 *_make_window_rows("B0NOBSR", date(2026, 3, 18), previous_revenue=100, current_revenue=94, previous_units=7, current_units=7),
+            ],
+            [],
+            [date(2026, 3, 31)],
+            [
+                _recent_sales_row("B0NOBSR", date(2026, 3, 31), 13.0, 1),
             ],
             [
                 _metadata_row(account_id, "B0NOBSR", "No BSR", "Kitchen", current_bsr=None, review_count=None),
@@ -219,6 +242,11 @@ async def test_declining_fast_creates_warning_alert():
         [
             [
                 *_make_window_rows("B0ALERT", date(2026, 3, 18), previous_revenue=200, current_revenue=120, previous_units=14, current_units=8),
+            ],
+            [],
+            [date(2026, 3, 31)],
+            [
+                _recent_sales_row("B0ALERT", date(2026, 3, 31), 17.0, 2),
             ],
             [
                 _metadata_row(account_id, "B0ALERT", "Alerted Product", "Home", current_bsr=1800),

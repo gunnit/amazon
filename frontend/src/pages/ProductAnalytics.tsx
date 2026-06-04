@@ -61,9 +61,22 @@ function formatOptionalPercent(value: number | null | undefined): string {
 
 function formatDayLabel(value: string, language: 'en' | 'it'): string {
   const locale = language === 'it' ? 'it-IT' : 'en-US'
-  return new Date(`${value}T00:00:00`).toLocaleDateString(locale, {
+
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value ?? ''
+  }
+
+  const parsed = new Date(`${value.slice(0, 10)}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) {
+    return value
+  }
+
+  // Vendor monthly series lands on the first of the month — show month/year
+  // instead of a misleading day-of-month axis.
+  const isMonthly = value.slice(8, 10) === '01'
+  return parsed.toLocaleDateString(locale, {
     month: 'short',
-    day: 'numeric',
+    ...(isMonthly ? { year: 'numeric' } : { day: 'numeric' }),
   })
 }
 

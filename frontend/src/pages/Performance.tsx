@@ -312,6 +312,25 @@ function AsinBreakdownList({
 type TrendSortKey = 'title' | 'sales_delta_percent' | 'trend_score' | 'current_revenue' | 'current_units'
 type TrendSortDirection = 'asc' | 'desc'
 
+type SalesSortKey = 'date' | 'total_units' | 'total_sales' | 'total_orders'
+type SalesSortDirection = 'asc' | 'desc'
+const SALES_PAGE_SIZE = 20
+
+function compareSalesRows(
+  left: SalesRow,
+  right: SalesRow,
+  sortKey: SalesSortKey,
+  sortDirection: SalesSortDirection
+) {
+  const modifier = sortDirection === 'asc' ? 1 : -1
+
+  if (sortKey === 'date') {
+    return modifier * (left.date.localeCompare(right.date) || left.origin.localeCompare(right.origin))
+  }
+
+  return modifier * (Number(left[sortKey]) - Number(right[sortKey]))
+}
+
 function compareTrendProducts(
   left: ProductTrendItem,
   right: ProductTrendItem,
@@ -360,6 +379,9 @@ function PanoramicaTab({
   const [selectedTrendAsin, setSelectedTrendAsin] = useState<string | null>(null)
   const [trendPage, setTrendPage] = useState(0)
   const TREND_PAGE_SIZE = 5
+  const [salesSortKey, setSalesSortKey] = useState<SalesSortKey>('date')
+  const [salesSortDirection, setSalesSortDirection] = useState<SalesSortDirection>('desc')
+  const [salesPage, setSalesPage] = useState(0)
 
   const { data: allAccounts = [] } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -572,6 +594,30 @@ function PanoramicaTab({
       })()
 
   const showOriginColumn = isMixed
+
+  const sortedSalesRows = useMemo(
+    () => [...salesRows].sort((left, right) => compareSalesRows(left, right, salesSortKey, salesSortDirection)),
+    [salesRows, salesSortKey, salesSortDirection]
+  )
+  const salesTotalPages = Math.max(1, Math.ceil(sortedSalesRows.length / SALES_PAGE_SIZE))
+  const pagedSalesRows = useMemo(
+    () => sortedSalesRows.slice(salesPage * SALES_PAGE_SIZE, (salesPage + 1) * SALES_PAGE_SIZE),
+    [sortedSalesRows, salesPage]
+  )
+
+  useEffect(() => {
+    setSalesPage(0)
+  }, [sortedSalesRows.length, salesSortKey, salesSortDirection])
+
+  const handleSalesSort = (sortKey: SalesSortKey) => {
+    if (salesSortKey === sortKey) {
+      setSalesSortDirection((current) => (current === 'desc' ? 'asc' : 'desc'))
+      return
+    }
+
+    setSalesSortKey(sortKey)
+    setSalesSortDirection('desc')
+  }
 
   const groupByLabel =
     reportsGroupBy === 'week'
@@ -795,40 +841,110 @@ function PanoramicaTab({
             <div className="flex items-center justify-center h-32">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
-          ) : salesRows.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-3 px-4 font-medium">{t('reports.date')}</th>
-                    {showOriginColumn && (
-                      <th className="text-left py-3 px-4 font-medium">{t('reports.colOrigin')}</th>
-                    )}
-                    <th className="text-right py-3 px-4 font-medium">{t('common.units')}</th>
-                    <th className="text-right py-3 px-4 font-medium">{t('common.revenue')}</th>
-                    <th className="text-right py-3 px-4 font-medium">{t('common.orders')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {salesRows.map((row) => (
-                    <tr key={`${row.date}-${row.origin}`} className="border-b last:border-0">
-                      <td className="py-3 px-4">
-                        {formatPeriodLabel(row.date, row.origin === 'monthly' ? 'month' : 'day', language)}
-                      </td>
+          ) : sortedSalesRows.length > 0 ? (
+            <div className="space-y-3">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="py-3 px-4 font-medium">
+                        <button
+                          type="button"
+                          onClick={() => handleSalesSort('date')}
+                          className="flex items-center gap-1.5 font-medium"
+                        >
+                          {t('reports.date')}
+                          <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+                        </button>
+                      </th>
                       {showOriginColumn && (
-                        <td className="py-3 px-4">
-                          <Badge variant={row.origin === 'monthly' ? 'secondary' : 'outline'}>
-                            {t(row.origin === 'monthly' ? 'reports.origin.monthly' : 'reports.origin.daily')}
-                          </Badge>
-                        </td>
+                        <th className="text-left py-3 px-4 font-medium">{t('reports.colOrigin')}</th>
                       )}
-                      <td className="py-3 px-4 text-right">{formatNumber(Number(row.total_units))}</td>
-                      <td className="py-3 px-4 text-right">{formatCurrency(Number(row.total_sales), row.currency || salesCurrency)}</td>
-                      <td className="py-3 px-4 text-right">{formatNumber(Number(row.total_orders))}</td>
+                      <th className="py-3 px-4 font-medium">
+                        <button
+                          type="button"
+                          onClick={() => handleSalesSort('total_units')}
+                          className="ml-auto flex items-center gap-1.5 font-medium"
+                        >
+                          {t('common.units')}
+                          <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+                        </button>
+                      </th>
+                      <th className="py-3 px-4 font-medium">
+                        <button
+                          type="button"
+                          onClick={() => handleSalesSort('total_sales')}
+                          className="ml-auto flex items-center gap-1.5 font-medium"
+                        >
+                          {t('common.revenue')}
+                          <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+                        </button>
+                      </th>
+                      <th className="py-3 px-4 font-medium">
+                        <button
+                          type="button"
+                          onClick={() => handleSalesSort('total_orders')}
+                          className="ml-auto flex items-center gap-1.5 font-medium"
+                        >
+                          {t('common.orders')}
+                          <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+                        </button>
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {pagedSalesRows.map((row) => (
+                      <tr key={`${row.date}-${row.origin}`} className="border-b last:border-0">
+                        <td className="py-3 px-4">
+                          {formatPeriodLabel(row.date, row.origin === 'monthly' ? 'month' : 'day', language)}
+                        </td>
+                        {showOriginColumn && (
+                          <td className="py-3 px-4">
+                            <Badge variant={row.origin === 'monthly' ? 'secondary' : 'outline'}>
+                              {t(row.origin === 'monthly' ? 'reports.origin.monthly' : 'reports.origin.daily')}
+                            </Badge>
+                          </td>
+                        )}
+                        <td className="py-3 px-4 text-right">{formatNumber(Number(row.total_units))}</td>
+                        <td className="py-3 px-4 text-right">{formatCurrency(Number(row.total_sales), row.currency || salesCurrency)}</td>
+                        <td className="py-3 px-4 text-right">{formatNumber(Number(row.total_orders))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {salesTotalPages > 1 && (
+                <div className="flex items-center justify-between border-t pt-3 text-sm">
+                  <span className="text-muted-foreground">
+                    {t('reports.salesRowsShowing', {
+                      from: salesPage * SALES_PAGE_SIZE + 1,
+                      to: Math.min((salesPage + 1) * SALES_PAGE_SIZE, sortedSalesRows.length),
+                      total: sortedSalesRows.length,
+                    })}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSalesPage((p) => Math.max(0, p - 1))}
+                      disabled={salesPage === 0}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="tabular-nums">
+                      {salesPage + 1} / {salesTotalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSalesPage((p) => Math.min(salesTotalPages - 1, p + 1))}
+                      disabled={salesPage >= salesTotalPages - 1}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center py-8 text-muted-foreground">
@@ -1070,7 +1186,7 @@ function PanoramicaTab({
                 </div>
               </div>
 
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(320px,1fr)]">
+              <div className="space-y-4">
                 <div className="overflow-hidden rounded-lg border">
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -1120,8 +1236,10 @@ function PanoramicaTab({
                             onClick={() => setSelectedTrendAsin(product.asin)}
                           >
                             <td className="px-4 py-3">
-                              <div className="min-w-[180px]">
-                                <p className="truncate font-medium">{product.title || product.asin}</p>
+                              <div className="min-w-[280px] max-w-[640px]">
+                                <p className="font-medium" title={product.title || product.asin}>
+                                  {product.title || product.asin}
+                                </p>
                                 <p className="mt-1 font-mono text-xs text-muted-foreground">{product.asin}</p>
                               </div>
                             </td>

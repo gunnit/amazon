@@ -53,6 +53,34 @@ Merge local feito, **não pushed** (alguns commits já em prod: `98f358a`). App 
 - **Playwright ALL 7 PASS** (live): sidebar, 6 abas com dados reais (Panoramica €70.058,70/20.740 un), drill-down per-ASIN, Export modal (Excel/PPT/CSV), redirects. 0 erros de console. tsc+vite build limpos.
 - **TODAS as 14 tasks agora resolvidas** (T8 era a última deferida). Commit T8 separado.
 
+### 🚀 PROD deployado + env vars (2026-06-04)
+- **Push feito** → Render auto-deploy. **api + frontend LIVE** (commits `acf0221` + `91e4df9`). Migrations `025→026→027` aplicadas no DB de prod (deploy `live` = migration ok).
+- **Env vars setadas em prod (inthezon-api) via Render API:** `APP_FRONTEND_URL=https://inthezon-frontend.onrender.com` (corrige links de reset), `SENDGRID_FROM_EMAIL=noreply@niuexa.ai`, `SENDGRID_API_KEY` (do `.env`). `ANTHROPIC_API_KEY` já estava em prod.
+
+### 🎨 Performance page — ajustes pós-feedback (2026-06-04)
+- Daily sales: **paginação (20/pág) + ordenação** por coluna (Data/Unità/Fatturato/Ordini).
+- Layout: lista de Product Trends **full-width ACIMA** do drilldown; nomes inteiros (sem scroll lateral); paginação mantida.
+- **"Invalid Date"** no drilldown corrigido (faltava `<XAxis dataKey="date">` → tooltip recebia o índice; + parse seguro).
+- **Drilldown vazio** resolvido: `recent_sales` agora por granularidade (vendor mensal / seller diário, ancorado à última data real) → **44/44 vendor + 13/13 seller com dados reais**.
+- **Badges de trend redesenhados**: chip compacto, ícone direcional, cores suaves, **em italiano** ("In forte crescita"…) — não mais a pílula verde "Rising Fast".
+- Tooltips dos gráficos em **italiano**.
+
+### ⏳ PENDÊNCIAS EM ABERTO
+**Externas (não-código):**
+- [ ] **SendGrid:** verificar sender/domínio `niuexa.ai` (DKIM/SPF) — sem isso todo envio = 403 (key já em prod).
+- [ ] **Anthropic:** recarregar crédito (Recommendations/Market Research/insights → 502; UI já degrada com mensagem clara).
+- [ ] **Amazon Ads:** OAuth + Partner Network (UI pronta com empty state).
+- [ ] **Bitron:** token seller real no Render p/ fechar catálogo 52→62 (código pronto).
+- [ ] **Prod sem Redis/Celery:** scheduled reports/syncs não auto-rodam (só manual).
+
+**Segurança — ROTACIONAR (vazadas no chat):**
+- [ ] **Render API key** (`rnd_3m…`) e **SendGrid key** — gerar novas no painel.
+
+**Código (menores, opcionais):**
+- [ ] `ProductAnalytics` copy do "Momentum" ainda diz "ultimi 7 giorni" (agora mostra ~60d/12m) — alinhar texto.
+- [ ] Trends "vs previous 183 days" infla % (tudo "In forte crescita") — revisar a baseline de comparação.
+- [ ] Chunk JS > 500kB (aviso pré-existente do Vite) — code-split se quiser.
+
 ---
 
 ## 📋 Status das 14 tasks (pós-investigação)

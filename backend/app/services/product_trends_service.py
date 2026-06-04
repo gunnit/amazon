@@ -11,15 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.alert import Alert, AlertRule
 from app.models.advertising import AdvertisingMetricsByAsin
+from app.models.amazon_account import AccountType, AmazonAccount
 from app.models.inventory import InventoryData
 from app.models.product import BSRHistory, Product
 from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.granularity import Granularity, granularity_for_account_types
 
 
 MIN_COMBINED_UNITS = 5
 TREND_WINDOW_DAYS = 7
-SPARKLINE_WINDOW_DAYS = 14
+SPARKLINE_DAILY_DAYS = 60
+SPARKLINE_MONTHLY_MONTHS = 12
 ALERT_COOLDOWN_HOURS = 12
 DEFAULT_RANKING_LIMIT = 25
 TREND_ALERT_TYPE = "product_trend"
@@ -415,6 +418,18 @@ def _build_dedup_key(event_kind: str, account_id: Optional[UUID], asin: Optional
     return f"{event_kind}:{account_id or '-'}:{asin or '-'}"
 
 
+def _month_floor(value: date) -> date:
+    return value.replace(day=1)
+
+
+def _months_before(value: date, months: int) -> date:
+    """Return the first day of the month ``months`` months before ``value``."""
+    floored = value.replace(day=1)
+    month_index = floored.year * 12 + (floored.month - 1) - months
+    year, month = divmod(month_index, 12)
+    return date(year, month + 1, 1)
+
+
 def _split_period(start_date: date, end_date: date) -> tuple[date, date, date, date]:
     """Split the selected range into two contiguous halves for comparison.
 
@@ -468,6 +483,11 @@ class ProductTrendsService:
         asins = set(sales_timeseries.keys())
         if not asins:
             return _empty_response(language)
+
+        recent_sales = await self._recent_sales_series(
+            account_ids=account_ids,
+            asins=list(asins),
+        )
 
         metadata = await self._product_metadata(account_ids, list(asins))
         bsr_snapshots = await self._bsr_snapshots(
@@ -587,7 +607,7 @@ class ProductTrendsService:
                     "acos": ad_acos,
                     "roas": ad_roas,
                     "supporting_signals": supporting_signals,
-                    "recent_sales": self._recent_sales_points(product_series, current_end),
+                    "recent_sales": recent_sales.get(product_asin, []),
                     "data_quality": quality,
                     "reason_tags": _reason_tags(
                         sales_change_percent=sales_delta_percent,
@@ -864,25 +884,92 @@ class ProductTrendsService:
             for row in result.all()
         }
 
-    def _recent_sales_points(
-        self,
-        product_series: Dict[date, Dict[str, float]],
-        current_end: date,
-    ) -> List[Dict[str, Any]]:
-        start_date = current_end - timedelta(days=SPARKLINE_WINDOW_DAYS - 1)
-        points: List[Dict[str, Any]] = []
-        cursor = start_date
-        while cursor <= current_end:
-            point = product_series.get(cursor, {})
-            points.append(
-                {
-                    "date": cursor,
-                    "revenue": round(float(point.get("revenue", 0.0)), 2),
-                    "units": int(point.get("units", 0)),
-                }
+    async def _granularity(self, account_ids: List[UUID]) -> Granularity:
+        account_types = (
+            await self.db.execute(
+                select(AmazonAccount.account_type).where(
+                    AmazonAccount.id.in_(account_ids)
+                )
             )
-            cursor += timedelta(days=1)
-        return points
+        ).scalars().all()
+        return granularity_for_account_types(account_types)
+
+    async def _recent_sales_series(
+        self,
+        *,
+        account_ids: List[UUID],
+        asins: List[str],
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Build a granularity-aware recent sales series per ASIN.
+
+        Anchored to the account's latest available per-ASIN sales date rather
+        than today, so the sparkline always lands on real data: vendor accounts
+        get the last monthly buckets and seller accounts the last daily points.
+        Each seller date already carries its own snapshot, so points are kept
+        per date without summing across dates; vendor rows settle once a month,
+        so flooring them to the month start is loss-free.
+        """
+        if not asins:
+            return {}
+
+        granularity = await self._granularity(account_ids)
+        monthly = granularity == Granularity.MONTHLY
+
+        latest = (
+            await self.db.execute(
+                select(func.max(SalesData.date)).where(
+                    SalesData.account_id.in_(account_ids),
+                    SalesData.asin != DAILY_TOTAL_ASIN,
+                    SalesData.asin.in_(asins),
+                )
+            )
+        ).scalar()
+        if latest is None:
+            return {}
+
+        if monthly:
+            window_start = _months_before(latest, SPARKLINE_MONTHLY_MONTHS - 1)
+        else:
+            window_start = latest - timedelta(days=SPARKLINE_DAILY_DAYS - 1)
+
+        rows = (
+            await self.db.execute(
+                select(
+                    SalesData.asin,
+                    SalesData.date,
+                    func.sum(SalesData.ordered_product_sales).label("revenue"),
+                    func.sum(SalesData.units_ordered).label("units"),
+                )
+                .where(
+                    SalesData.account_id.in_(account_ids),
+                    SalesData.asin != DAILY_TOTAL_ASIN,
+                    SalesData.asin.in_(asins),
+                    SalesData.date >= window_start,
+                    SalesData.date <= latest,
+                )
+                .group_by(SalesData.asin, SalesData.date)
+                .order_by(SalesData.asin, SalesData.date.asc())
+            )
+        ).all()
+
+        buckets: Dict[str, Dict[date, Dict[str, float]]] = defaultdict(dict)
+        for row in rows:
+            bucket = _month_floor(row.date) if monthly else row.date
+            point = buckets[row.asin].setdefault(bucket, {"revenue": 0.0, "units": 0.0})
+            point["revenue"] += float(row.revenue or 0.0)
+            point["units"] += float(row.units or 0)
+
+        series: Dict[str, List[Dict[str, Any]]] = {}
+        for asin, points in buckets.items():
+            series[asin] = [
+                {
+                    "date": bucket,
+                    "revenue": round(values["revenue"], 2),
+                    "units": int(values["units"]),
+                }
+                for bucket, values in sorted(points.items())
+            ]
+        return series
 
     def _build_summary(self, products: List[Dict[str, Any]]) -> Dict[str, Any]:
         class_counts = {
