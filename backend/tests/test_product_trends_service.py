@@ -112,6 +112,7 @@ def test_trend_class_thresholds():
 @pytest.mark.asyncio
 async def test_get_product_trends_classifies_rising_declining_and_stable_products():
     account_id = uuid4()
+    start_date = date(2026, 3, 18)
     end_date = date(2026, 3, 31)
     session = FakeAsyncSession(
         [
@@ -144,7 +145,7 @@ async def test_get_product_trends_classifies_rising_declining_and_stable_product
     service = ProductTrendsService(session)  # type: ignore[arg-type]
     result = await service.get_product_trends(
         account_ids=[account_id],
-        start_date=date(2026, 3, 1),
+        start_date=start_date,
         end_date=end_date,
         limit=10,
     )
@@ -183,7 +184,7 @@ async def test_get_product_trends_handles_missing_bsr_and_review_data():
     service = ProductTrendsService(session)  # type: ignore[arg-type]
     result = await service.get_product_trends(
         account_ids=[account_id],
-        start_date=date(2026, 3, 1),
+        start_date=date(2026, 3, 18),
         end_date=date(2026, 3, 31),
         limit=5,
     )
@@ -235,7 +236,7 @@ async def test_declining_fast_creates_warning_alert():
     await service.get_product_trends(
         account_ids=[account_id],
         organization_id=organization_id,
-        start_date=date(2026, 3, 1),
+        start_date=date(2026, 3, 18),
         end_date=date(2026, 3, 31),
         limit=5,
     )

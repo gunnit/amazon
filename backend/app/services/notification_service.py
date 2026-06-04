@@ -29,7 +29,7 @@ class NotificationService:
         to_emails: List[str],
         subject: str,
         html_content: str,
-        from_email: str = "noreply@niuexa.ai",
+        from_email: Optional[str] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         """Send email using SendGrid.
@@ -39,6 +39,10 @@ class NotificationService:
         generic "failed".
         """
         self.last_error = None
+
+        if from_email is None:
+            from app.config import settings
+            from_email = settings.SENDGRID_FROM_EMAIL
 
         if not self.sendgrid_api_key:
             logger.warning("SendGrid API key not configured")
@@ -105,6 +109,7 @@ class NotificationService:
         channels: List[str],
         emails: Optional[List[str]] = None,
         webhook_url: Optional[str] = None,
+        from_email: Optional[str] = None,
     ) -> Dict[str, bool]:
         """Send alert through specified channels."""
         results = {}
@@ -113,7 +118,7 @@ class NotificationService:
         if "email" in channels and emails:
             subject = f"Inthezon Alert: {alert_label}"
             html_content = self._format_alert_email(alert_label, message, details)
-            results["email"] = await self.send_email(emails, subject, html_content)
+            results["email"] = await self.send_email(emails, subject, html_content, from_email=from_email)
 
         if "webhook" in channels and webhook_url:
             results["webhook"] = await self._send_webhook(webhook_url, {
@@ -193,6 +198,7 @@ class NotificationService:
         to_email: str,
         kpis: Dict[str, Any],
         alerts: List[Dict[str, Any]],
+        from_email: Optional[str] = None,
     ) -> bool:
         """Send daily digest email."""
         html_content = f"""
@@ -234,4 +240,5 @@ class NotificationService:
             to_emails=[to_email],
             subject="Inthezon Daily Digest",
             html_content=html_content,
+            from_email=from_email,
         )

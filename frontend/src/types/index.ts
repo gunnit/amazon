@@ -597,6 +597,7 @@ export interface Product {
   review_count: number | null
   rating: number | null
   is_active: boolean
+  has_sales_in_period?: boolean | null
 }
 
 // Forecast types

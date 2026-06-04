@@ -1,9 +1,12 @@
-from datetime import date, timedelta
+import io
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from openpyxl import load_workbook
 
+from app.services.forecast_export_service import build_forecast_workbook_bytes
 from app.services.forecast_service import ForecastService
 
 
@@ -199,3 +202,61 @@ async def test_calculate_metrics_uses_prophet_for_prophet_models(monkeypatch):
     assert calls == [(14, 7, "medium", 7)]
     assert mape >= 0
     assert rmse >= 0
+
+
+def _fake_forecast(predictions, horizon_days, *, model_used="prophet"):
+    return SimpleNamespace(
+        asin="B0TESTASIN",
+        forecast_type="sales",
+        model_used=model_used,
+        generated_at=datetime(2026, 6, 1, 9, 0),
+        forecast_horizon_days=horizon_days,
+        predictions=predictions,
+        mape=12.0,
+        rmse=5.0,
+        confidence_level="high",
+        data_quality_notes=None,
+    )
+
+
+def _horizon_cell(workbook_bytes: bytes, horizon_label: str) -> str:
+    ws = load_workbook(io.BytesIO(workbook_bytes)).worksheets[0]
+    for row in ws.iter_rows(min_col=1, max_col=2):
+        if row[0].value == horizon_label:
+            return str(row[1].value)
+    raise AssertionError(f"Horizon label {horizon_label!r} not found in summary sheet")
+
+
+@pytest.mark.parametrize(
+    "lang, expected",
+    [("it", "3 mesi"), ("en", "3 months")],
+)
+def test_excel_horizon_reads_months_for_monthly_forecast(lang, expected):
+    horizon_label = "Orizzonte Previsione" if lang == "it" else "Forecast Horizon"
+    predictions = [
+        {"date": date(2026, 6, 1).isoformat(), "value": 5000.0},
+        {"date": date(2026, 7, 1).isoformat(), "value": 5200.0},
+        {"date": date(2026, 8, 1).isoformat(), "value": 5100.0},
+    ]
+    forecast = _fake_forecast(predictions, horizon_days=90, model_used="monthly")
+    workbook_bytes = build_forecast_workbook_bytes(
+        forecast, "Acme", template="corporate", language=lang
+    )
+    assert _horizon_cell(workbook_bytes, horizon_label) == expected
+
+
+@pytest.mark.parametrize(
+    "lang, expected",
+    [("it", "14 giorni"), ("en", "14 days")],
+)
+def test_excel_horizon_reads_days_for_daily_forecast(lang, expected):
+    horizon_label = "Orizzonte Previsione" if lang == "it" else "Forecast Horizon"
+    predictions = [
+        {"date": (date(2026, 6, 1) + timedelta(days=offset)).isoformat(), "value": 100.0 + offset}
+        for offset in range(14)
+    ]
+    forecast = _fake_forecast(predictions, horizon_days=14, model_used="simple")
+    workbook_bytes = build_forecast_workbook_bytes(
+        forecast, "Acme", template="corporate", language=lang
+    )
+    assert _horizon_cell(workbook_bytes, horizon_label) == expected

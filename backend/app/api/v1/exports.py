@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 from app.models.amazon_account import AmazonAccount
+from app.models.forecast import Forecast
 from app.models.forecast_export_job import ForecastExportJob
 from app.models.sales_data import SalesData
 from app.schemas.exports import ForecastExportCreate, ForecastExportJobResponse
@@ -54,6 +55,44 @@ def _forecast_export_job_to_response(job: ForecastExportJob) -> ForecastExportJo
         created_at=job.created_at.isoformat() if job.created_at else "",
         completed_at=job.completed_at.isoformat() if job.completed_at else None,
     )
+
+
+async def _latest_forecasts(db, account_ids: List[UUID]) -> List[Forecast]:
+    """Fetch the most recent forecast per account in scope (already-computed)."""
+    if not account_ids:
+        return []
+    rows = (
+        await db.execute(
+            select(Forecast)
+            .where(Forecast.account_id.in_(account_ids))
+            .order_by(Forecast.account_id, Forecast.generated_at.desc())
+        )
+    ).scalars().all()
+    latest: Dict[UUID, Forecast] = {}
+    for fc in rows:
+        latest.setdefault(fc.account_id, fc)
+    return list(latest.values())
+
+
+def _forecast_summary_lines(forecasts: List[Forecast], L, money, format_int) -> List[str]:
+    """Summarize stored forecast predictions into one bullet per account."""
+    lines: List[str] = []
+    for fc in forecasts:
+        predictions = fc.predictions or []
+        values = [float(p.get("value") or 0) for p in predictions if isinstance(p, dict)]
+        if not values:
+            continue
+        total = sum(values)
+        horizon = fc.forecast_horizon_days or len(values)
+        ftype = (fc.forecast_type or "sales").lower()
+        total_label = money(total) if ftype in ("sales", "revenue") else format_int(total)
+        lines.append(
+            L(
+                f"{horizon}-day {ftype} forecast: {total_label} total ({fc.model_used or 'model'}).",
+                f"Previsione {ftype} a {horizon} giorni: {total_label} totale ({fc.model_used or 'modello'}).",
+            )
+        )
+    return lines
 
 
 # Brand palette sampled from the Niuexa/Libera "Inthezon — Strategia Amazon" deck.
@@ -224,13 +263,13 @@ class _PowerPointBuilder:
             self._set_font(p_value.font)
             p_value.alignment = PP_ALIGN.CENTER
 
-    def trend_slide(self, title, trend_rows, value_caption):
+    def trend_slide(self, title, trend_rows, value_caption, subtitle=None):
         from pptx.util import Inches
         from pptx.chart.data import CategoryChartData
         from pptx.enum.chart import XL_CHART_TYPE
 
         slide = self._blank()
-        self._slide_title(slide, title)
+        self._slide_title(slide, title, subtitle)
 
         chart_data = CategoryChartData()
         chart_data.categories = [
@@ -297,6 +336,68 @@ class _PowerPointBuilder:
                 self._set_font(para.font)
                 if c >= 2:
                     para.alignment = PP_ALIGN.RIGHT
+
+    def _empty_state(self, slide, message, top=2.4):
+        """Render a single muted line for slides with no data in scope."""
+        self._textbox(slide, 0.6, top, 8.8, 0.6, message, 14, color=_PPT_GREY)
+
+    def section_slide(self, title, subtitle, headers, rows, empty_message,
+                      *, right_align_from=1):
+        """Generic table slide; falls back to an empty-state line when no rows."""
+        from pptx.util import Inches, Pt
+        from pptx.enum.text import PP_ALIGN
+
+        slide = self._blank()
+        self._slide_title(slide, title, subtitle)
+        if not rows:
+            self._empty_state(slide, empty_message)
+            return
+
+        n_rows = len(rows) + 1
+        n_cols = len(headers)
+        table_shape = slide.shapes.add_table(
+            n_rows, n_cols, Inches(0.5), Inches(1.9), Inches(9), Inches(0.4 * n_rows)
+        )
+        table = table_shape.table
+        for c, header in enumerate(headers):
+            cell = table.cell(0, c)
+            cell.text = header
+            para = cell.text_frame.paragraphs[0]
+            para.font.bold = True
+            para.font.size = Pt(12)
+            para.font.color.rgb = self._rgb(_PPT_WHITE)
+            self._set_font(para.font)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = self._rgb(_PPT_NAVY)
+        for r, row in enumerate(rows, start=1):
+            for c, value in enumerate(row):
+                cell = table.cell(r, c)
+                cell.text = str(value)
+                para = cell.text_frame.paragraphs[0]
+                para.font.size = Pt(11)
+                self._set_font(para.font)
+                if c >= right_align_from:
+                    para.alignment = PP_ALIGN.RIGHT
+
+    def bullets_slide(self, title, subtitle, lines, empty_message):
+        """Bullet-list slide; falls back to an empty-state line when no content."""
+        from pptx.util import Inches, Pt
+
+        slide = self._blank()
+        self._slide_title(slide, title, subtitle)
+        if not lines:
+            self._empty_state(slide, empty_message)
+            return
+        box = slide.shapes.add_textbox(Inches(0.6), Inches(2.0), Inches(8.8), Inches(4.6))
+        tf = box.text_frame
+        tf.word_wrap = True
+        for idx, line in enumerate(lines):
+            para = tf.paragraphs[0] if idx == 0 else tf.add_paragraph()
+            para.text = f"•  {line}"
+            para.font.size = Pt(14)
+            para.font.color.rgb = self._rgb(_PPT_BODY)
+            self._set_font(para.font)
+            para.space_after = Pt(12)
 
     def agency_slide(self, title, description, services_caption, services,
                      contacts_caption, contacts, footer):
@@ -642,12 +743,18 @@ async def export_to_powerpoint(
     start_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
     end_date: date = Query(default_factory=lambda: date.today()),
     account_ids: Optional[List[UUID]] = Query(default=None),
-    group_by: str = Query(default="month", regex="^(day|week|month)$"),
+    group_by: Optional[str] = Query(default=None, regex="^(day|week|month)$"),
     template: str = Query(default="default"),
     language: str = Query(default="it", regex="^(en|it)$"),
 ):
     """Generate an Italian, European-formatted PowerPoint deck."""
     from app.services.export_service import format_money_eu, format_int_eu
+
+    # Pick a trend grain that yields more than one column for the selected range.
+    # A hardcoded 'month' collapses to a single bar on short/single-month windows.
+    if group_by is None:
+        span_days = (end_date - start_date).days
+        group_by = "day" if span_days <= 45 else "week" if span_days <= 180 else "month"
 
     export_service = ExportService(db)
     scoped_accounts = await export_service._get_accounts(organization.id, account_ids)
@@ -682,6 +789,9 @@ async def export_to_powerpoint(
     )
     if len(scope_label) > 80:
         scope_label = scope_label[:77] + "…"
+
+    period_str = f"{start_date.isoformat()} — {end_date.isoformat()}"
+    scope_subtitle = f"{period_str}  ·  {scope_label}"
 
     builder = _PowerPointBuilder(is_it=is_it)
     builder.cover(
@@ -739,31 +849,141 @@ async def export_to_powerpoint(
             title=L("Revenue Trend", "Andamento Fatturato"),
             trend_rows=trend_rows,
             value_caption=L("Revenue", "Fatturato"),
+            subtitle=scope_subtitle,
         )
 
+    # Top products — paginated across two slides (top ~20 ASINs).
     if product_rows:
-        builder.top_products_slide(
-            title=L("Top Products", "Prodotti Principali"),
-            note=L(
-                "Estimated revenue from Amazon's by-ASIN report.",
-                "Fatturato stimato dal report per ASIN di Amazon.",
-            ),
-            headers=[
-                L("ASIN", "ASIN"),
-                L("Product", "Prodotto"),
-                L("Units", "Unità"),
-                L("Revenue", "Fatturato"),
-            ],
-            rows=[
-                (
-                    r["asin"],
-                    (r["title"] or "")[:42],
-                    format_int_eu(r["units"]),
-                    money(r["revenue"]),
-                )
-                for r in product_rows[:10]
-            ],
-        )
+        product_headers = [
+            L("ASIN", "ASIN"),
+            L("Product", "Prodotto"),
+            L("Units", "Unità"),
+            L("Revenue", "Fatturato"),
+        ]
+        page_size = 10
+        for page in range(0, min(len(product_rows), 20), page_size):
+            chunk = product_rows[page:page + page_size]
+            note = L(
+                f"Estimated revenue from Amazon's by-ASIN report ({page + 1}–{page + len(chunk)}).",
+                f"Fatturato stimato dal report per ASIN di Amazon ({page + 1}–{page + len(chunk)}).",
+            )
+            builder.top_products_slide(
+                title=L("Top Products", "Prodotti Principali"),
+                note=note,
+                headers=product_headers,
+                rows=[
+                    (
+                        r["asin"],
+                        (r["title"] or "")[:42],
+                        format_int_eu(r["units"]),
+                        money(r["revenue"]),
+                    )
+                    for r in chunk
+                ],
+            )
+
+    # Inventory — latest snapshot in scope, otherwise an empty-state line.
+    inventory_rows: list = []
+    if scoped_account_ids:
+        snapshot_date = await export_service._latest_snapshot_date(scoped_account_ids)
+        if snapshot_date is not None:
+            inventory_rows = await export_service._inventory_snapshot_rows(
+                scoped_account_ids, snapshot_date, language
+            )
+    inventory_sorted = sorted(inventory_rows, key=lambda r: r["total_available"])[:15]
+    builder.section_slide(
+        title=L("Inventory", "Inventario"),
+        subtitle=scope_subtitle,
+        headers=[
+            L("ASIN", "ASIN"),
+            L("Product", "Prodotto"),
+            L("Available", "Disponibili"),
+            L("Inbound", "In arrivo"),
+            L("Status", "Stato"),
+        ],
+        rows=[
+            (
+                r["asin"],
+                (r["title"] or "")[:36],
+                format_int_eu(r["total_available"]),
+                format_int_eu(r["inbound_total"]),
+                r["stock_status"],
+            )
+            for r in inventory_sorted
+        ],
+        empty_message=L(
+            "No inventory snapshot available for the selected scope.",
+            "Nessuno snapshot inventario disponibile per l'ambito selezionato.",
+        ),
+        right_align_from=2,
+    )
+
+    # Advertising — Amazon Ads is OAuth-pending; never fabricate, show empty-state.
+    ads_rollup = await export_service._advertising_rollup_rows(
+        scoped_account_ids, start_date, end_date
+    )
+    builder.section_slide(
+        title=L("Advertising", "Advertising"),
+        subtitle=scope_subtitle,
+        headers=[
+            L("Campaign", "Campagna"),
+            L("Spend", "Spesa"),
+            L("Sales", "Vendite"),
+            L("ACoS", "ACoS"),
+            L("ROAS", "ROAS"),
+        ],
+        rows=[
+            (
+                (r["campaign_name"] or r["campaign_id"])[:40],
+                money(r["spend"]),
+                money(r["attributed_sales_7d"]),
+                f"{format_int_eu(r['acos'])}%",
+                f"{r['roas']:.2f}",
+            )
+            for r in ads_rollup[:12]
+        ],
+        empty_message=L(
+            "Advertising data is not connected yet (Amazon Ads pending authorization).",
+            "Dati advertising non ancora collegati (autorizzazione Amazon Ads in attesa).",
+        ),
+        right_align_from=1,
+    )
+
+    # Forecast — surface already-computed predictions when present.
+    forecast_lines = _forecast_summary_lines(
+        await _latest_forecasts(db, scoped_account_ids), L, money, format_int_eu
+    )
+    builder.bullets_slide(
+        title=L("Forecast", "Previsioni"),
+        subtitle=scope_subtitle,
+        lines=forecast_lines,
+        empty_message=L(
+            "No forecast has been generated for the selected scope yet.",
+            "Nessuna previsione generata per l'ambito selezionato.",
+        ),
+    )
+
+    # Recommendations — Anthropic-backed; degrade gracefully if the service fails.
+    rec_lines: list = []
+    try:
+        rec_service = StrategicRecommendationsService(db)
+        recs = await rec_service.list_recommendations(organization.id, limit=6)
+        rec_lines = [
+            f"[{r.category}] {r.title}" + (f" — {r.expected_impact}" if r.expected_impact else "")
+            for r in recs
+        ]
+    except Exception:
+        logger.exception("Recommendations slide degraded to empty-state")
+        rec_lines = []
+    builder.bullets_slide(
+        title=L("Strategic Recommendations", "Raccomandazioni Strategiche"),
+        subtitle=scope_subtitle,
+        lines=rec_lines,
+        empty_message=L(
+            "No strategic recommendations are available for this period.",
+            "Nessuna raccomandazione strategica disponibile per questo periodo.",
+        ),
+    )
 
     builder.agency_slide(
         title=L("About the agency", "Chi siamo"),

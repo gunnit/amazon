@@ -255,6 +255,15 @@ export const reportsApi = {
     return response.data
   },
 
+  getEmailStatus: async (): Promise<{
+    email_configured: boolean
+    from_email: string
+    worker_available: boolean
+  }> => {
+    const response = await api.get('/reports/email-status')
+    return response.data
+  },
+
   listSchedules: async (): Promise<ScheduledReport[]> => {
     const response = await api.get('/reports/schedules')
     return response.data
@@ -608,6 +617,7 @@ import type {
   BulkListingUpdateResult,
   BulkResult,
   CatalogChangeLogEntry,
+  ImportResult,
   PriceUpdateResult,
 } from '@/components/catalog/types'
 
@@ -616,6 +626,8 @@ export const catalogApi = {
     search?: string
     category?: string
     active_only?: boolean
+    date_from?: string
+    date_to?: string
     limit?: number
     account_ids?: string[]
   }): Promise<Product[]> => {
@@ -658,6 +670,24 @@ export const catalogApi = {
         account_id: params.account_id,
         product_type: params.product_type ?? 'PRODUCT',
       },
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return response.data
+  },
+
+  downloadImportTemplate: async (): Promise<Blob> => {
+    const response = await api.get('/catalog/import/template', { responseType: 'blob' })
+    return response.data
+  },
+
+  importProducts: async (params: {
+    account_id: string
+    file: File
+  }): Promise<ImportResult> => {
+    const form = new FormData()
+    form.append('file', params.file)
+    const response = await api.post('/catalog/import', form, {
+      params: { account_id: params.account_id },
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     return response.data

@@ -517,6 +517,7 @@ def deliver_scheduled_report_run_job(run_id: str) -> None:
                 sent = await service.send_email(
                     to_emails=list(run.recipients_snapshot or []),
                     subject=f"Inthezon Scheduled Report: {run.report_name}",
+                    from_email=settings.SENDGRID_FROM_EMAIL,
                     html_content=(
                         f"<p>Your scheduled report <strong>{run.report_name}</strong> is attached.</p>"
                         f"<p>Period: {run.period_start.isoformat()} to {run.period_end.isoformat()}</p>"

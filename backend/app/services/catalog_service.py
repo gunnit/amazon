@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID
@@ -20,18 +21,24 @@ from app.models.amazon_account import AmazonAccount, AccountType
 from app.models.catalog_change_log import CatalogChangeLog
 from app.models.product import Product
 from app.schemas.catalog import (
+    ASIN_PATTERN,
     BulkErrorCode,
     BulkListingUpdateResult,
     BulkResult,
     BulkRowError,
     CatalogChangeField,
     CatalogChangeStatus,
+    ImportResult,
     PriceUpdate,
     PriceUpdateResult,
+    ProductImportRow,
     AvailabilityResult,
 )
 
 logger = logging.getLogger(__name__)
+
+_ASIN_RE = re.compile(ASIN_PATTERN)
+IMPORT_COLUMNS = ("asin", "sku", "title", "brand", "category")
 
 LISTING_TEXT_FIELDS = {
     "title": "item_name",
@@ -271,6 +278,69 @@ class CatalogService:
             "brand": product.brand,
             "category": product.category,
         }
+
+    # ------------------------------------------------------------------
+    # Manual catalog import (CSV / Excel)
+    # ------------------------------------------------------------------
+
+    async def import_products_from_file(
+        self,
+        account_id: UUID,
+        file_bytes: bytes,
+        filename: str,
+    ) -> ImportResult:
+        """Create or update local Product rows from a CSV/Excel upload.
+
+        Works for both Seller and Vendor accounts: rows are written straight to
+        the local catalog and never pushed to SP-API. Existing synced metadata is
+        only overwritten when the incoming cell is non-empty.
+        """
+        rows, errors = parse_import_rows(file_bytes, filename)
+
+        successes: List[ProductImportRow] = []
+        for parsed in rows:
+            asin = parsed["asin"]
+            existing = await self._load_product(account_id, asin)
+            created = existing is None
+
+            if existing is None:
+                existing = Product(account_id=account_id, asin=asin, is_active=True)
+                self.db.add(existing)
+
+            if parsed.get("sku"):
+                existing.sku = parsed["sku"]
+            if parsed.get("title"):
+                existing.title = parsed["title"]
+            if parsed.get("brand"):
+                existing.brand = parsed["brand"]
+            if parsed.get("category"):
+                existing.category = parsed["category"]
+            existing.is_active = True
+            existing.source = "manual_import"
+
+            successes.append(
+                ProductImportRow(
+                    asin=asin,
+                    sku=existing.sku,
+                    title=existing.title,
+                    brand=existing.brand,
+                    category=existing.category,
+                    created=created,
+                )
+            )
+
+        await self.db.flush()
+
+        total = len(rows) + len(errors)
+        return ImportResult(
+            account_id=account_id,
+            total=total,
+            succeeded=len(successes),
+            failed=len(errors),
+            skipped=0,
+            successes=successes,
+            errors=errors,
+        )
 
     # ------------------------------------------------------------------
     # Price management
@@ -637,6 +707,81 @@ def _row_listing_snapshot(row: pd.Series) -> Dict[str, Any]:
             continue
         fields[column] = str(value)
     return fields
+
+
+def _cell(value: Any) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return str(value).strip()
+
+
+def parse_import_rows(
+    file_bytes: bytes, filename: str
+) -> tuple[List[Dict[str, str]], List[BulkRowError]]:
+    """Parse a CSV/Excel catalog import into clean rows + per-row errors.
+
+    Pure function: no DB access. Headers are matched case-insensitively after
+    trimming. ``asin`` is required and validated against ASIN_PATTERN; duplicate
+    ASINs within the file keep only the first occurrence.
+    """
+    name = (filename or "").lower()
+    try:
+        if name.endswith(".csv"):
+            df = pd.read_csv(
+                io.BytesIO(file_bytes), dtype=str, sep=None, engine="python", encoding="utf-8-sig"
+            )
+        elif name.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+        else:
+            raise CatalogOperationError("File must be a .csv, .xlsx or .xls file")
+    except CatalogOperationError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise CatalogOperationError(f"Could not parse file: {exc}") from exc
+
+    df.columns = [str(c).strip().lstrip("﻿").strip().lower() for c in df.columns]
+    if "asin" not in df.columns:
+        raise CatalogOperationError("File must contain an 'asin' column")
+
+    rows: List[Dict[str, str]] = []
+    errors: List[BulkRowError] = []
+    seen: set[str] = set()
+
+    for row_idx, row in df.iterrows():
+        row_number = int(row_idx) + 2  # +1 for 0-based, +1 for header
+        asin = _cell(row.get("asin"))
+        if not _ASIN_RE.match(asin):
+            errors.append(
+                BulkRowError(
+                    row=row_number,
+                    asin=asin or None,
+                    error="ASIN is required and must be 10 uppercase letters or digits",
+                    code=BulkErrorCode.INVALID_INPUT,
+                )
+            )
+            continue
+        if asin in seen:
+            continue
+        seen.add(asin)
+
+        rows.append(
+            {
+                "asin": asin,
+                "sku": _cell(row.get("sku")),
+                "title": _cell(row.get("title")),
+                "brand": _cell(row.get("brand")),
+                "category": _cell(row.get("category")),
+            }
+        )
+
+    return rows, errors
+
+
+def import_template_bytes() -> bytes:
+    """Return a tiny CSV template (header + one example row) for manual import."""
+    header = ",".join(IMPORT_COLUMNS)
+    example = "B08N5WRWNW,EXAMPLE-SKU-001,Esempio prodotto,Marca,Categoria"
+    return ("﻿" + header + "\n" + example + "\n").encode("utf-8")
 
 
 _CURRENCY_BY_MARKETPLACE = {

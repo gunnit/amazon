@@ -8,6 +8,7 @@ from sqlalchemy import select, func, Date, cast
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
+from app.config import settings
 from app.models.amazon_account import AmazonAccount
 from app.models.order import Order, OrderItem
 from app.models.scheduled_report import ScheduledReport
@@ -30,6 +31,35 @@ from app.services.scheduled_report_service import (
 )
 
 router = APIRouter()
+
+
+def _broker_reachable() -> bool:
+    """Best-effort check that the Celery broker is reachable.
+
+    A negative result means scheduled runs won't fire automatically, so the UI
+    can nudge operators toward 'Run now'. Never raises.
+    """
+    try:
+        from kombu import Connection
+
+        with Connection(settings.CELERY_BROKER_URL, connect_timeout=1) as conn:
+            conn.ensure_connection(max_retries=0, timeout=1)
+        return True
+    except Exception:
+        return False
+
+
+@router.get("/email-status")
+async def get_reports_email_status(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+):
+    """Expose email/worker readiness so the UI can warn without exposing secrets."""
+    return {
+        "email_configured": bool(settings.SENDGRID_API_KEY),
+        "from_email": settings.SENDGRID_FROM_EMAIL,
+        "worker_available": _broker_reachable(),
+    }
 
 
 @router.get("/sales", response_model=List[SalesDataResponse])

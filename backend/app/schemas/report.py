@@ -153,6 +153,8 @@ class ProductResponse(BaseModel):
     review_count: Optional[int]
     rating: Optional[Decimal]
     is_active: bool
+    source: Optional[str] = None
+    has_sales_in_period: Optional[bool] = None
 
     class Config:
         from_attributes = True

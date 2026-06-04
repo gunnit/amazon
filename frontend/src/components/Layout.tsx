@@ -7,6 +7,7 @@ import {
   TrendingUp,
   Megaphone,
   Search,
+  Sparkles,
   Bell,
   Package,
   Lightbulb,
@@ -34,7 +35,7 @@ const navItems = [
   { key: 'nav.advertising', href: '/advertising', icon: Megaphone },
   { key: 'nav.forecasts', href: '/forecasts', icon: TrendingUp },
   { key: 'nav.marketResearch', href: '/market-research', icon: Search },
-  // Brand Analysis archived for now — hidden from the sidebar (route still registered).
+  { key: 'nav.brandAnalysis', href: '/brand-analysis', icon: Sparkles },
   { key: 'nav.catalog', href: '/catalog', icon: Package },
   { key: 'nav.recommendations', href: '/recommendations', icon: Lightbulb },
   { key: 'nav.alerts', href: '/alerts', icon: Bell },

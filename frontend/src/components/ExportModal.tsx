@@ -257,7 +257,6 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
           start_date: dateRange.start,
           end_date: dateRange.end,
           account_ids: accountIds,
-          group_by: 'month',
           language,
         })
         downloadBlob(blob, `inthezon_presentation_${dateRange.start}_${dateRange.end}_${language}.pptx`)

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { EmptyState } from '@/components/EmptyState'
 import { Badge } from '@/components/ui/badge'
 import { FilterBar, DateRangeFilter, AccountFilter } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
@@ -187,6 +188,14 @@ export default function Advertising() {
   const showNoAdsBanner = scopedAccounts.length > 0 && okAdsAccounts === 0
   const showPartialAdsBanner = !showNoAdsBanner && okAdsAccounts < scopedAccounts.length && scopedAccounts.length > 0
 
+  const hasAdsData =
+    (data?.total_impressions || 0) > 0 ||
+    (data?.total_spend || 0) > 0 ||
+    (data?.top_campaigns?.length || 0) > 0
+  // Nothing connected and nothing to show: explain we're waiting on Amazon Ads
+  // API approval instead of rendering zeroed KPIs and empty tables.
+  const showAdsAwaitingState = !hasAdsData && okAdsAccounts === 0
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -233,6 +242,20 @@ export default function Advertising() {
         </Alert>
       )}
 
+      {showAdsAwaitingState ? (
+        <EmptyState
+          icon={Megaphone}
+          title={t('advertising.awaitingApprovalTitle')}
+          description={t('advertising.awaitingApprovalDesc')}
+          nextStep={t('advertising.awaitingApprovalNextStep')}
+          action={
+            <Link to="/accounts" className="text-sm font-medium underline">
+              {t('advertising.openAccounts')}
+            </Link>
+          }
+        />
+      ) : (
+        <>
       {/* KPI Overview */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <MetricCard label={t('advertising.totalSpend')} value={formatCurrency(data?.total_spend || 0)} icon={DollarSign} />
@@ -282,6 +305,8 @@ export default function Advertising() {
           emptyMessage={t('advertising.noUnderperforming')}
         />
       </div>
+        </>
+      )}
     </div>
   )
 }

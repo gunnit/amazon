@@ -47,6 +47,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Progress } from '@/components/ui/progress'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
 import { forecastsApi, accountsApi, exportsApi } from '@/services/api'
@@ -196,6 +197,14 @@ function TemplatePreview({ config }: { config: (typeof TEMPLATE_CONFIGS)[number]
   )
 }
 
+// The AI insights step depends on Anthropic; surface a friendly message when
+// the key is missing or the account is out of credit instead of a raw detail.
+function isAnthropicUnavailable(detail?: string | null): boolean {
+  if (!detail) return false
+  const text = detail.toLowerCase()
+  return text.includes('anthropic_api_key') || text.includes('credit balance too low')
+}
+
 // ── Forecast Export Modal ──
 function ForecastExportModal({
   open,
@@ -217,11 +226,13 @@ function ForecastExportModal({
   const [isExporting, setIsExporting] = useState(false)
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [hasDownloadedPackage, setHasDownloadedPackage] = useState(false)
+  const [aiUnavailable, setAiUnavailable] = useState(false)
 
   const resetExportState = () => {
     setIsExporting(false)
     setActiveJobId(null)
     setHasDownloadedPackage(false)
+    setAiUnavailable(false)
   }
 
   useEffect(() => {
@@ -282,6 +293,7 @@ function ForecastExportModal({
 
   const handleExport = async () => {
     setIsExporting(true)
+    setAiUnavailable(false)
     if (!includeInsights) {
       try {
         const blob = await exportsApi.exportForecastExcel({
@@ -319,6 +331,11 @@ function ForecastExportModal({
       const description = axios.isAxiosError(error)
         ? error.response?.data?.detail
         : undefined
+      if (isAnthropicUnavailable(description)) {
+        setAiUnavailable(true)
+        setIsExporting(false)
+        return
+      }
       toast({
         variant: 'destructive',
         title: t('forecasts.exportPackageFailed'),
@@ -330,12 +347,16 @@ function ForecastExportModal({
 
   useEffect(() => {
     if (packageStatusQuery.data?.status === 'failed') {
+      const errorMessage = packageStatusQuery.data.error_message
+      if (isAnthropicUnavailable(errorMessage)) {
+        setAiUnavailable(true)
+        setIsExporting(false)
+        return
+      }
       toast({
         variant: 'destructive',
         title: t('forecasts.exportPackageFailed'),
-        ...(packageStatusQuery.data.error_message
-          ? { description: packageStatusQuery.data.error_message }
-          : {}),
+        ...(errorMessage ? { description: errorMessage } : {}),
       })
       setIsExporting(false)
     }
@@ -411,6 +432,13 @@ function ForecastExportModal({
                 </p>
               </div>
             </div>
+
+            {aiUnavailable && (
+              <Alert variant="warning" className="mt-1">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>{t('forecasts.exportAiUnavailable')}</AlertDescription>
+              </Alert>
+            )}
           </div>
 
           {/* Preview summary */}
@@ -420,7 +448,9 @@ function ForecastExportModal({
               <p><span className="font-medium text-foreground">ASIN:</span> {forecast.asin}</p>
             )}
             <p><span className="font-medium text-foreground">{t('forecasts.model')}:</span> {forecast.model_used}</p>
-            <p><span className="font-medium text-foreground">{t('forecasts.horizonLabel')}:</span> {t('forecasts.byAsin.daysValue', { days: forecast.horizon_days })}</p>
+            <p><span className="font-medium text-foreground">{t('forecasts.horizonLabel')}:</span> {isMonthlyForecast(forecast)
+              ? t('forecasts.byAsin.monthsValue', { months: Math.max(1, Math.round((forecast.horizon_days ?? 30) / 30)) })
+              : t('forecasts.byAsin.daysValue', { days: forecast.horizon_days })}</p>
             <p><span className="font-medium text-foreground">{t('forecasts.predictedTotal')}:</span> {formatCurrency(forecast.predictions.reduce((s, p) => s + p.predicted_value, 0))}</p>
           </div>
 
@@ -568,6 +598,10 @@ export default function Forecasts() {
     [rawNotes, t]
   )
   const isMonthly = useMemo(() => isMonthlyForecast(latestForecast), [latestForecast])
+  const monthsCount = useMemo(
+    () => Math.max(1, Math.round((latestForecast?.horizon_days ?? 30) / 30)),
+    [latestForecast?.horizon_days]
+  )
   // Honest "insufficient data" state: low confidence backed by a short/volatile
   // history note (not just a bare low MAPE the user can't interpret).
   const insufficientReasons = useMemo(
@@ -810,6 +844,9 @@ export default function Forecasts() {
                 disabled={!selectedAccount}
                 className="flex h-10 w-[180px] rounded-md border border-input bg-background px-3 py-2 font-mono text-sm uppercase ring-offset-background placeholder:text-muted-foreground placeholder:font-sans placeholder:normal-case focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
+              <p className="text-xs text-muted-foreground max-w-[180px]">
+                {t('forecasts.asinPasteHint')}
+              </p>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">{t('forecasts.horizon')}</label>
@@ -865,10 +902,15 @@ export default function Forecasts() {
                       )}
                     </div>
                     <CardDescription>
-                      {t('forecasts.predictionDesc', {
-                        days: latestForecast.horizon_days,
-                        model: latestForecast.model_used,
-                      })}
+                      {isMonthly
+                        ? t('forecasts.predictionDescMonthly', {
+                            months: monthsCount,
+                            model: latestForecast.model_used,
+                          })
+                        : t('forecasts.predictionDesc', {
+                            days: latestForecast.horizon_days,
+                            model: latestForecast.model_used,
+                          })}
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1117,13 +1159,42 @@ export default function Forecasts() {
                   <div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">{t('forecasts.confidenceLabel')}</span>
-                      {confidenceLevel ? (
-                        <Badge variant={confidenceBadgeVariant}>
-                          {t(`forecasts.confidence.${confidenceLevel}`)}
-                        </Badge>
-                      ) : (
-                        <span className="font-medium">N/A</span>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {confidenceLevel ? (
+                          <Badge variant={confidenceBadgeVariant}>
+                            {t(`forecasts.confidence.${confidenceLevel}`)}
+                          </Badge>
+                        ) : (
+                          <span className="font-medium">N/A</span>
+                        )}
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-foreground"
+                              aria-label={t('forecasts.confidenceExplainTitle')}
+                            >
+                              <Info className="h-3.5 w-3.5" />
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent align="end" className="w-72 text-sm">
+                            <p className="font-medium">{t('forecasts.confidenceExplainTitle')}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {t('forecasts.confidenceExplainBody')}
+                            </p>
+                            {dataQualityNotes.length > 0 && (
+                              <div className="mt-3 border-t pt-2">
+                                <p className="text-xs font-medium">{t('forecasts.confidenceLowReason')}</p>
+                                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
+                                  {dataQualityNotes.map((note) => (
+                                    <li key={note}>{note}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </PopoverContent>
+                        </Popover>
+                      </div>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {latestForecast.mape != null
@@ -1192,7 +1263,11 @@ export default function Forecasts() {
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">{t('forecasts.horizonLabel')}</span>
-                    <span>{t('forecasts.byAsin.daysValue', { days: latestForecast.horizon_days })}</span>
+                    <span>
+                      {isMonthly
+                        ? t('forecasts.byAsin.monthsValue', { months: monthsCount })
+                        : t('forecasts.byAsin.daysValue', { days: latestForecast.horizon_days })}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">{t('forecasts.type')}</span>
@@ -1216,7 +1291,9 @@ export default function Forecasts() {
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {t('forecasts.nextDays', { days: latestForecast.horizon_days })}
+                  {isMonthly
+                    ? t('forecasts.nextMonths', { months: monthsCount })
+                    : t('forecasts.nextDays', { days: latestForecast.horizon_days })}
                 </p>
               </CardContent>
             </Card>
@@ -1342,7 +1419,11 @@ function PerAsinForecastTable({
                     <TableCell className="font-mono text-xs">{forecast.asin}</TableCell>
                     <TableCell className="max-w-[280px] truncate">{title ?? '—'}</TableCell>
                     <TableCell className="text-right">
-                      {t('forecasts.byAsin.daysValue', { days: forecast.horizon_days })}
+                      {isMonthlyForecast(forecast)
+                        ? t('forecasts.byAsin.monthsValue', {
+                            months: Math.max(1, Math.round((forecast.horizon_days ?? 30) / 30)),
+                          })
+                        : t('forecasts.byAsin.daysValue', { days: forecast.horizon_days })}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatCurrency(predictedTotal)}

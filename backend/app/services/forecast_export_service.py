@@ -53,6 +53,8 @@ TR = {
         "low_reliability_note": "Low reliability — limited history",
         "all_products": "All Products (Account-wide)",
         "days_suffix": "days",
+        "month_suffix": "month",
+        "months_suffix": "months",
         "date": "Date",
         "day_of_week": "Day",
         "predicted_value": "Predicted Value",
@@ -94,6 +96,8 @@ TR = {
         "low_reliability_note": "Bassa affidabilità — storico limitato",
         "all_products": "Tutti i Prodotti (Intero Account)",
         "days_suffix": "giorni",
+        "month_suffix": "mese",
+        "months_suffix": "mesi",
         "date": "Data",
         "day_of_week": "Giorno",
         "predicted_value": "Valore Previsto",
@@ -282,6 +286,12 @@ def build_forecast_workbook_bytes(
     pred_dates = [_to_date(p["date"]) for p in predictions]
     is_monthly = _is_monthly(pred_dates)
 
+    if is_monthly:
+        months = max(1, round(horizon / 30))
+        horizon_label = f"{months} {t['month_suffix'] if months == 1 else t['months_suffix']}"
+    else:
+        horizon_label = f"{horizon} {t['days_suffix']}"
+
     # MAPE above this threshold (or missing) is not a trustworthy accuracy figure.
     mape_unreliable = mape is None or mape > 100
     if mape is None:
@@ -319,7 +329,7 @@ def build_forecast_workbook_bytes(
             (t["forecast_type"], _label(t["type_labels"], forecast_type)),
             (t["generated_at"], generated_str),
             (t["forecast_model"], _label(t["model_labels"], model_used)),
-            (t["forecast_horizon"], f"{horizon} {t['days_suffix']}"),
+            (t["forecast_horizon"], horizon_label),
             (t["confidence_level"], confidence_level),
             (t["currency"], "EUR"),
         ],

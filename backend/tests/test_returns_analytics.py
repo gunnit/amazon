@@ -144,15 +144,19 @@ analytics_spec.loader.exec_module(analytics)
 
 
 class FakeResult:
-    def __init__(self, *, rows=None, scalar_value=None):
+    def __init__(self, *, rows=None, scalar_value=None, scalar_rows=None):
         self._rows = rows or []
         self._scalar_value = scalar_value
+        self._scalar_rows = scalar_rows or []
 
     def all(self):
         return self._rows
 
     def scalar(self):
         return self._scalar_value
+
+    def scalars(self):
+        return SimpleNamespace(all=lambda: self._scalar_rows)
 
 
 class FakeDb:
@@ -167,7 +171,9 @@ class FakeDb:
 
 @pytest.mark.asyncio
 async def test_returns_endpoint_aggregates_counts_and_rates():
+    account_id = uuid4()
     db = FakeDb([
+        FakeResult(scalar_rows=[account_id]),
         FakeResult(rows=[
             SimpleNamespace(period_date=date(2026, 4, 1), returned_units=4),
             SimpleNamespace(period_date=date(2026, 4, 2), returned_units=2),
@@ -199,7 +205,7 @@ async def test_returns_endpoint_aggregates_counts_and_rates():
         current_user=None,
         organization=SimpleNamespace(id=uuid4()),
         db=db,
-        account_id=uuid4(),
+        account_id=account_id,
         account_ids=None,
         date_from=date(2026, 4, 1),
         date_to=date(2026, 4, 2),
@@ -224,7 +230,9 @@ async def test_returns_endpoint_aggregates_counts_and_rates():
 
 @pytest.mark.asyncio
 async def test_returns_endpoint_gracefully_falls_back_without_order_data():
+    account_id = uuid4()
     db = FakeDb([
+        FakeResult(scalar_rows=[account_id]),
         FakeResult(rows=[
             SimpleNamespace(period_date=date(2026, 4, 3), returned_units=3),
         ]),
@@ -234,6 +242,7 @@ async def test_returns_endpoint_gracefully_falls_back_without_order_data():
         FakeResult(rows=[
             SimpleNamespace(asin="B009TEST", sku="SKU-9", quantity_returned=3),
         ]),
+        FakeResult(scalar_value=0),
         FakeResult(scalar_value=0),
         FakeResult(rows=[]),
         FakeResult(rows=[]),
@@ -247,7 +256,7 @@ async def test_returns_endpoint_gracefully_falls_back_without_order_data():
         organization=SimpleNamespace(id=uuid4()),
         db=db,
         account_id=None,
-        account_ids=[uuid4()],
+        account_ids=[account_id],
         date_from=date(2026, 4, 3),
         date_to=date(2026, 4, 3),
         asin=None,

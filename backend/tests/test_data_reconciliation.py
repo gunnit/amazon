@@ -98,7 +98,10 @@ _stub_table_module(
     ],
 )
 _stub_model_module("app.models.order", "Order", "OrderItem")
-_stub_model_module("app.models.returns_data", "ReturnData")
+_stub_table_module(
+    "app.models.returns_data",
+    ReturnData=["account_id", "asin", "return_date", "quantity"],
+)
 _stub_table_module(
     "app.models.sales_data",
     SalesData=[
@@ -132,13 +135,20 @@ sys.modules["app.models.amazon_account"].AccountType = _AccountType
 
 
 class FakeDb:
-    """Minimal AsyncSession stand-in supporting flush()."""
+    """Minimal AsyncSession stand-in supporting flush() and execute()."""
 
     def __init__(self):
         self.flushes = 0
+        self.executed = []
 
     async def flush(self):
         self.flushes += 1
+
+    async def execute(self, statement):
+        # Vendor-sales sync issues DELETE statements before repopulating a
+        # window; the result is never inspected, so a no-op result is enough.
+        self.executed.append(statement)
+        return _FakeResult()
 
 
 def test_vendor_sales_fallback_warning_constants_are_exposed():
@@ -213,12 +223,13 @@ async def test_vendor_sales_clears_fallback_flag_when_diagnostic_succeeds(monkey
             "salesByAsin": [
                 {
                     "asin": "B0VENDOR1",
-                    "date": "2025-03-01",
+                    "startDate": "2025-03-01",
                     "orderedRevenue": {"amount": "100.00", "currencyCode": "EUR"},
                     "orderedUnits": 5,
                 }
             ]
-        }
+        },
+        get_vendor_purchase_orders=lambda _start, _end: [],
     )
 
     monkeypatch.setattr(service, "_create_sp_api_client", lambda *_args, **_kwargs: fake_client)
@@ -228,11 +239,13 @@ async def test_vendor_sales_clears_fallback_flag_when_diagnostic_succeeds(monkey
 
     monkeypatch.setattr(service, "_upsert_sales_record", fake_upsert)
 
+    # A full settled calendar month must be in range for the diagnostic report
+    # to run; otherwise the service short-circuits to the PO fallback.
     await service.sync_vendor_sales_data(
         SimpleNamespace(id=uuid4(), account_name="Vendor Demo"),
         organization=None,
         start_date=date(2025, 3, 1),
-        end_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 31),
     )
 
     assert service.vendor_sales_used_po_fallback is False

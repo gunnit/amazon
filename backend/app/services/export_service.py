@@ -304,6 +304,37 @@ def _safe_divide(numerator: float, denominator: float) -> float:
     return numerator / denominator
 
 
+def _trend_period_start(value: date, group_by: str) -> date:
+    """Normalize a date to the start of its trend bucket (matches date_trunc)."""
+    if group_by == "month":
+        return value.replace(day=1)
+    if group_by == "week":
+        # Postgres date_trunc('week', ...) anchors on Monday.
+        return value - timedelta(days=value.weekday())
+    return value
+
+
+def _trend_period_buckets(start_date: date, end_date: date, group_by: str) -> list[date]:
+    """Return every ordered bucket start between start/end for the chosen grain.
+
+    Used to zero-fill the revenue trend so sparse data still renders one column
+    per period instead of collapsing to a single bar.
+    """
+    if start_date > end_date:
+        return []
+    buckets: list[date] = []
+    current = _trend_period_start(start_date, group_by)
+    while current <= end_date:
+        buckets.append(current)
+        if group_by == "month":
+            current = (current.replace(day=1) + timedelta(days=32)).replace(day=1)
+        elif group_by == "week":
+            current = current + timedelta(weeks=1)
+        else:
+            current = current + timedelta(days=1)
+    return buckets
+
+
 _CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£"}
 
 # Excel number format for monetary cells. Cells stay numeric (so totals remain
@@ -1439,40 +1470,55 @@ class ExportService:
         else:
             period_expr = SalesData.date
 
-        query = (
-            select(
-                period_expr.label("report_date"),
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
-                func.sum(SalesData.units_ordered).label("units"),
-                func.sum(SalesData.total_order_items).label("orders"),
-                func.max(SalesData.currency).label("currency"),
+        def _build_query(use_sentinel: bool):
+            asin_filter = (
+                SalesData.asin == DAILY_TOTAL_ASIN
+                if use_sentinel
+                else SalesData.asin != DAILY_TOTAL_ASIN
             )
-            .where(
-                SalesData.account_id.in_(account_ids),
-                SalesData.asin == DAILY_TOTAL_ASIN,
-                SalesData.date >= start_date,
-                SalesData.date <= end_date,
+            return (
+                select(
+                    period_expr.label("report_date"),
+                    func.sum(SalesData.ordered_product_sales).label("revenue"),
+                    func.sum(SalesData.units_ordered).label("units"),
+                    func.sum(SalesData.total_order_items).label("orders"),
+                    func.max(SalesData.currency).label("currency"),
+                )
+                .where(
+                    SalesData.account_id.in_(account_ids),
+                    asin_filter,
+                    SalesData.date >= start_date,
+                    SalesData.date <= end_date,
+                )
+                .group_by(period_expr)
+                .order_by(period_expr)
             )
-            .group_by(period_expr)
-            .order_by(period_expr)
-        )
 
-        rows = (await self.db.execute(query)).all()
+        rows = (await self.db.execute(_build_query(True))).all()
+        # Some accounts never received the __DAILY_TOTAL__ sentinel row. Fall back
+        # to summing real per-ASIN rows so the trend still charts.
+        if not rows:
+            rows = (await self.db.execute(_build_query(False))).all()
+
+        by_period: dict[date, Any] = {row.report_date: row for row in rows}
+        currency = next((row.currency for row in rows if row.currency), "EUR")
+
         output: list[dict[str, Any]] = []
-        for row in rows:
-            revenue = _as_float(row.revenue)
-            units = _as_int(row.units)
-            orders = _as_int(row.orders)
+        for bucket in _trend_period_buckets(start_date, end_date, group_by):
+            row = by_period.get(bucket)
+            revenue = _as_float(row.revenue) if row is not None else 0.0
+            units = _as_int(row.units) if row is not None else 0
+            orders = _as_int(row.orders) if row is not None else 0
             output.append(
                 {
-                    "report_date": row.report_date,
+                    "report_date": bucket,
                     "revenue": _round(revenue),
                     "units": units,
                     "orders": orders,
                     "average_order_value": _round(_safe_divide(revenue, orders)),
                     "average_selling_price": _round(_safe_divide(revenue, units)),
                     "units_per_order": _round(_safe_divide(units, orders)),
-                    "currency": row.currency or "EUR",
+                    "currency": currency,
                 }
             )
         return output

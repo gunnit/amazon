@@ -17,6 +17,7 @@ from app.schemas.strategic_recommendation import (
 from app.services.strategic_recommendations_service import (
     VALID_CATEGORIES,
     VALID_STATUSES,
+    AIProviderUnavailableError,
     StrategicRecommendationsService,
 )
 
@@ -118,6 +119,14 @@ async def generate_recommendations(
         )
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AIProviderUnavailableError as exc:
+        # Provider rejected the request (quota/credit/rate limit/outage); never leak
+        # the raw provider message to the client.
+        logger.warning("AI provider unavailable generating recommendations for org %s: %s", org.id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail="ai_provider_unavailable",
+        ) from exc
     except RuntimeError as exc:
         # AI not configured
         raise HTTPException(status_code=503, detail=str(exc)) from exc

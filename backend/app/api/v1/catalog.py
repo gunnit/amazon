@@ -1,16 +1,18 @@
 """Catalog management endpoints."""
+from datetime import date
 from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.deps import CurrentOrganization, CurrentUser, DbSession
 from app.core.exceptions import AmazonAPIError
 from app.models.amazon_account import AmazonAccount
 from app.models.catalog_change_log import CatalogChangeLog
 from app.models.product import Product
+from app.models.sales_data import SalesData
 from app.schemas.catalog import (
     AvailabilityResult,
     AvailabilityUpdateRequest,
@@ -18,11 +20,16 @@ from app.schemas.catalog import (
     BulkPriceUpdateRequest,
     BulkResult,
     CatalogChangeLogEntry,
+    ImportResult,
     PriceUpdateResult,
 )
 from app.schemas.report import ProductResponse
-from app.services.catalog_service import CatalogOperationError, CatalogService
-from app.services.data_extraction import DataExtractionService
+from app.services.catalog_service import (
+    CatalogOperationError,
+    CatalogService,
+    import_template_bytes,
+)
+from app.services.data_extraction import DAILY_TOTAL_ASIN, DataExtractionService
 from app.services.image_service import (
     ALLOWED_CONTENT_TYPES,
     ImageService,
@@ -53,10 +60,18 @@ async def list_products(
     search: Optional[str] = None,
     category: Optional[str] = None,
     active_only: bool = True,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     limit: int = 100,
     offset: int = 0,
 ):
-    """List products from the catalog."""
+    """List products from the catalog.
+
+    The catalog lists every synced product regardless of the period. When
+    ``date_from``/``date_to`` are supplied each product is flagged with
+    ``has_sales_in_period`` instead of being filtered out, so nothing
+    visually disappears from the table.
+    """
     query = (
         select(Product, AmazonAccount.account_type)
         .join(AmazonAccount, AmazonAccount.id == Product.account_id)
@@ -80,12 +95,57 @@ async def list_products(
         query = query.where(Product.category == category)
 
     rows = (await db.execute(query)).all()
+
+    sales_keys: Optional[set] = None
+    if date_from is not None and date_to is not None:
+        sales_keys = await _asins_with_sales_in_period(
+            db, organization.id, date_from, date_to, account_ids
+        )
+
     return [
         ProductResponse.model_validate(
-            {**product.__dict__, "account_type": account_type.value if account_type else None}
+            {
+                **product.__dict__,
+                "account_type": account_type.value if account_type else None,
+                "has_sales_in_period": (
+                    (product.account_id, product.asin) in sales_keys
+                    if sales_keys is not None
+                    else None
+                ),
+            }
         )
         for product, account_type in rows
     ]
+
+
+async def _asins_with_sales_in_period(
+    db,
+    organization_id: UUID,
+    date_from: date,
+    date_to: date,
+    account_ids: Optional[List[UUID]],
+) -> set:
+    """Distinct (account_id, asin) pairs with sales in the period for the org.
+
+    Keyed per account so an ASIN sold under one account is not flagged on a
+    different account that happens to list the same ASIN.
+    """
+    query = (
+        select(SalesData.account_id, SalesData.asin)
+        .join(AmazonAccount, AmazonAccount.id == SalesData.account_id)
+        .where(
+            AmazonAccount.organization_id == organization_id,
+            SalesData.asin != DAILY_TOTAL_ASIN,
+            SalesData.date >= date_from,
+            SalesData.date <= date_to,
+        )
+        .distinct()
+    )
+    if account_ids:
+        query = query.where(AmazonAccount.id.in_(account_ids))
+
+    rows = (await db.execute(query)).all()
+    return {(row[0], row[1]) for row in rows}
 
 
 @router.get("/products/{asin}", response_model=ProductResponse)
@@ -227,6 +287,48 @@ async def bulk_update_products(
     service = CatalogService(db, user_id=current_user.id)
     try:
         return await service.bulk_update_from_excel(account_id, contents, product_type=product_type)
+    except CatalogOperationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/import/template")
+async def download_import_template(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+):
+    """Download the CSV template for manual catalog imports."""
+    return StreamingResponse(
+        iter([import_template_bytes()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=catalog_import_template.csv"},
+    )
+
+
+@router.post("/import", response_model=ImportResult)
+async def import_products(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: UUID = Query(...),
+    file: UploadFile = File(...),
+):
+    """Create or update catalog products from a CSV/Excel upload.
+
+    Works for Vendor accounts too: rows are written to the local catalog and are
+    never pushed to Amazon.
+    """
+    if not file.filename or not file.filename.lower().endswith((".csv", ".xlsx", ".xls")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be a CSV or Excel file (.csv, .xlsx or .xls)",
+        )
+
+    await _verify_account_in_org(db, organization.id, account_id)
+
+    contents = await file.read()
+    service = CatalogService(db, user_id=current_user.id)
+    try:
+        return await service.import_products_from_file(account_id, contents, file.filename)
     except CatalogOperationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
-import { Download, History, Loader2, Mail, Pencil, Play, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, Download, History, Loader2, Mail, Pencil, Play, Plus, Trash2 } from 'lucide-react'
 
 import { useAuthStore } from '@/store/authStore'
 import { accountsApi, reportsApi } from '@/services/api'
@@ -187,6 +187,11 @@ export function ScheduledReportsPanel() {
     queryFn: () => reportsApi.listSchedules(),
   })
 
+  const { data: emailStatus } = useQuery({
+    queryKey: ['reports-email-status'],
+    queryFn: () => reportsApi.getEmailStatus(),
+  })
+
   const { data: accounts = [] } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
     queryFn: () => accountsApi.list(),
@@ -322,6 +327,22 @@ export function ScheduledReportsPanel() {
           </Button>
         </CardHeader>
         <CardContent>
+          {emailStatus && (!emailStatus.email_configured || !emailStatus.worker_available) ? (
+            <div className="mb-4 space-y-2">
+              {!emailStatus.email_configured ? (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{t('scheduledReports.emailNotConfigured')}</span>
+                </div>
+              ) : null}
+              {!emailStatus.worker_available ? (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{t('scheduledReports.workerNotAvailable')}</span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {isLoading ? (
             <div className="flex h-28 items-center justify-center">
               <Loader2 className="h-7 w-7 animate-spin text-primary" />

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import axios from 'axios'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CheckCircle2,
+  CloudOff,
   Download,
   Lightbulb,
   Loader2,
@@ -14,6 +16,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { EmptyState } from '@/components/EmptyState'
 import { downloadBlob } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -118,6 +121,7 @@ export default function Recommendations() {
   )
   const [selectedGenerateAsin, setSelectedGenerateAsin] = useState(ALL_GENERATE_PRODUCTS_VALUE)
   const [lookback, setLookback] = useState<LookbackOption>(LOOKBACK_AUTO)
+  const [aiUnavailable, setAiUnavailable] = useState(false)
 
   const accountsQuery = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -193,6 +197,7 @@ export default function Recommendations() {
             : selectedGenerateAsin,
       }),
     onSuccess: (data) => {
+      setAiUnavailable(false)
       toast({
         title: t('recommendations.generated'),
         description: t('recommendations.generatedDesc', { n: data.created_count }),
@@ -200,6 +205,11 @@ export default function Recommendations() {
       queryClient.invalidateQueries({ queryKey: ['recommendations'] })
     },
     onError: (err: unknown) => {
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined
+      if (status === 502 || status === 503) {
+        setAiUnavailable(true)
+        return
+      }
       const message = err && typeof err === 'object' && 'response' in err
         ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
         : 'Error'
@@ -423,7 +433,16 @@ export default function Recommendations() {
         </div>
       )}
 
-      {items.length === 0 && !listQuery.isLoading && (
+      {aiUnavailable && !listQuery.isLoading && (
+        <EmptyState
+          icon={CloudOff}
+          title={t('recommendations.aiUnavailableTitle')}
+          description={t('recommendations.aiUnavailableDesc')}
+          nextStep={t('recommendations.aiUnavailableNextStep')}
+        />
+      )}
+
+      {!aiUnavailable && items.length === 0 && !listQuery.isLoading && (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             {t('recommendations.empty')}

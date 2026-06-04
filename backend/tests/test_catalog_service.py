@@ -134,6 +134,8 @@ from app.schemas.catalog import (  # noqa: E402
 from app.services.catalog_service import (  # noqa: E402
     CatalogOperationError,
     CatalogService,
+    import_template_bytes,
+    parse_import_rows,
 )
 from app.services.image_service import (  # noqa: E402
     ALLOWED_CONTENT_TYPES,
@@ -482,6 +484,147 @@ async def test_bulk_update_from_excel_rejects_missing_sku_column():
 
     with pytest.raises(CatalogOperationError, match="sku"):
         await service.bulk_update_from_excel(uuid4(), payload)
+
+
+# ---------------------------------------------------------------------
+# Manual catalog import — parser
+# ---------------------------------------------------------------------
+
+
+def _make_csv_bytes(text: str, *, bom: bool = False) -> bytes:
+    prefix = "﻿" if bom else ""
+    return (prefix + text).encode("utf-8")
+
+
+def test_parse_import_rows_accepts_clean_csv():
+    csv = "asin,sku,title,brand,category\nB000000001,SKU-1,Title 1,Acme,Home\n"
+    rows, errors = parse_import_rows(_make_csv_bytes(csv), "import.csv")
+    assert errors == []
+    assert len(rows) == 1
+    assert rows[0] == {
+        "asin": "B000000001",
+        "sku": "SKU-1",
+        "title": "Title 1",
+        "brand": "Acme",
+        "category": "Home",
+    }
+
+
+def test_parse_import_rows_accepts_excel():
+    payload = _make_excel_bytes(
+        [{"asin": "B000000002", "sku": "SKU-2", "title": "T2", "brand": "B", "category": "C"}]
+    )
+    rows, errors = parse_import_rows(payload, "import.xlsx")
+    assert errors == []
+    assert rows[0]["asin"] == "B000000002"
+    assert rows[0]["title"] == "T2"
+
+
+def test_parse_import_rows_handles_bom_and_whitespace_headers():
+    csv = "  ASIN , Title \nB000000003, Hello \n"
+    rows, errors = parse_import_rows(_make_csv_bytes(csv, bom=True), "import.csv")
+    assert errors == []
+    assert rows[0]["asin"] == "B000000003"
+    assert rows[0]["title"] == "Hello"
+
+
+def test_parse_import_rows_rejects_malformed_asin():
+    csv = "asin,title\nb000000001,lowercase\nSHORT,too short\nB000000004,Good\n"
+    rows, errors = parse_import_rows(_make_csv_bytes(csv), "import.csv")
+    assert {r["asin"] for r in rows} == {"B000000004"}
+    assert len(errors) == 2
+    assert {e.code for e in errors} == {BulkErrorCode.INVALID_INPUT}
+    # Header on row 1 -> first data row is 2.
+    assert errors[0].row == 2
+
+
+def test_parse_import_rows_dedups_within_file():
+    csv = "asin,title\nB000000005,First\nB000000005,Second\n"
+    rows, errors = parse_import_rows(_make_csv_bytes(csv), "import.csv")
+    assert errors == []
+    assert len(rows) == 1
+    assert rows[0]["title"] == "First"
+
+
+def test_parse_import_rows_requires_asin_column():
+    csv = "sku,title\nSKU-1,No asin column\n"
+    with pytest.raises(CatalogOperationError, match="asin"):
+        parse_import_rows(_make_csv_bytes(csv), "import.csv")
+
+
+def test_import_template_bytes_has_header_and_example():
+    content = import_template_bytes().decode("utf-8-sig")
+    lines = content.strip().splitlines()
+    assert lines[0] == "asin,sku,title,brand,category"
+    assert len(lines) == 2
+
+
+# ---------------------------------------------------------------------
+# import_products_from_file — upsert
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_import_creates_and_updates_products(monkeypatch):
+    account_id = uuid4()
+    existing = _product(asin="B000000010", sku="OLD-SKU")
+    existing.title = "Existing title"
+    existing.source = "amazon_sync"
+    session = FakeAsyncSession([])
+    service = CatalogService(session, user_id=uuid4())
+
+    async def _load(_self, _account_id, asin):
+        return existing if asin == "B000000010" else None
+
+    monkeypatch.setattr(CatalogService, "_load_product", _load)
+
+    csv = (
+        "asin,sku,title,brand,category\n"
+        "B000000010,NEW-SKU,Updated title,Acme,Home\n"  # update existing
+        "B000000011,FRESH,Brand new,NewCo,Garden\n"      # create new
+        "bad,,no asin,,\n"                               # invalid -> error
+    )
+    result = await service.import_products_from_file(account_id, _make_csv_bytes(csv), "import.csv")
+
+    assert result.total == 3
+    assert result.succeeded == 2
+    assert result.failed == 1
+    assert result.skipped == 0
+
+    # Existing row updated in place and stamped as manual import.
+    assert existing.title == "Updated title"
+    assert existing.sku == "NEW-SKU"
+    assert existing.source == "manual_import"
+    assert existing.is_active is True
+
+    created = [o for o in session.added if o.__class__.__name__ == "Product"]
+    assert len(created) == 1
+    assert created[0].asin == "B000000011"
+    assert created[0].source == "manual_import"
+
+
+@pytest.mark.asyncio
+async def test_import_never_blanks_existing_title(monkeypatch):
+    account_id = uuid4()
+    existing = _product(asin="B000000020", sku="KEEP-SKU")
+    existing.title = "Keep me"
+    session = FakeAsyncSession([])
+    service = CatalogService(session, user_id=uuid4())
+
+    async def _load(_self, _account_id, _asin):
+        return existing
+
+    monkeypatch.setattr(CatalogService, "_load_product", _load)
+
+    # Empty title / sku cells must not wipe synced data.
+    csv = "asin,sku,title,brand,category\nB000000020,,,Acme,\n"
+    result = await service.import_products_from_file(account_id, _make_csv_bytes(csv), "import.csv")
+
+    assert result.succeeded == 1
+    assert existing.title == "Keep me"
+    assert existing.sku == "KEEP-SKU"
+    assert existing.brand == "Acme"
+    assert existing.source == "manual_import"
 
 
 # ---------------------------------------------------------------------

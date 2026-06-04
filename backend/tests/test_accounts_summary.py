@@ -171,7 +171,7 @@ async def test_get_accounts_summary_includes_account_metrics(monkeypatch):
     monkeypatch.setattr(accounts, "select", lambda *_args, **_kwargs: FakeQuery())
     monkeypatch.setattr(accounts.AmazonAccount, "organization_id", object(), raising=False)
 
-    async def fake_load_metrics(_db, account_ids):
+    async def fake_load_metrics(_db, account_ids, _start_date=None, _end_date=None):
         assert account_ids == [account_id]
         return {
             account_id: {
@@ -203,7 +203,7 @@ async def test_get_accounts_summary_keeps_zero_defaults_without_metrics(monkeypa
     monkeypatch.setattr(accounts, "select", lambda *_args, **_kwargs: FakeQuery())
     monkeypatch.setattr(accounts.AmazonAccount, "organization_id", object(), raising=False)
 
-    async def fake_load_metrics(_db, _account_ids):
+    async def fake_load_metrics(_db, _account_ids, _start_date=None, _end_date=None):
         return {}
 
     monkeypatch.setattr(accounts, "_load_account_metrics", fake_load_metrics)

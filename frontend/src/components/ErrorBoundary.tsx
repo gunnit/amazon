@@ -53,10 +53,7 @@ export class ErrorBoundary extends Component<Props, State> {
               </div>
               <div className="min-w-0 flex-1">
                 <CardTitle className="text-lg">{this.props.title || tr('errorBoundary.title')}</CardTitle>
-                <CardDescription className="mt-1">
-                  This page hit a runtime error and couldn't finish rendering. The details below
-                  should help pinpoint the cause.
-                </CardDescription>
+                <CardDescription className="mt-1">{tr('errorBoundary.description')}</CardDescription>
               </div>
               <div className="flex shrink-0 gap-2">
                 <Button asChild variant="outline" size="sm">
@@ -73,6 +70,9 @@ export class ErrorBoundary extends Component<Props, State> {
             </div>
           </CardHeader>
           <CardContent className="space-y-4 p-6">
+            {/* Raw error/stack are developer-facing — never show them to end users. */}
+            {import.meta.env.DEV ? (
+            <>
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 Error
@@ -100,6 +100,8 @@ export class ErrorBoundary extends Component<Props, State> {
                   {info.componentStack}
                 </pre>
               </div>
+            ) : null}
+            </>
             ) : null}
           </CardContent>
         </Card>

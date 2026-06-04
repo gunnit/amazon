@@ -1,4 +1,5 @@
 from datetime import date
+from enum import Enum
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
@@ -87,6 +88,47 @@ data_extraction_module = types.ModuleType("app.services.data_extraction")
 data_extraction_module.DAILY_TOTAL_ASIN = "__DAILY_TOTAL__"
 sys.modules["app.services.data_extraction"] = data_extraction_module
 
+
+class AccountType(str, Enum):
+    SELLER = "seller"
+    VENDOR = "vendor"
+
+
+amazon_account_module = types.ModuleType("app.models.amazon_account")
+amazon_account_module.AccountType = AccountType
+amazon_account_module.AmazonAccount = _TableProxy(
+    "amazon_accounts",
+    "id",
+    "organization_id",
+    "account_type",
+)
+sys.modules["app.models.amazon_account"] = amazon_account_module
+
+
+class Granularity(str, Enum):
+    DAILY = "daily"
+    MONTHLY = "monthly"
+    MIXED = "mixed"
+    UNKNOWN = "unknown"
+
+
+def granularity_for_account_types(account_types) -> Granularity:
+    has_seller = any(t == AccountType.SELLER for t in account_types)
+    has_vendor = any(t == AccountType.VENDOR for t in account_types)
+    if has_seller and has_vendor:
+        return Granularity.MIXED
+    if has_vendor:
+        return Granularity.MONTHLY
+    if has_seller:
+        return Granularity.DAILY
+    return Granularity.UNKNOWN
+
+
+granularity_module = types.ModuleType("app.services.granularity")
+granularity_module.Granularity = Granularity
+granularity_module.granularity_for_account_types = granularity_for_account_types
+sys.modules["app.services.granularity"] = granularity_module
+
 service_spec = spec_from_file_location("analytics_service_under_test", SERVICE_PATH)
 service_module = module_from_spec(service_spec)
 assert service_spec is not None and service_spec.loader is not None
@@ -97,7 +139,9 @@ for module_name in (
     "app.models.sales_data",
     "app.models.advertising",
     "app.models.product",
+    "app.models.amazon_account",
     "app.services.data_extraction",
+    "app.services.granularity",
 ):
     sys.modules.pop(module_name, None)
 
@@ -108,6 +152,12 @@ class FakeResult:
 
     def all(self):
         return self._rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+    def scalars(self):
+        return SimpleNamespace(all=lambda: self._rows)
 
 
 class FakeAsyncSession:
@@ -134,12 +184,21 @@ def _asin_row(asin: str, title: str, total_sales: float):
     return SimpleNamespace(asin=asin, title=title, total_sales=total_sales)
 
 
+def _account_row(account_id, account_type=AccountType.VENDOR):
+    return SimpleNamespace(id=account_id, account_type=account_type)
+
+
+def _title_row(asin: str, title: str):
+    return SimpleNamespace(asin=asin, title=title)
+
+
 @pytest.mark.asyncio
 async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
     account_a = uuid4()
     account_b = uuid4()
     session = FakeAsyncSession(
         [
+            [AccountType.SELLER, AccountType.SELLER],
             [
                 _sales_row(account_a, date(2026, 3, 1), 100),
                 _sales_row(account_b, date(2026, 3, 1), 50),
@@ -160,10 +219,12 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
                 _ads_row(account_b, date(2026, 2, 27), 10),
                 _ads_row(account_a, date(2026, 2, 28), 10),
             ],
+            [_account_row(account_a), _account_row(account_b)],
             [
                 _asin_row("B0AAA", "Alpha", 120),
                 _asin_row("B0BBB", "Beta", 110),
             ],
+            [_title_row("B0AAA", "Alpha"), _title_row("B0BBB", "Beta")],
         ]
     )
 
@@ -174,7 +235,7 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
         date_to=date(2026, 3, 2),
     )
 
-    assert session.execute_calls == 5
+    assert session.execute_calls == 8
     assert [point["date"] for point in result["time_series"]] == [date(2026, 3, 1), date(2026, 3, 2)]
     assert result["time_series"][0]["total_sales"] == 150.0
     assert result["time_series"][0]["ad_sales"] == 35.0
@@ -194,6 +255,7 @@ async def test_get_ads_vs_organic_defaults_missing_ads_to_zero():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
+            [AccountType.SELLER],
             [_sales_row(account_id, date(2026, 3, 5), 100)],
             [],
             [],
@@ -221,6 +283,7 @@ async def test_get_ads_vs_organic_supports_week_grouping():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
+            [AccountType.SELLER],
             [
                 _sales_row(account_id, date(2026, 3, 2), 120),
                 _sales_row(account_id, date(2026, 3, 9), 80),
@@ -252,6 +315,7 @@ async def test_get_ads_vs_organic_supports_month_grouping():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
+            [AccountType.SELLER],
             [
                 _sales_row(account_id, date(2026, 3, 1), 100),
                 _sales_row(account_id, date(2026, 4, 1), 200),
@@ -283,6 +347,7 @@ async def test_get_ads_vs_organic_applies_asin_filter_and_returns_note():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
+            [AccountType.SELLER],
             [_sales_row(account_id, date(2026, 3, 5), 90)],
             [_ads_row(account_id, date(2026, 3, 5), 40)],
             [],
@@ -298,7 +363,7 @@ async def test_get_ads_vs_organic_applies_asin_filter_and_returns_note():
         asin="B0TESTASIN",
     )
 
-    assert session.execute_calls == 4
+    assert session.execute_calls == 5
     assert result["asin"] == "B0TESTASIN"
     assert result["asin_breakdown"] is None
     assert result["summary"]["total_sales"]["value"] == 90.0
@@ -310,6 +375,7 @@ async def test_get_ads_vs_organic_normalizes_asin_filter():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
+            [AccountType.SELLER],
             [_sales_row(account_id, date(2026, 3, 6), 25)],
             [_ads_row(account_id, date(2026, 3, 6), 5)],
             [],
@@ -325,7 +391,7 @@ async def test_get_ads_vs_organic_normalizes_asin_filter():
         asin="  b0mixed123  ",
     )
 
-    assert session.execute_calls == 4
+    assert session.execute_calls == 5
     assert result["asin"] == "B0MIXED123"
     assert result["asin_breakdown"] is None
     assert result["summary"]["ad_sales"]["value"] == 5.0
@@ -336,6 +402,7 @@ async def test_get_ads_vs_organic_clamps_organic_sales_when_ads_exceed_total():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
+            [AccountType.SELLER],
             [_sales_row(account_id, date(2026, 3, 8), 50)],
             [_ads_row(account_id, date(2026, 3, 8), 80)],
             [],

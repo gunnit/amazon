@@ -1,4 +1,6 @@
 """Authentication endpoints."""
+from __future__ import annotations
+
 from typing import Optional
 from uuid import UUID
 from fastapi import APIRouter, Body, HTTPException, status, Depends
@@ -440,6 +442,21 @@ def _mask_value(value: str | None) -> str | None:
     return value[:8] + "***" + value[-3:]
 
 
+_ARN_RE = re.compile(r"(arn:aws:iam::)(\d+)(:role/.*)")
+
+
+def _mask_arn(arn: str | None) -> str | None:
+    """Mask the AWS account id in an IAM role ARN, keeping the last 3 digits."""
+    if not arn:
+        return None
+    match = _ARN_RE.fullmatch(arn)
+    if not match:
+        return _mask_value(arn)
+    prefix, account, suffix = match.groups()
+    tail = account[-3:]
+    return f"{prefix}{'•' * max(len(account) - 3, 0)}{tail}{suffix}"
+
+
 def _build_api_keys_response(
     sp_api: dict | None,
     advertising_api: dict | None = None,
@@ -464,7 +481,7 @@ def _build_api_keys_response(
     role_arn = None
     try:
         if sp_api and sp_api.get("role_arn_enc"):
-            role_arn = decrypt_value(sp_api["role_arn_enc"])
+            role_arn = _mask_arn(decrypt_value(sp_api["role_arn_enc"]))
     except Exception:
         role_arn = "(decryption error)"
 

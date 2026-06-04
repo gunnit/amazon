@@ -31,6 +31,30 @@ VALID_STATUSES = {"pending", "implemented", "dismissed"}
 VALID_PRIORITIES = {"high", "medium", "low"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
 
+
+class AIProviderUnavailableError(RuntimeError):
+    """The Anthropic provider rejected the request (auth, quota, rate limit, outage).
+
+    Distinct from a missing API key so the API layer can surface a 502 instead of
+    a 503 and never leak the raw provider message to the end user.
+    """
+
+
+def _is_anthropic_provider_error(exc: BaseException) -> bool:
+    """Duck-typed check so we don't import anthropic where it may be absent."""
+    for klass in type(exc).__mro__:
+        if klass.__module__.split(".", 1)[0] == "anthropic" and klass.__name__ in {
+            "APIStatusError",
+            "APIConnectionError",
+            "APITimeoutError",
+            "RateLimitError",
+            "AuthenticationError",
+            "PermissionDeniedError",
+            "AnthropicError",
+        }:
+            return True
+    return False
+
 # Seller (daily) data is dense, so a 4-week window is enough. Vendor (monthly)
 # data lands one settled row per month and routinely trails several weeks, so a
 # 28-day window can be entirely empty for a perfectly healthy account. Default
@@ -277,7 +301,15 @@ class StrategicRecommendationsService:
             return []
 
         ai = _StrategicRecAnalysisService(settings.ANTHROPIC_API_KEY)
-        payload = ai.analyze(snapshot=snapshot, language=language)
+        try:
+            payload = ai.analyze(snapshot=snapshot, language=language)
+        except ValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - provider SDK raises many error types
+            if _is_anthropic_provider_error(exc):
+                logger.warning("Anthropic provider unavailable for org %s: %s", org_id, exc)
+                raise AIProviderUnavailableError(str(exc)) from exc
+            raise
 
         account_id_set = {str(a["account_id"]) for a in snapshot["accounts"]}
         created: List[StrategicRecommendation] = []

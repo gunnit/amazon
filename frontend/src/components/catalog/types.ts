@@ -37,6 +37,17 @@ export interface BulkListingUpdateResult {
   fields: string[]
 }
 
+export interface ImportRowResult {
+  asin: string
+  sku?: string | null
+  title?: string | null
+  brand?: string | null
+  category?: string | null
+  created: boolean
+}
+
+export type ImportResult = BulkResult<ImportRowResult>
+
 export interface AvailabilityResult {
   asin: string
   sku: string

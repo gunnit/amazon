@@ -235,6 +235,7 @@ async def test_sync_account_continues_when_inventory_step_fails(monkeypatch):
         id=uuid4(),
         account_name="Test Seller",
         account_type=AccountType.SELLER,
+        seller_id="A1SELLER",
         last_sync_started_at=None,
         last_sync_succeeded_at=None,
         last_sync_at=None,

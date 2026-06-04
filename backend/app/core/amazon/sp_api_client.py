@@ -1709,6 +1709,89 @@ class SPAPIClient:
     # Listings Items API — write operations
     # ------------------------------------------------------------------
 
+    def _merchant_listings_rows(self) -> List[Dict[str, str]]:
+        """Create + download GET_MERCHANT_LISTINGS_ALL_DATA and return raw rows.
+
+        Best-effort: any FATAL / DONE_NO_DATA / throttle-exhausted / timeout
+        outcome yields ``[]`` with a warning, never an exception. The report is
+        created once so callers that need both the seller id and the listing
+        rows can share a single download."""
+        api = self._reports_api()
+        try:
+            create_payload = self._create_report_request(
+                api,
+                reportType="GET_MERCHANT_LISTINGS_ALL_DATA",
+                marketplaceIds=[self.marketplace.marketplace_id],
+            )
+        except Exception as exc:  # best-effort (incl. throttle exhaustion)
+            logger.warning("Merchant listings report could not be created: %s", exc)
+            return []
+
+        report_id = create_payload.get("reportId")
+        if not report_id:
+            logger.warning("Merchant listings report returned no reportId")
+            return []
+
+        delay = 2.0
+        max_delay = float(max(settings.SP_API_REPORT_POLL_INTERVAL_SECONDS, 2))
+        try:
+            for _ in range(settings.SP_API_REPORT_POLL_MAX_ATTEMPTS):
+                time.sleep(delay)
+                status_payload = self._get_report_status(api, report_id)
+                status = status_payload.get("processingStatus")
+                if status == "DONE":
+                    document_id = status_payload.get("reportDocumentId")
+                    if not document_id:
+                        return []
+                    text = self._extract_report_document_text(
+                        self._download_report_document(api, document_id)
+                    )
+                    return self._parse_delimited_report_rows(text)
+                if status in ("FATAL", "CANCELLED", "DONE_NO_DATA"):
+                    logger.warning(
+                        "Merchant listings report %s ended with status %s", report_id, status
+                    )
+                    return []
+                delay = min(delay * 2, max_delay)
+        except Exception as exc:  # best-effort (incl. throttle exhaustion)
+            logger.warning("Merchant listings report %s polling failed: %s", report_id, exc)
+            return []
+
+        logger.warning("Merchant listings report %s timed out while polling", report_id)
+        return []
+
+    def fetch_merchant_listings(self) -> List[Dict[str, Any]]:
+        """Return every seller listing from GET_MERCHANT_LISTINGS_ALL_DATA.
+
+        Each entry is ``{asin, sku, title, price, quantity, status}``. Vendor
+        accounts return ``[]`` without creating a report. Best-effort: a failed
+        or empty report yields ``[]`` (see ``_merchant_listings_rows``)."""
+        if self.is_vendor:
+            return []
+
+        listings: List[Dict[str, Any]] = []
+        for row in self._merchant_listings_rows():
+            asin = self._normalize_asin(self._pick_report_value(row, "asin", "asin1"))
+            if not asin:
+                continue
+            listings.append(
+                {
+                    "asin": asin,
+                    "sku": self._normalize_text_label(
+                        self._pick_report_value(row, "seller-sku", "sku")
+                    ),
+                    "title": self._normalize_text_label(
+                        self._pick_report_value(row, "item-name", "title")
+                    ),
+                    "price": self._pick_report_value(row, "price"),
+                    "quantity": self._pick_report_value(row, "quantity"),
+                    "status": self._normalize_text_label(
+                        self._pick_report_value(row, "status", "item-condition")
+                    ),
+                }
+            )
+        return listings
+
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def resolve_seller_id(self) -> Optional[str]:
         """Resolve the concrete merchant (seller) token for a seller account.
@@ -1728,35 +1811,12 @@ class SPAPIClient:
 
         # 1) Merchant listings report — some marketplaces include a seller/merchant id column.
         try:
-            api = self._reports_api()
-            create_payload = self._create_report_request(
-                api,
-                reportType="GET_MERCHANT_LISTINGS_ALL_DATA",
-                marketplaceIds=[self.marketplace.marketplace_id],
-            )
-            report_id = create_payload.get("reportId")
-            if report_id:
-                delay = 2.0
-                for _ in range(settings.SP_API_REPORT_POLL_MAX_ATTEMPTS):
-                    time.sleep(delay)
-                    status_payload = self._get_report_status(api, report_id)
-                    status = status_payload.get("processingStatus")
-                    if status == "DONE":
-                        document_id = status_payload.get("reportDocumentId")
-                        if document_id:
-                            text = self._extract_report_document_text(
-                                self._download_report_document(api, document_id)
-                            )
-                            for row in self._parse_delimited_report_rows(text):
-                                candidate = self._pick_report_value(
-                                    row, "seller-id", "merchant-id", "merchant-identifier"
-                                )
-                                if candidate and token_pattern.match(str(candidate).strip()):
-                                    return str(candidate).strip()
-                        break
-                    if status in ("FATAL", "CANCELLED", "DONE_NO_DATA"):
-                        break
-                    delay = min(delay * 2, float(max(settings.SP_API_REPORT_POLL_INTERVAL_SECONDS, 2)))
+            for row in self._merchant_listings_rows():
+                candidate = self._pick_report_value(
+                    row, "seller-id", "merchant-id", "merchant-identifier"
+                )
+                if candidate and token_pattern.match(str(candidate).strip()):
+                    return str(candidate).strip()
         except Exception as exc:  # best-effort
             logger.info("Seller id resolution via listings report failed: %s", exc)
 

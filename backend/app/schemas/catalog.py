@@ -80,6 +80,23 @@ class BulkListingUpdateResult(BaseModel):
 
 
 # ---------------------------------------------------------------------
+# Manual catalog import (CSV / Excel)
+# ---------------------------------------------------------------------
+
+
+class ProductImportRow(BaseModel):
+    asin: str
+    sku: Optional[str] = None
+    title: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    created: bool = False
+
+
+ImportResult = BulkResult[ProductImportRow]
+
+
+# ---------------------------------------------------------------------
 # Availability
 # ---------------------------------------------------------------------
 

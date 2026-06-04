@@ -1366,21 +1366,41 @@ class DataExtractionService:
             .distinct()
         )
 
-        all_asins = set()
+        local_asins = set()
         for row in sales_asins:
             if row[0] != DAILY_TOTAL_ASIN:
-                all_asins.add(row[0])
+                local_asins.add(row[0])
         for row in inv_asins:
-            all_asins.add(row[0])
+            local_asins.add(row[0])
 
+        client = self._create_sp_api_client(account, organization)
+
+        # Seller accounts: enumerate the full listings catalog so that ASINs
+        # with no recent sales/inventory still become Product rows. Vendor
+        # accounts have no merchant listings, so skip enumeration cleanly.
+        listings_by_asin: Dict[str, Dict[str, Any]] = {}
+        if not client.is_vendor:
+            for listing in client.fetch_merchant_listings():
+                asin = listing.get("asin")
+                if asin and asin not in listings_by_asin:
+                    listings_by_asin[asin] = listing
+
+        all_asins = local_asins | set(listings_by_asin)
         if not all_asins:
             logger.info(f"No ASINs found for product sync on {account.account_name}")
             return 0
 
-        client = self._create_sp_api_client(account, organization)
-        asin_list = sorted(all_asins)
+        # ASINs known only from the listings report (no sales/inventory) are
+        # created directly from the listing, skipping the per-ASIN catalog call.
+        listing_only_asins = sorted(set(listings_by_asin) - local_asins)
+        count = await self._sync_listing_only_products(account, listings_by_asin, listing_only_asins)
+
+        asin_list = sorted(local_asins)
+        if not asin_list:
+            await self.db.flush()
+            logger.info(f"Synced {count} products for {account.account_name}")
+            return count
         batch_size = 5
-        count = 0
 
         for i in range(0, len(asin_list), batch_size):
             batch = asin_list[i : i + batch_size]
@@ -1505,6 +1525,55 @@ class DataExtractionService:
 
         await self.db.flush()
         logger.info(f"Synced {count} products for {account.account_name}")
+        return count
+
+    async def _sync_listing_only_products(
+        self,
+        account: AmazonAccount,
+        listings_by_asin: Dict[str, Dict[str, Any]],
+        asins: List[str],
+    ) -> int:
+        """Upsert Product rows for ASINs that only appear in the listings report.
+
+        These ASINs have no recent sales/inventory, so the catalog round-trip is
+        skipped; sku/title/price come straight from the merchant listing and
+        is_active reflects the listing status (Active vs Inactive/Incomplete)."""
+        count = 0
+        for asin in asins:
+            listing = listings_by_asin.get(asin) or {}
+            sku = listing.get("sku")
+            title = listing.get("title")
+            price = self._parse_decimal(listing.get("price"))
+            is_active = str(listing.get("status") or "").strip().lower() == "active"
+
+            existing = (await self.db.execute(
+                select(Product).where(
+                    Product.account_id == account.id,
+                    Product.asin == asin,
+                )
+            )).scalar_one_or_none()
+
+            if existing:
+                existing.title = existing.title or title
+                existing.sku = existing.sku or sku
+                if price is not None:
+                    existing.current_price = price
+                existing.is_active = is_active
+            else:
+                self.db.add(
+                    Product(
+                        account_id=account.id,
+                        asin=asin,
+                        title=title,
+                        sku=sku,
+                        current_price=price,
+                        is_active=is_active,
+                    )
+                )
+            count += 1
+
+        if count:
+            await self.db.flush()
         return count
 
     async def backfill_missing_product_titles(

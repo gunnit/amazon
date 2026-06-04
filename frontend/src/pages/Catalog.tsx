@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Download, Loader2, Package } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Download, ImageOff, Info, Loader2, Package } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -38,8 +38,11 @@ import {
 import { useToast } from '@/components/ui/use-toast'
 import { accountsApi, catalogApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
+import { DateRangeFilter } from '@/components/filters'
+import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import type { Product } from '@/types'
 import { BulkUpdateCard } from '@/components/catalog/BulkUpdateCard'
+import { ImportCard } from '@/components/catalog/ImportCard'
 import { PricesCard } from '@/components/catalog/PricesCard'
 import { AvailabilityCard } from '@/components/catalog/AvailabilityCard'
 import { ImagesCard } from '@/components/catalog/ImagesCard'
@@ -84,23 +87,34 @@ export default function Catalog() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const pageSize = 50
 
+  const { datePreset, customStartDate, customEndDate } = useFilterStore()
+  const dateRange = getFilterDateRange({ datePreset, customStartDate, customEndDate })
+
   const accountsQuery = useQuery({
     queryKey: ['accounts'],
     queryFn: () => accountsApi.list(),
   })
 
   const productsQuery = useQuery({
-    queryKey: ['catalog', 'products', search, activeOnly, activeAccountId],
+    queryKey: ['catalog', 'products', search, activeOnly, activeAccountId, dateRange.start, dateRange.end],
     queryFn: () =>
       catalogApi.getProducts({
         search: search || undefined,
         active_only: activeOnly,
+        date_from: dateRange.start,
+        date_to: dateRange.end,
         limit: 500,
         account_ids: activeAccountId ? [activeAccountId] : undefined,
       }),
   })
 
   const products = productsQuery.data ?? []
+  const syncedCount = products.length
+  const withSalesCount = useMemo(
+    () => products.filter((p) => p.has_sales_in_period === true).length,
+    [products],
+  )
+  const withoutSalesCount = syncedCount - withSalesCount
   const sortedProducts = useMemo(
     () => [...products].sort((a, b) => compareProducts(a, b, sortKey, sortDirection)),
     [products, sortKey, sortDirection],
@@ -113,7 +127,7 @@ export default function Catalog() {
 
   useEffect(() => {
     setPage(0)
-  }, [search, activeOnly, activeAccountId])
+  }, [search, activeOnly, activeAccountId, dateRange.start, dateRange.end])
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -175,6 +189,7 @@ export default function Catalog() {
       <Tabs defaultValue="products" className="space-y-4">
         <TabsList>
           <TabsTrigger value="products">{t('catalog.tab.products')}</TabsTrigger>
+          <TabsTrigger value="import">{t('catalog.tab.import')}</TabsTrigger>
           <TabsTrigger value="bulk">{t('catalog.tab.bulk')}</TabsTrigger>
           <TabsTrigger value="prices">{t('catalog.tab.prices')}</TabsTrigger>
           <TabsTrigger value="availability">{t('catalog.tab.availability')}</TabsTrigger>
@@ -215,6 +230,12 @@ export default function Catalog() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div>
+                  <Label>{t('filter.period')}</Label>
+                  <div className="mt-1">
+                    <DateRangeFilter />
+                  </div>
                 </div>
                 <Button
                   variant={activeOnly ? 'default' : 'outline'}
@@ -303,9 +324,16 @@ export default function Catalog() {
                         </TableCell>
                         <TableCell>{p.current_bsr ?? '—'}</TableCell>
                         <TableCell>
-                          <Badge variant={p.is_active ? 'default' : 'secondary'}>
-                            {p.is_active ? t('catalog.products.active') : t('catalog.products.inactive')}
-                          </Badge>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge variant={p.is_active ? 'default' : 'secondary'}>
+                              {p.is_active ? t('catalog.products.active') : t('catalog.products.inactive')}
+                            </Badge>
+                            {p.has_sales_in_period === false && (
+                              <Badge variant="outline" className="text-muted-foreground">
+                                {t('catalog.products.noSalesBadge')}
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -315,9 +343,43 @@ export default function Catalog() {
 
               {products.length > 0 && (
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">
-                    {products.length} {t('catalog.tab.products').toLowerCase()}
-                  </span>
+                  <div className="space-y-0.5">
+                    {withSalesCount > 0 ? (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span>
+                          {t('catalog.products.countSummary', {
+                            conVendite: withSalesCount,
+                            sincronizzati: syncedCount,
+                          })}
+                        </span>
+                        <span
+                          className="text-muted-foreground"
+                          title={t('catalog.products.countTooltip')}
+                          aria-label={t('catalog.products.countTooltip')}
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span>
+                          {t('catalog.products.emptyPeriod', { sincronizzati: syncedCount })}
+                        </span>
+                        <span
+                          className="text-muted-foreground"
+                          title={t('catalog.products.countTooltip')}
+                          aria-label={t('catalog.products.countTooltip')}
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </span>
+                      </div>
+                    )}
+                    {withoutSalesCount > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {t('catalog.products.countWithoutSales', { senzaVendite: withoutSalesCount })}
+                      </p>
+                    )}
+                  </div>
                   {totalPages > 1 && (
                     <div className="flex items-center gap-2">
                       <Button
@@ -345,6 +407,13 @@ export default function Catalog() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="import">
+          <ImportCard
+            {...sharedProps}
+            onSuccess={() => queryClient.invalidateQueries({ queryKey: ['catalog', 'products'] })}
+          />
         </TabsContent>
 
         <TabsContent value="bulk">
@@ -399,6 +468,12 @@ export default function Catalog() {
                   </Badge>
                 </dd>
               </dl>
+              {selectedProduct.account_type === 'vendor' && (
+                <p className="mt-3 flex items-start gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                  <ImageOff className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  {t('catalog.products.vendorDataUnavailable')}
+                </p>
+              )}
             </>
           )}
         </DialogContent>

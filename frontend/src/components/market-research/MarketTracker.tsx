@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Search, Loader2, Globe } from 'lucide-react'
+import { Search, Loader2, Globe, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -298,6 +299,16 @@ export default function MarketTracker({
 
               {/* Overview stats */}
               <MarketOverviewStats results={searchResults} />
+
+              {/* Only price is available for these results — be honest about it. */}
+              {!searchResults.some(
+                (r) => r.bsr != null || r.review_count != null || r.rating != null
+              ) && (
+                <Alert>
+                  <Info className="h-4 w-4" />
+                  <AlertDescription>{t('marketTracker.priceOnlyNote')}</AlertDescription>
+                </Alert>
+              )}
 
               {referenceAsin && (
                 <div className="rounded-lg border bg-primary/5 p-4">

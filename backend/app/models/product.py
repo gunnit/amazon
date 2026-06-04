@@ -40,6 +40,9 @@ class Product(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="true")
 
+    # Provenance: 'amazon_sync' (default) or 'manual_import'
+    source: Mapped[str] = mapped_column(String(32), nullable=True, default="amazon_sync", server_default="amazon_sync")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 

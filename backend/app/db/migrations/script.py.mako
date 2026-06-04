@@ -12,6 +12,7 @@ import sqlalchemy as sa
 ${imports if imports else ""}
 
 # revision identifiers, used by Alembic.
+# Keep revision ids concise: prod alembic_version was varchar(32) until 026 widened it to 255.
 revision: str = ${repr(up_revision)}
 down_revision: Union[str, None] = ${repr(down_revision)}
 branch_labels: Union[str, Sequence[str], None] = ${repr(branch_labels)}

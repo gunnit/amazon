@@ -3,8 +3,11 @@ from contextlib import asynccontextmanager
 import logging
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic_core import PydanticUndefined
 from sqlalchemy import text
 
 from app.config import settings, validate_production_settings
@@ -91,6 +94,20 @@ app.add_middleware(
 
 
 # Exception handlers
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Return a clean 422 for request validation errors.
+
+    FastAPI's default handler crashes when an error context carries the
+    PydanticUndefined sentinel, so we encode it explicitly to None.
+    """
+    errors = jsonable_encoder(
+        exc.errors(),
+        custom_encoder={type(PydanticUndefined): lambda _v: None},
+    )
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler."""

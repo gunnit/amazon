@@ -9,7 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 
-from app.core.sync_health import build_sync_incident, normalize_sync_failure_conditions
+from app.core.sync_health import build_sync_incident, format_duration, normalize_sync_failure_conditions
 from workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,14 @@ MAX_ALERTS_PER_BATCH = 25
 
 def _build_dedup_key(event_kind: str, account_id=None, asin: Optional[str] = None) -> str:
     return f"{event_kind}:{account_id or '-'}:{asin or '-'}"
+
+
+def _format_age(timestamp: Optional[datetime], now: Optional[datetime] = None) -> str:
+    """Render how long ago a timestamp occurred, or 'never' when missing."""
+    if timestamp is None:
+        return "never"
+    reference = now or datetime.utcnow()
+    return f"{format_duration(reference - timestamp)} ago"
 
 
 def _serialize_detail(value: Any) -> Any:
@@ -138,7 +146,9 @@ def send_email(to_emails: list, subject: str, html_content: str):
 
     async def _send():
         service = NotificationService(sendgrid_api_key=settings.SENDGRID_API_KEY)
-        return await service.send_email(to_emails, subject, html_content)
+        return await service.send_email(
+            to_emails, subject, html_content, from_email=settings.SENDGRID_FROM_EMAIL
+        )
 
     try:
         result = run_async(_send)
@@ -199,6 +209,7 @@ def send_alert(alert_ids: list[str]):
                 rule.notification_channels or [],
                 rule.notification_emails,
                 rule.webhook_url,
+                from_email=settings.SENDGRID_FROM_EMAIL,
             )
 
             delivered = any(results.values())
@@ -237,6 +248,10 @@ def send_daily_digests():
     from app.services.analytics_service import AnalyticsService
     from app.services.notification_service import NotificationService
 
+    if not settings.SENDGRID_API_KEY:
+        logger.info("Daily digest skipped: SendGrid not configured")
+        return {"skipped": True, "reason": "sendgrid_not_configured", "sent": 0}
+
     async def _send_digests():
         from app.db import session as db_session
         async with db_session.AsyncSessionLocal() as db:
@@ -264,6 +279,7 @@ def send_daily_digests():
                         to_email=user.email,
                         kpis=kpis["current"],
                         alerts=[],
+                        from_email=settings.SENDGRID_FROM_EMAIL,
                     )
                     sent_count += 1
                 except Exception as exc:
