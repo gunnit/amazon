@@ -249,7 +249,7 @@ function buildAnalyticsTrendLink({
   if (accountId) {
     params.set('account_id', accountId)
   }
-  return `/analytics?${params.toString()}`
+  return `/performance?${params.toString()}`
 }
 
 function TrendingProductsList({

@@ -21,6 +21,7 @@ const en: Record<string, string> = {
   // ── Navigation ──
   'nav.dashboard': 'Dashboard',
   'nav.accounts': 'Accounts',
+  'nav.performance': 'Performance',
   'nav.reports': 'Reports',
   'nav.analytics': 'Analytics',
   'nav.forecasts': 'Forecasts',
@@ -340,6 +341,13 @@ const en: Record<string, string> = {
   'marketplace.UK': 'United Kingdom',
   'marketplace.FR': 'France',
   'marketplace.ES': 'Spain',
+
+  // ── Performance ──
+  'performance.subtitle': 'Sales, analytics and reports in a single hub',
+  'performance.perAsinTab': 'Per ASIN',
+  'performance.exportTab': 'Export',
+  'performance.exportTitle': 'Export report',
+  'performance.exportDesc': 'Generate an Excel or PowerPoint export of the data for the selected period',
 
   // ── Reports ──
   'reports.title': 'Reports',

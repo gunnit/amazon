@@ -38,7 +38,20 @@ Merge local feito, **não pushed** (alguns commits já em prod: `98f358a`). App 
 - **Playwright:** specs escritas (T1 nav) mas e2e com dados não roda local — DB local é fixture vazia (1 conta, 1 linha 2026-02-03) e app não está de pé. Roda quando subir front+back+DB seeded.
 - **Migrations:** alembic head local = `027_product_source` (chain 025→026→027 aplica limpo).
 
-**STATUS FINAL:** 11/14 done · T7 partial (token Bitron) · T3 verify-only (prod) · T8 deferred (decisão Gioia). Nenhum commit feito (working tree p/ revisão).
+**STATUS FINAL:** 11/14 done · T7 partial (token Bitron) · T3 verify-only (prod) · T8 deferred (decisão Gioia).
+
+### ✅ Pós-entrega (2026-06-04)
+- **Code review** (agente Opus 4.8): `minor_fixes`, **security PASS** (0 secrets, ARN mascarado, SendGrid env-only, sem stack p/ user). 2 nits médios aplicados: catalog `has_sales_in_period` agora por `(account_id, asin)`; teste catalog usa imports reais (trio roda junto, 40 pass).
+- **T13c** ✅: 4 testes pré-existentes corrigidos (7/7/5/9). `data_extraction.py`/`product_trends_service.py` NÃO alterados (só fixtures); 1 helper `_format_age` add.
+- **Playwright** (live Docker stack 3.11): **ALL 6 FLOWS PASS** — login, Brand Analysis nav, Catalog "51 con vendite su 60 sincronizzati"+Importa, Forecast "Previsione a 1 mesi" (mesi!), Reports sem banner, Recommendations 502→empty-state gracioso. Screenshots em `test-results/qa-*.png`.
+- **Migrações** aplicadas no DB Docker real: `025→026→027`, `products.source` ok, `alembic_version` width=255.
+- **COMMIT:** `acf0221` em `master` (55 arquivos, +3658/-147). **NÃO pushed** (push = deploy prod no Render). `.env` confirmado gitignored; nenhum secret commitado.
+- Stack Docker local **de pé**: frontend http://localhost:5173, login `peppepretto@gmail.com`/`QaTest123!`. Parar com `docker compose down`.
+
+### ✅ T8 — hub "Performance" (2026-06-04, Variante A aprovada pelo usuário)
+- `Reports.tsx`+`Analytics.tsx` → **fundidos** em `Performance.tsx` (6 abas, FilterBar compartilhado, composição — sem reescrever cálculo). Sidebar: 1 item "Performance". Rotas `/reports`+`/analytics`→`/performance`; `/analytics/product/:asin` preservada. Dashboard deep-links + back-link repontados.
+- **Playwright ALL 7 PASS** (live): sidebar, 6 abas com dados reais (Panoramica €70.058,70/20.740 un), drill-down per-ASIN, Export modal (Excel/PPT/CSV), redirects. 0 erros de console. tsc+vite build limpos.
+- **TODAS as 14 tasks agora resolvidas** (T8 era a última deferida). Commit T8 separado.
 
 ---
 
@@ -53,7 +66,7 @@ Merge local feito, **não pushed** (alguns commits já em prod: `98f358a`). App 
 | T5 | Empty/error states | gap real = Recommendations IA-indisponível (mapear Anthropic→502) + padrão EmptyState | M | ✅ Ready (depois de T2/T4) |
 | T6 | Vendor catalog import (CSV/Excel) | não existe import manual; add col `products.source` + migração **027** + endpoint `/catalog/import` + ImportCard | M | ✅ Ready |
 | T7 | Bitron seller_id / SP-API listings | `seller_id` já auto-resolve; relatório `GET_MERCHANT_LISTINGS_ALL_DATA` já é baixado mas as linhas são **descartadas** → add `fetch_merchant_listings()` em `sync_products` | M | 🟡 Partial (precisa token Bitron real p/ validar 52→62) |
-| T8 | Report + Analisi unificados | **decisão de produto** — validar estrutura de abas com a Gioia antes de codar | L | ⏸️ Deferred (proposta pronta) |
+| T8 | Report + Analisi unificados | hub único **"Performance"** (Variante A, aprovada): Panoramica/Per ASIN/Resi/Ads vs Organic/Inventario/Export + redirects | L | ✅ Done |
 | T9 | PowerPoint / chart bug | "1 barra" = `_sales_trend_rows` agrupa por mês + só lê `__DAILY_TOTAL__` + sem zero-fill. Fix: grain auto por range, zero-fill, fallback p/ linhas não-sentinela + enriquecer deck | M | ✅ Ready |
 | T10 | Scheduled reports / email | já é resiliente; gaps = `from_email` hardcoded ignora `SENDGRID_FROM_EMAIL`; digest não curto-circuita sem key; add `/reports/email-status` + banner UI | M | ✅ Ready |
 | T11 | 422 vira 500 | sem handler de `RequestValidationError`; default crasha ao serializar `PydanticUndefined`→ cai no handler 500. Add handler 422 robusto em `main.py` | S | ✅ Ready |

@@ -24,7 +24,7 @@ test('analytics ads vs organic tab requests the new endpoint', async ({ page }) 
   })
 
   await loginViaUI(page)
-  await page.goto(`${BASE_URL}/analytics`)
+  await page.goto(`${BASE_URL}/performance`)
   await page.waitForLoadState('networkidle')
 
   await page.getByRole('tab', { name: /ads vs organic|ads vs organico/i }).click()

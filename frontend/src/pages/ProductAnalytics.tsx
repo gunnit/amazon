@@ -182,7 +182,7 @@ export default function ProductAnalytics() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-2">
           <Link
-            to="/analytics"
+            to="/performance?tab=per-asin"
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />

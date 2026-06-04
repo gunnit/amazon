@@ -2,8 +2,7 @@ import { useState } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
-  FileText,
-  BarChart3,
+  LineChart,
   TrendingUp,
   Megaphone,
   Search,
@@ -30,8 +29,7 @@ import { useTranslation } from '@/i18n'
 
 const navItems = [
   { key: 'nav.dashboard', href: '/', icon: LayoutDashboard },
-  { key: 'nav.reports', href: '/reports', icon: FileText },
-  { key: 'nav.analytics', href: '/analytics', icon: BarChart3 },
+  { key: 'nav.performance', href: '/performance', icon: LineChart },
   { key: 'nav.advertising', href: '/advertising', icon: Megaphone },
   { key: 'nav.forecasts', href: '/forecasts', icon: TrendingUp },
   { key: 'nav.marketResearch', href: '/market-research', icon: Search },

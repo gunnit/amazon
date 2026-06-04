@@ -82,157 +82,115 @@ test('Dashboard (/) - filter bar', async ({ page }) => {
   console.log('[Dashboard] PASS - All filter elements found');
 });
 
-// ===== TEST 2: ANALYTICS =====
-test('Analytics (/analytics) - filter bar', async ({ page }) => {
+// ===== TEST 2: PERFORMANCE (legacy /analytics redirect) =====
+test('Performance (/analytics -> /performance) - filter bar', async ({ page }) => {
   await injectAuth(page);
 
   await page.goto('http://localhost:5173/analytics');
   await page.waitForLoadState('networkidle');
 
-  await expect(page.locator('h1:has-text("Analytics")')).toBeVisible({ timeout: 10000 });
+  // Legacy route redirects into the merged hub.
+  await expect(page).toHaveURL(/\/performance$/);
+  await expect(page.locator('h1:has-text("Performance")')).toBeVisible({ timeout: 10000 });
 
   // --- DateRangeFilter ---
   const dateSelect = page.locator('[role="combobox"]').first();
   await expect(dateSelect).toBeVisible();
   const dateText = await dateSelect.textContent();
-  console.log('[Analytics] DateRangeFilter text:', dateText);
+  console.log('[Performance] DateRangeFilter text:', dateText);
 
   // --- AccountFilter ---
   const accountButton = page.locator('button:has-text("All accounts"), button:has-text("accounts")').first();
   await expect(accountButton).toBeVisible();
   const accountText = await accountButton.textContent();
-  console.log('[Analytics] AccountFilter text:', accountText);
+  console.log('[Performance] AccountFilter text:', accountText);
 
-  // --- GroupByFilter ---
+  // --- GroupByFilter (Panoramica tab default) ---
   const allComboboxes = page.locator('[role="combobox"]');
   const comboboxCount = await allComboboxes.count();
-  console.log('[Analytics] Total comboboxes found:', comboboxCount);
+  console.log('[Performance] Total comboboxes found:', comboboxCount);
   for (let i = 0; i < comboboxCount; i++) {
     const text = await allComboboxes.nth(i).textContent();
-    console.log(`[Analytics] Combobox #${i}: "${text}"`);
+    console.log(`[Performance] Combobox #${i}: "${text}"`);
   }
 
-  // GroupByFilter should be the second combobox (after DateRangeFilter)
   let groupByFound = false;
   for (let i = 0; i < comboboxCount; i++) {
     const text = await allComboboxes.nth(i).textContent();
     if (text && text.includes('Day')) {
       groupByFound = true;
-      console.log('[Analytics] GroupByFilter found at combobox #' + i + ' with text:', text);
+      console.log('[Performance] GroupByFilter found at combobox #' + i + ' with text:', text);
       break;
     }
   }
   if (!groupByFound) {
-    console.log('[Analytics] WARNING: GroupByFilter with "Day" text not found among comboboxes');
-  }
-
-  // --- CategoryFilter ---
-  let categoryFound = false;
-  for (let i = 0; i < comboboxCount; i++) {
-    const text = await allComboboxes.nth(i).textContent();
-    if (text && text.includes('All categories')) {
-      categoryFound = true;
-      console.log('[Analytics] CategoryFilter found at combobox #' + i + ' with text:', text);
-      break;
-    }
-  }
-  if (!categoryFound) {
-    console.log('[Analytics] WARNING: CategoryFilter with "All categories" text not found among comboboxes');
+    console.log('[Performance] WARNING: GroupByFilter with "Day" text not found among comboboxes');
   }
 
   // --- Reset button ---
   const resetButton = page.locator('button:has-text("Reset")');
   await expect(resetButton).toBeVisible();
-  console.log('[Analytics] Reset button visible');
+  console.log('[Performance] Reset button visible');
 
   // Take screenshots
   await page.screenshot({
-    path: '/Users/giuseppepretto/Projects/amazon/frontend/screenshots/analytics.png',
+    path: '/Users/giuseppepretto/Projects/amazon/frontend/screenshots/performance.png',
     fullPage: true,
   });
 
   const filterBar = page.locator('.flex.flex-wrap.items-center.gap-3').first();
   if (await filterBar.isVisible()) {
     await filterBar.screenshot({
-      path: '/Users/giuseppepretto/Projects/amazon/frontend/screenshots/analytics-filters.png',
+      path: '/Users/giuseppepretto/Projects/amazon/frontend/screenshots/performance-filters.png',
     });
   }
 
-  console.log('[Analytics] PASS - All filter elements found');
+  console.log('[Performance] PASS - All filter elements found');
 });
 
-// ===== TEST 3: REPORTS =====
-test('Reports (/reports) - filter bar', async ({ page }) => {
+// ===== TEST 3: PERFORMANCE export tab (legacy /reports redirect) =====
+test('Performance (/reports -> /performance) - export tab', async ({ page }) => {
   await injectAuth(page);
 
   await page.goto('http://localhost:5173/reports');
   await page.waitForLoadState('networkidle');
 
-  await expect(page.locator('h1:has-text("Reports")')).toBeVisible({ timeout: 10000 });
+  // Legacy route redirects into the merged hub.
+  await expect(page).toHaveURL(/\/performance$/);
+  await expect(page.locator('h1:has-text("Performance")')).toBeVisible({ timeout: 10000 });
 
   // --- DateRangeFilter ---
   const dateSelect = page.locator('[role="combobox"]').first();
   await expect(dateSelect).toBeVisible();
   const dateText = await dateSelect.textContent();
-  console.log('[Reports] DateRangeFilter text:', dateText);
-
-  // --- AccountFilter ---
-  const accountButton = page.locator('button:has-text("All accounts"), button:has-text("accounts")').first();
-  await expect(accountButton).toBeVisible();
-  const accountText = await accountButton.textContent();
-  console.log('[Reports] AccountFilter text:', accountText);
-
-  // --- GroupByFilter (on sales tab by default) ---
-  const allComboboxes = page.locator('[role="combobox"]');
-  const comboboxCount = await allComboboxes.count();
-  console.log('[Reports] Total comboboxes found:', comboboxCount);
-  for (let i = 0; i < comboboxCount; i++) {
-    const text = await allComboboxes.nth(i).textContent();
-    console.log(`[Reports] Combobox #${i}: "${text}"`);
-  }
-
-  let groupByFound = false;
-  for (let i = 0; i < comboboxCount; i++) {
-    const text = await allComboboxes.nth(i).textContent();
-    if (text && text.includes('Day')) {
-      groupByFound = true;
-      console.log('[Reports] GroupByFilter found at combobox #' + i + ' with text:', text);
-      break;
-    }
-  }
-  if (!groupByFound) {
-    console.log('[Reports] WARNING: GroupByFilter with "Day" not found among comboboxes');
-  }
+  console.log('[Performance/export] DateRangeFilter text:', dateText);
 
   // --- Reset button ---
   const resetButton = page.locator('button:has-text("Reset")');
   await expect(resetButton).toBeVisible();
-  console.log('[Reports] Reset button visible');
+  console.log('[Performance/export] Reset button visible');
 
-  // --- Export buttons ---
+  // --- Export lives behind the Export tab now; the format picker is in the modal ---
+  await page.getByRole('tab', { name: /^Export$/ }).click();
+  await page.waitForLoadState('networkidle');
+
+  await page.locator('button:has-text("Export"), button:has-text("Esporta")').last().click();
+
   const excelButton = page.locator('button:has-text("Excel")');
-  await expect(excelButton).toBeVisible();
-  const excelText = await excelButton.textContent();
-  console.log('[Reports] Excel button text:', excelText);
+  await expect(excelButton.first()).toBeVisible();
+  const excelText = await excelButton.first().textContent();
+  console.log('[Performance/export] Excel button text:', excelText);
 
   const pptButton = page.locator('button:has-text("PowerPoint")');
-  await expect(pptButton).toBeVisible();
-  const pptText = await pptButton.textContent();
-  console.log('[Reports] PowerPoint button text:', pptText);
+  await expect(pptButton.first()).toBeVisible();
+  const pptText = await pptButton.first().textContent();
+  console.log('[Performance/export] PowerPoint button text:', pptText);
 
   // Take screenshots
   await page.screenshot({
-    path: '/Users/giuseppepretto/Projects/amazon/frontend/screenshots/reports.png',
+    path: '/Users/giuseppepretto/Projects/amazon/frontend/screenshots/performance-export.png',
     fullPage: true,
   });
 
-  // Capture the filter + export area
-  const filterArea = page.locator('.flex.items-center.gap-3.flex-wrap').first();
-  if (await filterArea.isVisible()) {
-    await filterArea.screenshot({
-      path: '/Users/giuseppepretto/Projects/amazon/frontend/screenshots/reports-filters.png',
-    });
-  }
-
-  console.log('[Reports] PASS - All filter elements and export buttons found');
+  console.log('[Performance/export] PASS - All filter elements and export buttons found');
 });

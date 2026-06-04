@@ -9,8 +9,7 @@ import Register from '@/pages/Register'
 import ForgotPassword from '@/pages/ForgotPassword'
 import ResetPassword from '@/pages/ResetPassword'
 import Dashboard from '@/pages/Dashboard'
-import Reports from '@/pages/Reports'
-import Analytics from '@/pages/Analytics'
+import Performance from '@/pages/Performance'
 import ProductAnalytics from '@/pages/ProductAnalytics'
 import Forecasts from '@/pages/Forecasts'
 import MarketResearch from '@/pages/MarketResearch'
@@ -84,8 +83,9 @@ function App() {
         }>
           <Route index element={<Dashboard />} />
           <Route path="accounts" element={<Accounts />} />
-          <Route path="reports" element={<Reports />} />
-          <Route path="analytics" element={<Analytics />} />
+          <Route path="performance" element={<Performance />} />
+          <Route path="reports" element={<Navigate to="/performance" replace />} />
+          <Route path="analytics" element={<Navigate to="/performance" replace />} />
           <Route path="analytics/product/:asin" element={<ProductAnalytics />} />
           <Route path="advertising" element={<Advertising />} />
           <Route path="forecasts" element={<Forecasts />} />
