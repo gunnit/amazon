@@ -298,15 +298,17 @@ export default function ProductAnalytics() {
                       </div>
                     </div>
                     <div className="space-y-3">
-                      <div className="h-32 rounded-lg border p-3">
-                        <ProductTrendSparkline
-                          data={trendProduct.recent_sales}
-                          trendClass={trendProduct.trend_class}
-                          metric="revenue"
-                          height={104}
-                          showTooltip
-                        />
-                      </div>
+                      {trendProduct.recent_sales.length >= 2 && (
+                        <div className="h-32 rounded-lg border p-3">
+                          <ProductTrendSparkline
+                            data={trendProduct.recent_sales}
+                            trendClass={trendProduct.trend_class}
+                            metric="revenue"
+                            height={104}
+                            showTooltip
+                          />
+                        </div>
+                      )}
                       {trendProduct.supporting_signals.length > 0 && (
                         <div className="space-y-2">
                           {trendProduct.supporting_signals.map((signal) => (
