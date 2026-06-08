@@ -18,6 +18,7 @@ from app.models.inventory import InventoryData
 from app.models.product import Product
 from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.sales_metrics import display_revenue_expr, display_units_expr
 
 Language = Literal["en", "it"]
 ReportType = Literal["sales", "inventory", "advertising"]
@@ -1414,8 +1415,8 @@ class ExportService:
 
         totals_query = (
             select(
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
-                func.sum(SalesData.units_ordered).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
                 func.sum(SalesData.total_order_items).label("orders"),
             )
             .where(
@@ -1479,8 +1480,8 @@ class ExportService:
             return (
                 select(
                     period_expr.label("report_date"),
-                    func.sum(SalesData.ordered_product_sales).label("revenue"),
-                    func.sum(SalesData.units_ordered).label("units"),
+                    func.sum(display_revenue_expr()).label("revenue"),
+                    func.sum(display_units_expr()).label("units"),
                     func.sum(SalesData.total_order_items).label("orders"),
                     func.max(SalesData.currency).label("currency"),
                 )
@@ -1542,8 +1543,8 @@ class ExportService:
                 Product.title.label("title"),
                 Product.brand.label("brand"),
                 func.coalesce(Product.category, "Uncategorized").label("category"),
-                func.sum(SalesData.units_ordered).label("units"),
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
                 func.sum(SalesData.total_order_items).label("orders"),
                 func.max(SalesData.currency).label("currency"),
             )
@@ -1570,7 +1571,7 @@ class ExportService:
                 Product.brand,
                 Product.category,
             )
-            .order_by(func.sum(SalesData.ordered_product_sales).desc(), SalesData.asin)
+            .order_by(func.sum(display_revenue_expr()).desc(), SalesData.asin)
         )
 
         rows = (await self.db.execute(query)).all()
@@ -1647,8 +1648,8 @@ class ExportService:
         query = (
             select(
                 category_expr.label("category"),
-                func.sum(SalesData.units_ordered).label("units"),
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
                 func.sum(SalesData.total_order_items).label("orders"),
                 func.max(SalesData.currency).label("currency"),
             )
@@ -1667,7 +1668,7 @@ class ExportService:
                 SalesData.date <= end_date,
             )
             .group_by(category_expr)
-            .order_by(func.sum(SalesData.ordered_product_sales).desc())
+            .order_by(func.sum(display_revenue_expr()).desc())
         )
 
         rows = (await self.db.execute(query)).all()

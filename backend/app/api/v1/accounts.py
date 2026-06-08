@@ -17,6 +17,7 @@ from app.schemas.account import (
 from app.core.security import decrypt_value, encrypt_value
 from app.core.exceptions import AmazonAPIError
 from app.services.data_extraction import DAILY_TOTAL_ASIN, DataExtractionService
+from app.services.sales_metrics import display_revenue_expr, display_units_expr
 
 router = APIRouter()
 
@@ -27,7 +28,8 @@ ADS_AUTH_FAILURE_SYNC_CODES = {
     "MISSING_ADVERTISING_REFRESH_TOKEN",
     "MISSING_ADVERTISING_PROFILE",
     "ADS_AUTH_FAILURE",
-    "ADS_UNAUTHORIZED",
+    "ADS_UNAUTHORIZED",          # persistent 401/403 from the Ads client
+    "ADVERTISING_AUTH_FAILED",   # LWA/OAuth refresh failure
 }
 
 
@@ -209,8 +211,8 @@ async def _load_account_metrics(
         await db.execute(
             select(
                 SalesData.account_id,
-                func.sum(SalesData.ordered_product_sales).label("total_sales_30d"),
-                func.sum(SalesData.units_ordered).label("total_units_30d"),
+                func.sum(display_revenue_expr()).label("total_sales_30d"),
+                func.sum(display_units_expr()).label("total_units_30d"),
             )
             .where(
                 SalesData.account_id.in_(account_ids),

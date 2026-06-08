@@ -43,9 +43,11 @@ ADS_REGION_BY_COUNTRY: dict[str, str] = {
     "TR": "EU",
     "JP": "FE",
     "AU": "FE",
-    "IN": "FE",
     "SG": "FE",
-    "AE": "FE",
+    # The Ads API serves India and the Middle East from the EU host
+    # (unlike SP-API, which groups them with the Far East).
+    "IN": "EU",
+    "AE": "EU",
 }
 
 ADS_MARKETPLACE_BY_COUNTRY: dict[str, str] = {
@@ -136,77 +138,43 @@ class AdvertisingReportConfig:
     format: str = "GZIP_JSON"
 
 
+# Sponsored Products campaign report. The three keys below are aliases kept for
+# backward compatibility; they intentionally share one config so the column set
+# cannot drift apart. SP exposes per-window (1d/7d/14d/30d) sales and units.
+_SP_CAMPAIGN_CONFIG = AdvertisingReportConfig(
+    report_type_id="spCampaigns",
+    ad_product="SPONSORED_PRODUCTS",
+    group_by=["campaign"],
+    columns=[
+        "date",
+        "campaignId",
+        "campaignName",
+        "campaignStatus",
+        "impressions",
+        "clicks",
+        "cost",
+        "sales1d",
+        "sales7d",
+        "sales14d",
+        "sales30d",
+        "unitsSoldClicks1d",
+        "unitsSoldClicks7d",
+        "unitsSoldClicks14d",
+        "unitsSoldClicks30d",
+    ],
+)
+
+
 DEFAULT_REPORT_CONFIGS: dict[str, AdvertisingReportConfig] = {
-    "sp_campaigns": AdvertisingReportConfig(
-        report_type_id="spCampaigns",
-        ad_product="SPONSORED_PRODUCTS",
-        group_by=["campaign"],
-        columns=[
-            "date",
-            "campaignId",
-            "campaignName",
-            "campaignStatus",
-            "impressions",
-            "clicks",
-            "cost",
-            "sales1d",
-            "sales7d",
-            "sales14d",
-            "sales30d",
-            "orders1d",
-            "orders7d",
-            "orders14d",
-            "orders30d",
-        ],
-    ),
-    "sponsored_products_campaigns": AdvertisingReportConfig(
-        report_type_id="spCampaigns",
-        ad_product="SPONSORED_PRODUCTS",
-        group_by=["campaign"],
-        columns=[
-            "date",
-            "campaignId",
-            "campaignName",
-            "campaignStatus",
-            "impressions",
-            "clicks",
-            "cost",
-            "sales1d",
-            "sales7d",
-            "sales14d",
-            "sales30d",
-            "orders1d",
-            "orders7d",
-            "orders14d",
-            "orders30d",
-        ],
-    ),
-    "spCampaigns": AdvertisingReportConfig(
-        report_type_id="spCampaigns",
-        ad_product="SPONSORED_PRODUCTS",
-        group_by=["campaign"],
-        columns=[
-            "date",
-            "campaignId",
-            "campaignName",
-            "campaignStatus",
-            "impressions",
-            "clicks",
-            "cost",
-            "sales1d",
-            "sales7d",
-            "sales14d",
-            "sales30d",
-            "orders1d",
-            "orders7d",
-            "orders14d",
-            "orders30d",
-        ],
-    ),
+    "sp_campaigns": _SP_CAMPAIGN_CONFIG,
+    "sponsored_products_campaigns": _SP_CAMPAIGN_CONFIG,
+    "spCampaigns": _SP_CAMPAIGN_CONFIG,
     "sb_campaigns": AdvertisingReportConfig(
         report_type_id="sbCampaigns",
         ad_product="SPONSORED_BRANDS",
         group_by=["campaign"],
+        # Sponsored Brands campaign metrics have no per-window suffixes; they are
+        # reported as single unsuffixed totals.
         columns=[
             "date",
             "campaignId",
@@ -215,20 +183,17 @@ DEFAULT_REPORT_CONFIGS: dict[str, AdvertisingReportConfig] = {
             "impressions",
             "clicks",
             "cost",
-            "sales1d",
-            "sales7d",
-            "sales14d",
-            "sales30d",
-            "orders1d",
-            "orders7d",
-            "orders14d",
-            "orders30d",
+            "sales",
+            "purchases",
+            "unitsSold",
         ],
     ),
     "sd_campaigns": AdvertisingReportConfig(
         report_type_id="sdCampaigns",
         ad_product="SPONSORED_DISPLAY",
         group_by=["campaign"],
+        # Sponsored Display metrics are unsuffixed with click/promoted-click
+        # variants; there are no 1d/7d/14d/30d columns.
         columns=[
             "date",
             "campaignId",
@@ -237,20 +202,18 @@ DEFAULT_REPORT_CONFIGS: dict[str, AdvertisingReportConfig] = {
             "impressions",
             "clicks",
             "cost",
-            "sales1d",
-            "sales7d",
-            "sales14d",
-            "sales30d",
-            "orders1d",
-            "orders7d",
-            "orders14d",
-            "orders30d",
+            "sales",
+            "salesClicks",
+            "purchases",
+            "purchasesClicks",
+            "unitsSold",
+            "unitsSoldClicks",
         ],
     ),
     "sp_advertised_product": AdvertisingReportConfig(
         report_type_id="spAdvertisedProduct",
         ad_product="SPONSORED_PRODUCTS",
-        group_by=["advertiserProduct"],
+        group_by=["advertiser"],
         columns=[
             "date",
             "campaignId",
@@ -259,7 +222,7 @@ DEFAULT_REPORT_CONFIGS: dict[str, AdvertisingReportConfig] = {
             "clicks",
             "cost",
             "sales7d",
-            "unitsSold7d",
+            "unitsSoldClicks7d",
         ],
     ),
 }
@@ -388,6 +351,12 @@ class AdvertisingAPIClient:
             )
             setattr(exc, "retry_after", self._extract_retry_after(response))
             raise exc
+
+        if response.status_code in (401, 403) and authenticated:
+            raise AmazonAPIError(
+                f"Advertising API authorization rejected ({response.status_code}) on {method} {url}: {response.text}",
+                error_code="ADS_UNAUTHORIZED",
+            )
 
         if response.status_code >= 400:
             raise AmazonAPIError(
@@ -564,6 +533,8 @@ class AdvertisingAPIClient:
             "/reporting/reports",
             profile_id=profile_id,
             json_body=body,
+            # Reporting v3 mandates this versioned media type on report creation.
+            headers={"Content-Type": "application/vnd.createasyncreportrequest.v3+json"},
         )
         payload = response.json()
         report_id = payload.get("reportId")
@@ -611,11 +582,16 @@ class AdvertisingAPIClient:
         )
 
     def _decode_report_content(self, response: httpx.Response) -> Any:
-        """Decode report bytes into JSON."""
+        """Decode report bytes into JSON.
+
+        Detect gzip by magic bytes rather than the Content-Encoding header:
+        httpx transparently inflates responses that advertise Content-Encoding,
+        whereas the presigned S3 report URL serves raw .gz bytes with no such
+        header. The magic-byte check is correct for both and avoids a
+        double-decompress crash.
+        """
         raw = response.content
-        content_encoding = response.headers.get("Content-Encoding", "").lower()
-        is_gzip = content_encoding == "gzip" or raw[:2] == b"\x1f\x8b"
-        if is_gzip:
+        if raw[:2] == b"\x1f\x8b":
             raw = gzip.decompress(raw)
 
         try:

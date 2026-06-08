@@ -475,6 +475,11 @@ export interface CampaignInsight {
   ctr: number
 }
 
+export interface AdvertisingRecommendation {
+  code: string
+  message: string
+}
+
 export interface AdvertisingInsights {
   total_spend: number
   total_sales: number
@@ -485,7 +490,7 @@ export interface AdvertisingInsights {
   overall_ctr: number
   top_campaigns: CampaignInsight[]
   underperforming_campaigns: CampaignInsight[]
-  recommendations: string[]
+  recommendations: AdvertisingRecommendation[]
 }
 
 export type ScheduledReportType = 'sales' | 'inventory' | 'advertising'

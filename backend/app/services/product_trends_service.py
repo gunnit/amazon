@@ -16,6 +16,7 @@ from app.models.inventory import InventoryData
 from app.models.product import BSRHistory, Product
 from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.services.granularity import Granularity, granularity_for_account_types
 
 
@@ -681,8 +682,8 @@ class ProductTrendsService:
             select(
                 SalesData.asin,
                 SalesData.date,
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
-                func.sum(SalesData.units_ordered).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
             )
             .where(
                 SalesData.account_id.in_(account_ids),
@@ -937,8 +938,8 @@ class ProductTrendsService:
                 select(
                     SalesData.asin,
                     SalesData.date,
-                    func.sum(SalesData.ordered_product_sales).label("revenue"),
-                    func.sum(SalesData.units_ordered).label("units"),
+                    func.sum(display_revenue_expr()).label("revenue"),
+                    func.sum(display_units_expr()).label("units"),
                 )
                 .where(
                     SalesData.account_id.in_(account_ids),

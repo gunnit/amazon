@@ -11,9 +11,10 @@ from app.api.deps import CurrentUser, CurrentOrganization, DbSession
 from app.config import settings
 from app.models.amazon_account import AmazonAccount
 from app.models.order import Order, OrderItem
-from app.models.scheduled_report import ScheduledReport
+from app.models.scheduled_report import ScheduledReport, ScheduledReportRun
 from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.models.inventory import InventoryData
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
 from app.schemas.report import (
@@ -49,16 +50,85 @@ def _broker_reachable() -> bool:
         return False
 
 
+def _check_sender_verified() -> Optional[bool]:
+    """Best-effort, non-sending check that the configured sender can deliver.
+
+    Returns True/False when SendGrid's verified-senders API gives a clear
+    answer, or None when it can't be determined. Never raises.
+    """
+    if not settings.SENDGRID_API_KEY:
+        return None
+    try:
+        from app.services.notification_service import NotificationService
+
+        service = NotificationService(sendgrid_api_key=settings.SENDGRID_API_KEY)
+        return service.check_sender_verified(settings.SENDGRID_FROM_EMAIL)
+    except Exception:
+        return None
+
+
+async def _last_delivery_error(db: DbSession, organization_id) -> Optional[str]:
+    """Surface the error from the most recent failed delivery, if any.
+
+    Used as an honest fallback so the UI can show that sends are currently
+    failing even when a live sender check is inconclusive. Never raises.
+    """
+    try:
+        query = (
+            select(ScheduledReportRun.error_message)
+            .where(
+                ScheduledReportRun.organization_id == organization_id,
+                ScheduledReportRun.delivery_status.in_(("failed", "not_configured")),
+                ScheduledReportRun.error_message.isnot(None),
+            )
+            .order_by(ScheduledReportRun.triggered_at.desc())
+            .limit(1)
+        )
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
+    except Exception:
+        return None
+
+
 @router.get("/email-status")
 async def get_reports_email_status(
     current_user: CurrentUser,
     organization: CurrentOrganization,
+    db: DbSession,
 ):
-    """Expose email/worker readiness so the UI can warn without exposing secrets."""
+    """Expose email/worker readiness so the UI can warn without exposing secrets.
+
+    ``email_configured`` means "a SendGrid key is present". ``sender_verified``
+    is the honest signal of whether a real send can actually succeed: it is the
+    result of a cheap, read-only SendGrid check (no live email sent), falling
+    back to None when unknown. ``email_status_message`` carries a human-readable
+    reason (e.g. an unverified sender or the last delivery error) for the UI.
+    """
+    configured = bool(settings.SENDGRID_API_KEY)
+    from_email = settings.SENDGRID_FROM_EMAIL
+
+    sender_verified: Optional[bool] = None
+    message: Optional[str] = None
+    if configured:
+        sender_verified = _check_sender_verified()
+        if sender_verified is False:
+            message = (
+                f"Mittente {from_email} non verificato su SendGrid: "
+                "gli invii falliranno finché la Sender Identity non è verificata."
+            )
+        elif sender_verified is None:
+            # Live check inconclusive — surface the last real failure if we have one.
+            message = await _last_delivery_error(db, organization.id)
+    else:
+        message = "Invio email non configurato: chiave SendGrid mancante sul server."
+
     return {
-        "email_configured": bool(settings.SENDGRID_API_KEY),
-        "from_email": settings.SENDGRID_FROM_EMAIL,
+        "email_configured": configured,
+        "from_email": from_email,
         "worker_available": _broker_reachable(),
+        # Honest "can it actually send?" signal: True/False/None (unknown).
+        "sender_verified": sender_verified,
+        "email_status_message": message,
     }
 
 
@@ -129,8 +199,8 @@ async def get_sales_aggregated(
     query = (
         select(
             period_expr.label("period_date"),
-            func.sum(SalesData.units_ordered).label("total_units"),
-            func.sum(SalesData.ordered_product_sales).label("total_sales"),
+            func.sum(display_units_expr()).label("total_units"),
+            func.sum(display_revenue_expr()).label("total_sales"),
             func.sum(SalesData.total_order_items).label("total_orders"),
             SalesData.currency,
         )

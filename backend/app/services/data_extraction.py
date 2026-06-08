@@ -560,6 +560,9 @@ class DataExtractionService:
                 "mobile_sessions": stmt.excluded.mobile_sessions,
                 "page_views": stmt.excluded.page_views,
                 "currency": stmt.excluded.currency,
+                "shipped_revenue": stmt.excluded.shipped_revenue,
+                "shipped_units": stmt.excluded.shipped_units,
+                "shipped_cogs": stmt.excluded.shipped_cogs,
             },
         )
         await self.db.execute(stmt)
@@ -681,18 +684,36 @@ class DataExtractionService:
         # Keys are dates; values are dicts with running totals.
         daily_totals: Dict[date, dict] = {}
 
-        def _accumulate_daily(entry_date: date, units: int, sales: Decimal, order_items: int, currency: str):
+        def _accumulate_daily(
+            entry_date: date,
+            units: int,
+            sales: Decimal,
+            order_items: int,
+            currency: str,
+            shipped_revenue: Optional[Decimal] = None,
+            shipped_units: Optional[int] = None,
+            shipped_cogs: Optional[Decimal] = None,
+        ):
             if entry_date in daily_totals:
                 dt = daily_totals[entry_date]
                 dt["units_ordered"] += units
                 dt["ordered_product_sales"] += sales
                 dt["total_order_items"] += order_items
+                if shipped_revenue is not None:
+                    dt["shipped_revenue"] = shipped_revenue
+                if shipped_units is not None:
+                    dt["shipped_units"] = shipped_units
+                if shipped_cogs is not None:
+                    dt["shipped_cogs"] = shipped_cogs
             else:
                 daily_totals[entry_date] = {
                     "units_ordered": units,
                     "ordered_product_sales": sales,
                     "total_order_items": order_items,
                     "currency": currency,
+                    "shipped_revenue": shipped_revenue,
+                    "shipped_units": shipped_units,
+                    "shipped_cogs": shipped_cogs,
                 }
 
         # Request the Vendor Sales report one settled calendar month at a time.
@@ -729,6 +750,47 @@ class DataExtractionService:
                 )
                 continue
 
+            # Also fetch the SOURCING view for shipped (sell-through) metrics,
+            # which match Vendor Central "Ricavi spediti". Best-effort: a missing
+            # or failed SOURCING report leaves shipped values null for the month
+            # and never aborts it.
+            shipped_by_asin: Dict[str, dict] = {}
+            shipped_aggregate: Optional[dict] = None
+            try:
+                sreport = client.get_vendor_sales_report(
+                    month_start, month_end, distributor_view="SOURCING"
+                )
+            except AmazonAPIError as exc:
+                logger.warning(
+                    "Vendor SOURCING sales report unavailable for %s %s..%s, "
+                    "shipped metrics left null: %s",
+                    account.account_name, month_start, month_end, exc,
+                )
+                sreport = {}
+
+            for sentry in sreport.get("salesByAsin", []) or []:
+                sasin = sentry.get("asin")
+                if not sasin:
+                    continue
+                s_rev = sentry.get("shippedRevenue", {})
+                s_cogs = sentry.get("shippedCogs", {})
+                shipped_by_asin[sasin] = {
+                    "revenue": Decimal(str(s_rev.get("amount", 0))) if isinstance(s_rev, dict) else Decimal("0"),
+                    "units": sentry.get("shippedUnits", 0) or 0,
+                    "cogs": Decimal(str(s_cogs.get("amount", 0))) if isinstance(s_cogs, dict) else Decimal("0"),
+                }
+
+            s_agg_list = sreport.get("salesAggregate", []) or []
+            if s_agg_list:
+                s_agg = s_agg_list[0] or {}
+                s_rev = s_agg.get("shippedRevenue", {})
+                s_cogs = s_agg.get("shippedCogs", {})
+                shipped_aggregate = {
+                    "revenue": Decimal(str(s_rev.get("amount", 0))) if isinstance(s_rev, dict) else Decimal("0"),
+                    "units": s_agg.get("shippedUnits", 0) or 0,
+                    "cogs": Decimal(str(s_cogs.get("amount", 0))) if isinstance(s_cogs, dict) else Decimal("0"),
+                }
+
             # We have fresh data for this month — replace its rows atomically.
             # Align the floor to the first of the month so the whole settled
             # month is cleaned, then repopulated from the report below.
@@ -750,6 +812,7 @@ class DataExtractionService:
                 )
             )
 
+            ordered_asins: set = set()
             for entry in sales_by_asin:
                 asin = entry.get("asin")
                 entry_date_str = entry.get("startDate")
@@ -765,6 +828,8 @@ class DataExtractionService:
                 currency = ordered_revenue.get("currencyCode", "EUR") if isinstance(ordered_revenue, dict) else "EUR"
                 units = entry.get("orderedUnits", 0) or 0
 
+                shipped = shipped_by_asin.get(asin)
+                ordered_asins.add(asin)
                 await self._upsert_sales_record({
                     "account_id": account.id,
                     "date": entry_date,
@@ -776,6 +841,9 @@ class DataExtractionService:
                     "ordered_product_sales_b2b": Decimal("0"),
                     "total_order_items": units,
                     "currency": currency,
+                    "shipped_revenue": shipped["revenue"] if shipped else None,
+                    "shipped_units": shipped["units"] if shipped else None,
+                    "shipped_cogs": shipped["cogs"] if shipped else None,
                 })
                 count += 1
                 report_rows_seen = True
@@ -799,8 +867,33 @@ class DataExtractionService:
                         "detailed_disposition": None,
                     })
 
+            # Surface shipped-only / end-of-life ASINs: those present in SOURCING
+            # (shipped > 0) but absent from the MANUFACTURING report get a row with
+            # ordered fields zeroed and the shipped values set, dated month_start.
+            for sasin, shipped in shipped_by_asin.items():
+                if sasin in ordered_asins or shipped["revenue"] <= 0:
+                    continue
+                await self._upsert_sales_record({
+                    "account_id": account.id,
+                    "date": month_start,
+                    "asin": sasin,
+                    "sku": None,
+                    "units_ordered": 0,
+                    "units_ordered_b2b": 0,
+                    "ordered_product_sales": Decimal("0"),
+                    "ordered_product_sales_b2b": Decimal("0"),
+                    "total_order_items": 0,
+                    "currency": "EUR",
+                    "shipped_revenue": shipped["revenue"],
+                    "shipped_units": shipped["units"],
+                    "shipped_cogs": shipped["cogs"],
+                })
+                count += 1
+
             # Use Amazon's own period aggregate for the daily-total sentinel so
             # the dashboard total matches the report (no per-ASIN re-summing).
+            # Shipped totals come from the SOURCING salesAggregate (not re-summed
+            # per ASIN), matched to the same agg date.
             for agg in report.get("salesAggregate", []) or []:
                 agg_date_str = agg.get("startDate")
                 if not agg_date_str:
@@ -813,7 +906,12 @@ class DataExtractionService:
                 amount = Decimal(str(ordered_revenue.get("amount", 0))) if isinstance(ordered_revenue, dict) else Decimal("0")
                 currency = ordered_revenue.get("currencyCode", "EUR") if isinstance(ordered_revenue, dict) else "EUR"
                 units = agg.get("orderedUnits", 0) or 0
-                _accumulate_daily(agg_date, units, amount, units, currency)
+                _accumulate_daily(
+                    agg_date, units, amount, units, currency,
+                    shipped_revenue=shipped_aggregate["revenue"] if shipped_aggregate else None,
+                    shipped_units=shipped_aggregate["units"] if shipped_aggregate else None,
+                    shipped_cogs=shipped_aggregate["cogs"] if shipped_aggregate else None,
+                )
 
         if not report_rows_seen:
             self.vendor_sales_used_po_fallback = True
@@ -927,6 +1025,9 @@ class DataExtractionService:
                 "ordered_product_sales_b2b": Decimal("0"),
                 "total_order_items": totals["total_order_items"],
                 "currency": totals["currency"],
+                "shipped_revenue": totals.get("shipped_revenue"),
+                "shipped_units": totals.get("shipped_units"),
+                "shipped_cogs": totals.get("shipped_cogs"),
             })
             count += 1
 
@@ -1679,16 +1780,16 @@ class DataExtractionService:
         except ValueError:
             return None
 
-    def _extract_order_count(self, row: dict[str, Any], window: str) -> int:
-        """Read attributed order fields across the different Ads report spellings."""
-        keys = (
-            f"orders{window}",
-            f"purchases{window}",
-            f"attributedConversions{window}",
-            f"purchasesClicks{window}",
-            f"unitsSoldClicks{window}",
-            f"attributedUnitsOrdered{window}",
-        )
+    def _extract_units(self, row: dict[str, Any], window: str) -> int:
+        """Read attributed units sold for a window across SP/SB/SD reports.
+
+        Sponsored Products expose per-window ``unitsSoldClicks{window}``.
+        Sponsored Brands/Display report a single unsuffixed total, which we fold
+        into the 7d window only (so the 1d/14d/30d snapshots stay honest).
+        """
+        keys = [f"unitsSoldClicks{window}"]
+        if window == "7d":
+            keys += ["unitsSold", "unitsSoldClicks"]
         for key in keys:
             value = row.get(key)
             if value not in (None, ""):
@@ -1696,12 +1797,14 @@ class DataExtractionService:
         return 0
 
     def _extract_sales_amount(self, row: dict[str, Any], window: str) -> Decimal:
-        """Read attributed sales fields across the different Ads report spellings."""
-        keys = (
-            f"sales{window}",
-            f"attributedSales{window}",
-            f"purchasesSales{window}",
-        )
+        """Read attributed sales for a window across SP/SB/SD reports.
+
+        SP exposes ``sales{window}``; SB/SD report a single unsuffixed total
+        (``sales``/``salesClicks``) folded into the 7d window only.
+        """
+        keys = [f"sales{window}", f"attributedSales{window}", f"purchasesSales{window}"]
+        if window == "7d":
+            keys += ["sales", "salesClicks"]
         for key in keys:
             value = row.get(key)
             if value not in (None, ""):
@@ -1805,10 +1908,10 @@ class DataExtractionService:
             sales_7d = self._extract_sales_amount(row, "7d")
             sales_14d = self._extract_sales_amount(row, "14d")
             sales_30d = self._extract_sales_amount(row, "30d")
-            orders_1d = self._extract_order_count(row, "1d")
-            orders_7d = self._extract_order_count(row, "7d")
-            orders_14d = self._extract_order_count(row, "14d")
-            orders_30d = self._extract_order_count(row, "30d")
+            units_1d = self._extract_units(row, "1d")
+            units_7d = self._extract_units(row, "7d")
+            units_14d = self._extract_units(row, "14d")
+            units_30d = self._extract_units(row, "30d")
 
             ctr = self._metric_ratio(Decimal(clicks) * Decimal("100"), Decimal(impressions)) if impressions > 0 else Decimal("0")
             cpc = self._metric_ratio(cost, Decimal(clicks)) if clicks > 0 else Decimal("0")
@@ -1826,10 +1929,10 @@ class DataExtractionService:
                     "attributed_sales_7d": sales_7d,
                     "attributed_sales_14d": sales_14d,
                     "attributed_sales_30d": sales_30d,
-                    "attributed_units_ordered_1d": orders_1d,
-                    "attributed_units_ordered_7d": orders_7d,
-                    "attributed_units_ordered_14d": orders_14d,
-                    "attributed_units_ordered_30d": orders_30d,
+                    "attributed_units_ordered_1d": units_1d,
+                    "attributed_units_ordered_7d": units_7d,
+                    "attributed_units_ordered_14d": units_14d,
+                    "attributed_units_ordered_30d": units_30d,
                     "ctr": ctr,
                     "cpc": cpc,
                     "acos": acos,
@@ -1887,7 +1990,7 @@ class DataExtractionService:
             clicks = self._int_value(row.get("clicks"))
             cost = self._decimal(row.get("cost"))
             sales_7d = self._decimal(row.get("sales7d"))
-            units_7d = self._int_value(row.get("unitsSold7d"))
+            units_7d = self._int_value(row.get("unitsSoldClicks7d"))
 
             ctr = self._metric_ratio(Decimal(clicks) * Decimal("100"), Decimal(impressions)) if impressions > 0 else Decimal("0")
             cpc = self._metric_ratio(cost, Decimal(clicks)) if clicks > 0 else Decimal("0")
@@ -1927,7 +2030,11 @@ class DataExtractionService:
         try:
             client, profile_id = self._create_advertising_api_client(account, organization)
         except AmazonAPIError as exc:
-            if exc.error_code in {"MISSING_ADVERTISING_CREDENTIALS", "MISSING_ADVERTISING_PROFILE"}:
+            if exc.error_code in {
+                "MISSING_ADVERTISING_CLIENT_CREDENTIALS",
+                "MISSING_ADVERTISING_REFRESH_TOKEN",
+                "MISSING_ADVERTISING_PROFILE",
+            }:
                 logger.info("Skipping advertising sync for %s: %s", account.account_name, exc)
                 return 0
             raise

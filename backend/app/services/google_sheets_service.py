@@ -39,6 +39,7 @@ from app.schemas.google_sheets import (
 )
 from app.services.analytics_service import AnalyticsService
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.services.scheduled_report_utils import get_timezone, local_to_utc, utcnow
 
 logger = logging.getLogger(__name__)
@@ -1080,8 +1081,8 @@ class GoogleSheetsService:
                 SalesData.asin,
                 SalesData.sku,
                 func.max(Product.title).label("title"),
-                func.sum(SalesData.units_ordered).label("units"),
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
                 func.sum(SalesData.total_order_items).label("orders"),
                 func.max(SalesData.currency).label("currency"),
             )

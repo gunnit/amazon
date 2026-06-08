@@ -12,6 +12,7 @@ from app.models.advertising import AdvertisingMetrics, AdvertisingCampaign, Adve
 from app.models.product import Product, BSRHistory
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.granularity import Granularity, granularity_for_account_types
+from app.services.sales_metrics import display_revenue_expr, display_units_expr
 
 
 class AnalyticsService:
@@ -57,8 +58,8 @@ class AnalyticsService:
         """
         totals_query = (
             select(
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
-                func.sum(SalesData.units_ordered).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
                 func.sum(SalesData.total_order_items).label("orders"),
             )
             .where(
@@ -130,9 +131,9 @@ class AnalyticsService:
     ) -> List[Dict[str, Any]]:
         """Compute trend data for a metric."""
         if metric == "revenue":
-            value_expr = func.sum(SalesData.ordered_product_sales)
+            value_expr = func.sum(display_revenue_expr())
         elif metric == "units":
-            value_expr = func.sum(SalesData.units_ordered)
+            value_expr = func.sum(display_units_expr())
         elif metric == "orders":
             value_expr = func.sum(SalesData.total_order_items)
         else:
@@ -168,17 +169,17 @@ class AnalyticsService:
     ) -> List[Dict[str, Any]]:
         """Get top performing products."""
         if sort_by == "revenue":
-            order_expr = func.sum(SalesData.ordered_product_sales).desc()
+            order_expr = func.sum(display_revenue_expr()).desc()
         elif sort_by == "units":
-            order_expr = func.sum(SalesData.units_ordered).desc()
+            order_expr = func.sum(display_units_expr()).desc()
         else:
-            order_expr = func.sum(SalesData.ordered_product_sales).desc()
+            order_expr = func.sum(display_revenue_expr()).desc()
 
         query = (
             select(
                 SalesData.asin,
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
-                func.sum(SalesData.units_ordered).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
                 func.sum(SalesData.total_order_items).label("orders"),
             )
             .where(
@@ -421,7 +422,7 @@ class AnalyticsService:
             select(
                 SalesData.account_id.label("account_id"),
                 sales_bucket,
-                func.sum(SalesData.ordered_product_sales).label("total_sales"),
+                func.sum(display_revenue_expr()).label("total_sales"),
             )
             .where(*sales_filters)
             .group_by(SalesData.account_id, sales_bucket)
@@ -585,7 +586,7 @@ class AnalyticsService:
         query = (
             select(
                 SalesData.asin.label("asin"),
-                func.sum(SalesData.ordered_product_sales).label("total_sales"),
+                func.sum(display_revenue_expr()).label("total_sales"),
             )
             .where(
                 SalesData.account_id.in_(account_ids),
@@ -608,7 +609,7 @@ class AnalyticsService:
         query = (
             select(
                 SalesData.date.label("date"),
-                func.sum(SalesData.ordered_product_sales).label("total_sales"),
+                func.sum(display_revenue_expr()).label("total_sales"),
             )
             .where(
                 SalesData.account_id == account_id,
@@ -617,7 +618,7 @@ class AnalyticsService:
                 SalesData.date <= date_to,
             )
             .group_by(SalesData.date)
-            .order_by(func.sum(SalesData.ordered_product_sales).desc(), SalesData.date.desc())
+            .order_by(func.sum(display_revenue_expr()).desc(), SalesData.date.desc())
             .limit(1)
         )
         row = (await self.db.execute(query)).first()

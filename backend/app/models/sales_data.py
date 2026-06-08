@@ -34,6 +34,13 @@ class SalesData(Base):
     ordered_product_sales_b2b: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     total_order_items: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Vendor-only sell-through (SOURCING view, matches Vendor Central "Ricavi
+    # spediti"); null for sellers and not-yet-resynced rows. Displayed revenue
+    # prefers shipped over ordered (see app/services/sales_metrics.py).
+    shipped_revenue: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=True)
+    shipped_units: Mapped[int] = mapped_column(Integer, nullable=True)
+    shipped_cogs: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=True)
+
     # Traffic (from salesAndTrafficByDate / byAsin)
     browser_sessions: Mapped[int] = mapped_column(Integer, default=0)
     mobile_sessions: Mapped[int] = mapped_column(Integer, default=0)

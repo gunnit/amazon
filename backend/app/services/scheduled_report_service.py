@@ -366,6 +366,54 @@ def enqueue_scheduled_run_processing(run_id: str) -> None:
         thread.start()
 
 
+def run_scheduled_report_scan() -> None:
+    """In-process scheduler entrypoint: find due schedules and enqueue them.
+
+    Mirrors the Celery ``scan_scheduled_reports_due`` task so deployments that
+    run APScheduler in-process (no Redis/Celery) still send scheduled reports.
+    Uses a private engine + event loop, like ``process_scheduled_report_run_job``,
+    because APScheduler runs the job in a worker thread and the shared asyncpg
+    pool is bound to the API event loop.
+    """
+    from datetime import timezone
+
+    from app.db.session import db_url as _db_url
+
+    engine = create_async_engine(_db_url, echo=False, pool_size=2, max_overflow=1)
+    SessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+
+    async def _scan() -> int:
+        now = datetime.now(timezone.utc)
+        queued = 0
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(ScheduledReport).where(
+                    ScheduledReport.is_enabled.is_(True),
+                    ScheduledReport.next_run_at.is_not(None),
+                    ScheduledReport.next_run_at <= now,
+                )
+            )
+            for schedule in result.scalars().all():
+                service = ScheduledReportService(db)
+                run = await service.create_run(schedule, now)
+                queued += 1
+                enqueue_scheduled_run_processing(str(run.id))
+            await db.commit()
+        return queued
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        queued = loop.run_until_complete(_scan())
+        if queued:
+            logger.info("In-process scan queued %d scheduled report run(s)", queued)
+    except Exception:
+        logger.exception("In-process scheduled report scan failed")
+    finally:
+        loop.run_until_complete(engine.dispose())
+        loop.close()
+
+
 def process_scheduled_report_run_job(run_id: str) -> None:
     """Generate the scheduled report artifact and enqueue delivery."""
     from app.db.session import db_url as _db_url

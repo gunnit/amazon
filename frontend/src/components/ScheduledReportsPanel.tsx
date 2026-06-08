@@ -327,12 +327,18 @@ export function ScheduledReportsPanel() {
           </Button>
         </CardHeader>
         <CardContent>
-          {emailStatus && (!emailStatus.email_configured || !emailStatus.worker_available) ? (
+          {emailStatus && (!emailStatus.email_configured || emailStatus.sender_verified === false || !emailStatus.worker_available) ? (
             <div className="mb-4 space-y-2">
               {!emailStatus.email_configured ? (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{t('scheduledReports.emailNotConfigured')}</span>
+                </div>
+              ) : null}
+              {emailStatus.email_configured && emailStatus.sender_verified === false ? (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{emailStatus.email_status_message || t('scheduledReports.emailSenderUnverified')}</span>
                 </div>
               ) : null}
               {!emailStatus.worker_available ? (

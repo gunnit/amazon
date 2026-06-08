@@ -14,6 +14,7 @@ from app.models.sales_data import SalesData
 from app.schemas.analytics import ForecastHistoricalPoint, ForecastProductOption, ForecastResponse, ForecastPrediction
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.forecast_service import ForecastService
+from app.services.sales_metrics import display_revenue_expr
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ async def _fetch_historical(
     (seller) series keep the recent-window behaviour.
     """
     query = (
-        select(SalesData.date, func.sum(SalesData.ordered_product_sales).label("value"))
+        select(SalesData.date, func.sum(display_revenue_expr()).label("value"))
         .where(SalesData.account_id == account_id)
         .group_by(SalesData.date)
         .order_by(SalesData.date)

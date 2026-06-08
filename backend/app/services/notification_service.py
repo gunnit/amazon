@@ -84,6 +84,46 @@ class NotificationService:
             logger.error("Failed to send email via SendGrid: %s", self.last_error)
             return False
 
+    def check_sender_verified(self, from_email: Optional[str] = None) -> Optional[bool]:
+        """Best-effort check that ``from_email`` is a verified SendGrid sender.
+
+        Uses SendGrid's read-only verified-senders API (a cheap GET) so it does
+        NOT send a live email. Returns ``True``/``False`` when the answer is
+        known, or ``None`` when it can't be determined (no key, network/library
+        failure, unexpected payload). Never raises.
+        """
+        if not self.sendgrid_api_key:
+            return None
+
+        if from_email is None:
+            from app.config import settings
+            from_email = settings.SENDGRID_FROM_EMAIL
+
+        try:
+            from sendgrid import SendGridAPIClient
+
+            sg = SendGridAPIClient(self.sendgrid_api_key)
+            response = sg.client.verified_senders.get()
+            if response.status_code not in (200, 201):
+                return None
+
+            body = response.body
+            if isinstance(body, (bytes, bytearray)):
+                body = body.decode("utf-8", errors="replace")
+            import json
+
+            payload = json.loads(body) if isinstance(body, str) else body
+            results = (payload or {}).get("results", [])
+            target = (from_email or "").strip().lower()
+            for entry in results:
+                from_addr = (entry.get("from_email") or "").strip().lower()
+                if from_addr == target:
+                    return bool(entry.get("verified"))
+            return False
+        except Exception as exc:  # noqa: BLE001 - status check must never raise
+            logger.warning("SendGrid sender verification check failed: %s", exc)
+            return None
+
     @staticmethod
     def _classify_send_error(error: Exception, from_email: str) -> str:
         """Turn a raw SendGrid exception into an actionable Italian message."""

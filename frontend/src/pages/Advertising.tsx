@@ -21,17 +21,28 @@ import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
 import { accountsApi, analyticsApi } from '@/services/api'
 import { formatCurrency, formatNumber, cn } from '@/lib/utils'
-import type { AdsConnectionState, AdvertisingInsights, AmazonAccount, CampaignInsight } from '@/types'
+import type {
+  AdsConnectionState,
+  AdvertisingInsights,
+  AdvertisingRecommendation,
+  AmazonAccount,
+  CampaignInsight,
+} from '@/types'
 
-// Backend advertising recommendations come back as raw English sentences.
-// Map the known ones to localized copy; pass anything else through unchanged.
+// Backend recommendations carry a stable code; localize by code and fall back
+// to the English message for any code we don't have a translation for.
 const RECOMMENDATION_KEYS: Record<string, string> = {
-  'No advertising spend recorded for the selected period.': 'advertising.recNoSpend',
+  no_spend: 'advertising.recNoSpend',
+  high_roas: 'advertising.recHighRoas',
+  high_acos: 'advertising.recHighAcos',
+  low_ctr: 'advertising.recLowCtr',
+  no_conversion: 'advertising.recNoConversion',
+  stable: 'advertising.recStable',
 }
 
-function localizeRecommendation(rec: string, t: (key: string) => string): string {
-  const key = RECOMMENDATION_KEYS[rec.trim()]
-  return key ? t(key) : rec
+function localizeRecommendation(rec: AdvertisingRecommendation, t: (key: string) => string): string {
+  const key = RECOMMENDATION_KEYS[rec.code]
+  return key ? t(key) : rec.message
 }
 
 function resolveAdsState(account: AmazonAccount): AdsConnectionState {
@@ -277,8 +288,8 @@ export default function Advertising() {
           </CardHeader>
           <CardContent>
             <ul className="space-y-2">
-              {data.recommendations.map((rec, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+              {data.recommendations.map((rec) => (
+                <li key={rec.code} className="flex items-start gap-2 text-sm text-muted-foreground">
                   <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
                   {localizeRecommendation(rec, t)}
                 </li>

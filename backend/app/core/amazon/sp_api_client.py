@@ -1669,7 +1669,9 @@ class SPAPIClient:
         return all_orders
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
-    def get_vendor_sales_report(self, start_date: date, end_date: date) -> Dict[str, Any]:
+    def get_vendor_sales_report(
+        self, start_date: date, end_date: date, distributor_view: str = "MANUFACTURING"
+    ) -> Dict[str, Any]:
         """Get vendor sales data via the Reports API.
 
         Uses GET_VENDOR_SALES_REPORT (the live, non-deprecated report). The report
@@ -1679,7 +1681,10 @@ class SPAPIClient:
         or Amazon returns FATAL ("prohibited date range ... does not align with
         the requirements for the specified reportPeriod"). Data also settles with
         a few days of lag, so the most recent (incomplete) month should be
-        excluded by the caller."""
+        excluded by the caller.
+
+        distributorView selects MANUFACTURING (ordered / sell-in, the default) or
+        SOURCING (shipped / sell-through, matches Vendor Central "Ricavi spediti")."""
         report_data = self.request_and_download_report(
             report_type="GET_VENDOR_SALES_REPORT",
             start_date=start_date,
@@ -1687,7 +1692,7 @@ class SPAPIClient:
             report_options={
                 "reportPeriod": "MONTH",
                 "sellingProgram": "RETAIL",
-                "distributorView": "MANUFACTURING",
+                "distributorView": distributor_view,
             },
         )
 

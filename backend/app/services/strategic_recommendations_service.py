@@ -22,6 +22,7 @@ from app.models.product import Product
 from app.models.sales_data import SalesData
 from app.models.strategic_recommendation import StrategicRecommendation
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.services.granularity import Granularity, resolve_granularity
 
 logger = logging.getLogger(__name__)
@@ -439,8 +440,8 @@ class StrategicRecommendationsService:
         sales_stmt = (
             select(
                 SalesData.account_id,
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
-                func.sum(SalesData.units_ordered).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
                 func.sum(SalesData.total_order_items).label("orders"),
             )
             .where(
@@ -552,8 +553,8 @@ class StrategicRecommendationsService:
         top_asins_stmt = (
             select(
                 SalesData.asin,
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
-                func.sum(SalesData.units_ordered).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
             )
             .where(
                 SalesData.account_id.in_(account_ids),
@@ -562,7 +563,7 @@ class StrategicRecommendationsService:
                 SalesData.asin != DAILY_TOTAL_ASIN,
             )
             .group_by(SalesData.asin)
-            .order_by(func.sum(SalesData.ordered_product_sales).desc())
+            .order_by(func.sum(display_revenue_expr()).desc())
             .limit(5)
         )
         if normalized_asin:
@@ -668,7 +669,7 @@ class StrategicRecommendationsService:
         self, account_ids: List[UUID], start: date, end: date
     ) -> int:
         result = await self.db.execute(
-            select(func.coalesce(func.sum(SalesData.units_ordered), 0)).where(
+            select(func.coalesce(func.sum(display_units_expr()), 0)).where(
                 SalesData.account_id.in_(account_ids),
                 SalesData.asin != DAILY_TOTAL_ASIN,
                 SalesData.date >= start,

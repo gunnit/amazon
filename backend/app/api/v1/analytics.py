@@ -21,11 +21,12 @@ from app.models.product import Product
 from app.services.analytics_service import AnalyticsService
 from app.services.ai_analysis_service import ProductTrendInsightsAnalysisService
 from app.services.product_trends_service import ProductTrendsService, build_rule_based_insights
+from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.schemas.analytics import (
     DashboardKPIs, MetricValue, TrendData, TrendDataPoint,
     ComparisonDailyPoint, ComparisonMetric, ComparisonPeriod, ComparisonResponse,
     PaginatedProductPerformance, ProductPerformance, TopPerformers,
-    AdvertisingInsights, HourlyOrdersData, ProductTrendsResponse,
+    AdvertisingInsights, AdvertisingRecommendation, HourlyOrdersData, ProductTrendsResponse,
     ProductTrendInsightsResponse,
     ReturnAsinMetric, ReturnReasonBreakdown, ReturnsAnalyticsResponse, ReturnsSummary,
     ReturnsTrendPoint,
@@ -197,8 +198,8 @@ async def _get_sales_period_metrics(
     if category:
         query = (
             select(
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
-                func.sum(SalesData.units_ordered).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
                 func.sum(SalesData.total_order_items).label("orders"),
                 func.sum(SalesData.browser_sessions + SalesData.mobile_sessions).label("sessions"),
             )
@@ -221,8 +222,8 @@ async def _get_sales_period_metrics(
     else:
         query = (
             select(
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
-                func.sum(SalesData.units_ordered).label("units"),
+                func.sum(display_revenue_expr()).label("revenue"),
+                func.sum(display_units_expr()).label("units"),
                 func.sum(SalesData.total_order_items).label("orders"),
                 func.sum(SalesData.browser_sessions + SalesData.mobile_sessions).label("sessions"),
             )
@@ -262,7 +263,7 @@ async def _get_sales_daily_revenue(
         query = (
             select(
                 SalesData.date.label("period_date"),
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
+                func.sum(display_revenue_expr()).label("revenue"),
             )
             .select_from(SalesData)
             .join(
@@ -286,7 +287,7 @@ async def _get_sales_daily_revenue(
         query = (
             select(
                 SalesData.date.label("period_date"),
-                func.sum(SalesData.ordered_product_sales).label("revenue"),
+                func.sum(display_revenue_expr()).label("revenue"),
             )
             .where(
                 SalesData.account_id.in_(accounts_query),
@@ -746,7 +747,7 @@ async def get_trends(
             query = (
                 select(
                     SalesData.date,
-                    func.sum(SalesData.ordered_product_sales).label("value"),
+                    func.sum(display_revenue_expr()).label("value"),
                 )
                 .where(
                     SalesData.account_id.in_(accounts_query),
@@ -761,7 +762,7 @@ async def get_trends(
             query = (
                 select(
                     SalesData.date,
-                    func.sum(SalesData.units_ordered).label("value"),
+                    func.sum(display_units_expr()).label("value"),
                 )
                 .where(
                     SalesData.account_id.in_(accounts_query),
@@ -908,14 +909,15 @@ async def get_returns_analysis(
         sales_filters.append(SalesData.asin == asin)
 
     # Vendor accounts have no Order/OrderItem rows; their sold units live in
-    # sales_data.units_ordered. Fall back to that denominator whenever the
-    # order-based source yields nothing for the scope.
+    # sales_data. Fall back to that denominator whenever the order-based source
+    # yields nothing for the scope, preferring shipped units (returns are
+    # measured against what shipped).
     use_sales_denominator = ordered_units_total == 0
     if use_sales_denominator:
         ordered_units_total = int(
             (
                 await db.execute(
-                    select(func.sum(SalesData.units_ordered)).where(*sales_filters)
+                    select(func.sum(display_units_expr())).where(*sales_filters)
                 )
             ).scalar()
             or 0
@@ -928,7 +930,7 @@ async def get_returns_analysis(
             await db.execute(
                 select(
                     SalesData.date.label("period_date"),
-                    func.sum(SalesData.units_ordered).label("ordered_units"),
+                    func.sum(display_units_expr()).label("ordered_units"),
                 )
                 .where(*sales_filters)
                 .group_by(SalesData.date)
@@ -976,7 +978,7 @@ async def get_returns_analysis(
                 await db.execute(
                     select(
                         SalesData.asin,
-                        func.sum(SalesData.units_ordered).label("ordered_units"),
+                        func.sum(display_units_expr()).label("ordered_units"),
                     )
                     .where(*sales_filters, SalesData.asin.in_(return_asins))
                     .group_by(SalesData.asin)
@@ -1146,8 +1148,8 @@ async def get_top_performers(
     revenue_query = (
         select(
             SalesData.asin,
-            func.sum(SalesData.units_ordered).label("total_units"),
-            func.sum(SalesData.ordered_product_sales).label("total_revenue"),
+            func.sum(display_units_expr()).label("total_units"),
+            func.sum(display_revenue_expr()).label("total_revenue"),
             func.sum(SalesData.total_order_items).label("total_orders"),
         )
         .where(
@@ -1157,7 +1159,7 @@ async def get_top_performers(
             SalesData.date <= end_date,
         )
         .group_by(SalesData.asin)
-        .order_by(func.sum(SalesData.ordered_product_sales).desc())
+        .order_by(func.sum(display_revenue_expr()).desc())
         .limit(limit)
     )
 
@@ -1295,8 +1297,8 @@ async def get_per_product_performance(
     sales_subq = (
         select(
             SalesData.asin.label("asin"),
-            func.sum(SalesData.units_ordered).label("total_units"),
-            func.sum(SalesData.ordered_product_sales).label("total_revenue"),
+            func.sum(display_units_expr()).label("total_units"),
+            func.sum(display_revenue_expr()).label("total_revenue"),
             func.sum(SalesData.total_order_items).label("total_orders"),
         )
         .where(
@@ -1815,21 +1817,39 @@ async def get_advertising_insights(
         )
     ][:5]
 
-    recommendations: list[str] = []
+    recommendations: list[AdvertisingRecommendation] = []
     if total_spend <= 0:
-        recommendations.append("No advertising spend recorded for the selected period.")
+        recommendations.append(AdvertisingRecommendation(
+            code="no_spend",
+            message="No advertising spend recorded for the selected period.",
+        ))
     else:
         if overall_roas >= Decimal("3"):
-            recommendations.append("High overall ROAS suggests room to scale budgets on winning campaigns.")
+            recommendations.append(AdvertisingRecommendation(
+                code="high_roas",
+                message="High overall ROAS suggests room to scale budgets on winning campaigns.",
+            ))
         if overall_acos > Decimal("30"):
-            recommendations.append("Overall ACoS is elevated; review bids and search terms on the highest-spend campaigns.")
+            recommendations.append(AdvertisingRecommendation(
+                code="high_acos",
+                message="Overall ACoS is elevated; review bids and search terms on the highest-spend campaigns.",
+            ))
         if overall_ctr < Decimal("0.35"):
-            recommendations.append("CTR is low; refresh targeting or creative on campaigns with high impressions and weak click-through.")
+            recommendations.append(AdvertisingRecommendation(
+                code="low_ctr",
+                message="CTR is low; refresh targeting or creative on campaigns with high impressions and weak click-through.",
+            ))
         if total_clicks > 0 and total_sales <= 0:
-            recommendations.append("Clicks are not converting into attributed sales; inspect landing products and keyword relevance.")
+            recommendations.append(AdvertisingRecommendation(
+                code="no_conversion",
+                message="Clicks are not converting into attributed sales; inspect landing products and keyword relevance.",
+            ))
 
     if not recommendations:
-        recommendations.append("Advertising performance is stable in the selected period.")
+        recommendations.append(AdvertisingRecommendation(
+            code="stable",
+            message="Advertising performance is stable in the selected period.",
+        ))
 
     return AdvertisingInsights(
         total_spend=total_spend,

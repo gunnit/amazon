@@ -112,6 +112,9 @@ _stub_table_module(
         "units_ordered",
         "total_order_items",
         "currency",
+        "shipped_revenue",
+        "shipped_units",
+        "shipped_cogs",
     ],
 )
 _stub_model_module("app.models.inventory", "InventoryData")
@@ -219,13 +222,16 @@ async def test_vendor_sales_clears_fallback_flag_when_diagnostic_succeeds(monkey
     service.vendor_sales_used_po_fallback = True  # simulate stale state
 
     fake_client = SimpleNamespace(
-        get_vendor_sales_report=lambda _start, _end: {
+        get_vendor_sales_report=lambda _start, _end, distributor_view="MANUFACTURING": {
             "salesByAsin": [
                 {
                     "asin": "B0VENDOR1",
                     "startDate": "2025-03-01",
                     "orderedRevenue": {"amount": "100.00", "currencyCode": "EUR"},
                     "orderedUnits": 5,
+                    "shippedRevenue": {"amount": "92.00", "currencyCode": "EUR"},
+                    "shippedUnits": 4,
+                    "shippedCogs": {"amount": "60.00", "currencyCode": "EUR"},
                 }
             ]
         },

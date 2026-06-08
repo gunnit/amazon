@@ -34,7 +34,9 @@ async def lifespan(app: FastAPI):
         try:
             from apscheduler.schedulers.background import BackgroundScheduler
             from apscheduler.triggers.cron import CronTrigger
+            from apscheduler.triggers.interval import IntervalTrigger
             from app.services.extraction_runner import run_daily_sync_all
+            from app.services.scheduled_report_service import run_scheduled_report_scan
 
             scheduler = BackgroundScheduler(timezone="UTC")
             scheduler.add_job(
@@ -48,11 +50,24 @@ async def lifespan(app: FastAPI):
                 coalesce=True,
                 misfire_grace_time=3600,
             )
+            # Scheduled-report delivery: poll for due schedules and generate +
+            # email them in-process. Replaces Celery beat's scan task, so weekly
+            # reports work without a separate worker/Redis.
+            scheduler.add_job(
+                run_scheduled_report_scan,
+                IntervalTrigger(minutes=settings.SCHEDULED_REPORT_SCAN_INTERVAL_MINUTES),
+                id="scheduled-report-scan",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=600,
+            )
             scheduler.start()
             logger.info(
-                "In-process scheduler started (daily sync at %02d:%02d UTC)",
+                "In-process scheduler started (daily sync at %02d:%02d UTC, "
+                "scheduled-report scan every %d min)",
                 settings.INPROCESS_SYNC_HOUR_UTC,
                 settings.INPROCESS_SYNC_MINUTE_UTC,
+                settings.SCHEDULED_REPORT_SCAN_INTERVAL_MINUTES,
             )
         except Exception:
             logger.exception("Failed to start in-process scheduler")

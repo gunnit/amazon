@@ -1982,7 +1982,7 @@ function AdsVsOrganicTab({
                       <td className="py-3 px-4">{item.campaign_name || '-'}</td>
                       <td className="py-3 px-4 text-right">{formatCurrency(Number(item.cost), advertisingCurrency)}</td>
                       <td className="py-3 px-4 text-right">{formatNumber(Number(item.clicks))}</td>
-                      <td className="py-3 px-4 text-right">{(Number(item.acos || 0) * 100).toFixed(1)}%</td>
+                      <td className="py-3 px-4 text-right">{Number(item.acos || 0).toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>

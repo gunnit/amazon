@@ -111,7 +111,7 @@ _stub_model_module(
     "app.models.sales_data",
     "SalesData",
     "sales_data",
-    ["account_id", "asin", "date", "ordered_product_sales", "units_ordered", "total_order_items", "currency"],
+    ["account_id", "asin", "date", "ordered_product_sales", "units_ordered", "total_order_items", "currency", "shipped_revenue", "shipped_units", "shipped_cogs"],
 )
 
 product_module = types.ModuleType("app.models.product")

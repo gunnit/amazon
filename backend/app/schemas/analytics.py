@@ -279,6 +279,16 @@ class ForecastResponse(BaseModel):
     data_quality_notes: Optional[List[str]] = None
 
 
+class AdvertisingRecommendation(BaseModel):
+    """A single advertising recommendation.
+
+    ``code`` is a stable identifier the frontend localizes; ``message`` is the
+    English fallback rendered when no translation exists.
+    """
+    code: str
+    message: str
+
+
 class AdvertisingInsights(BaseModel):
     """Advertising performance insights."""
     total_spend: Decimal
@@ -290,7 +300,7 @@ class AdvertisingInsights(BaseModel):
     overall_ctr: Decimal
     top_campaigns: List[Dict[str, Any]]
     underperforming_campaigns: List[Dict[str, Any]]
-    recommendations: List[str]
+    recommendations: List[AdvertisingRecommendation]
 
 
 class ProductTrendRecommendation(BaseModel):

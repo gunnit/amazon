@@ -10,6 +10,7 @@ from sqlalchemy import select, func
 from app.models.sales_data import SalesData
 from app.models.forecast import Forecast
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.sales_metrics import display_revenue_expr
 
 logger = logging.getLogger(__name__)
 
@@ -349,7 +350,7 @@ class ForecastService:
         query = (
             select(
                 SalesData.date,
-                func.sum(SalesData.ordered_product_sales).label("value"),
+                func.sum(display_revenue_expr()).label("value"),
             )
             .where(SalesData.account_id == account_id)
             .group_by(SalesData.date)
@@ -696,7 +697,7 @@ class ForecastService:
         mid_date = end_date - timedelta(days=15)
 
         first_half = await self.db.execute(
-            select(func.avg(SalesData.ordered_product_sales))
+            select(func.avg(display_revenue_expr()))
             .where(
                 SalesData.account_id == account_id,
                 SalesData.asin == asin,
@@ -707,7 +708,7 @@ class ForecastService:
         first_avg = float(first_half.scalar() or 0)
 
         second_half = await self.db.execute(
-            select(func.avg(SalesData.ordered_product_sales))
+            select(func.avg(display_revenue_expr()))
             .where(
                 SalesData.account_id == account_id,
                 SalesData.asin == asin,

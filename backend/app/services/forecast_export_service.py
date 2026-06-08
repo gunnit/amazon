@@ -22,6 +22,7 @@ from app.schemas.analytics import ForecastHistoricalPoint
 from app.services.ai_analysis_service import ForecastInsightsAnalysisService
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.excel_templates import ExcelTemplateRenderer, TEMPLATES
+from app.services.sales_metrics import display_revenue_expr
 from app.services.forecast_pdf_service import ForecastInsightsPdfBuilder
 
 logger = logging.getLogger(__name__)
@@ -230,7 +231,7 @@ class ForecastExportService:
         days: int = 30,
     ) -> List[ForecastHistoricalPoint]:
         query = (
-            select(SalesData.date, func.sum(SalesData.ordered_product_sales).label("value"))
+            select(SalesData.date, func.sum(display_revenue_expr()).label("value"))
             .where(SalesData.account_id == account_id)
             .group_by(SalesData.date)
             .order_by(SalesData.date)

@@ -632,12 +632,22 @@ async def export_to_excel(
         )
         result = await db.execute(sales_query)
         for sale in result.scalars().all():
+            display_units = (
+                sale.shipped_units
+                if sale.shipped_units not in (None, 0)
+                else sale.units_ordered
+            )
+            display_revenue = (
+                sale.shipped_revenue
+                if sale.shipped_revenue not in (None, 0)
+                else sale.ordered_product_sales
+            )
             sales_rows.append({
                 "date": sale.date.isoformat(),
                 "asin": sale.asin,
                 "sku": sale.sku or "",
-                "units_ordered": sale.units_ordered,
-                "revenue": float(sale.ordered_product_sales),
+                "units_ordered": display_units,
+                "revenue": float(display_revenue),
                 "orders": sale.total_order_items,
                 "currency": sale.currency,
             })

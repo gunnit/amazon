@@ -259,6 +259,9 @@ export const reportsApi = {
     email_configured: boolean
     from_email: string
     worker_available: boolean
+    // True/False when known via SendGrid's read-only sender check, null when unknown.
+    sender_verified: boolean | null
+    email_status_message: string | null
   }> => {
     const response = await api.get('/reports/email-status')
     return response.data

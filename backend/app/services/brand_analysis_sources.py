@@ -38,6 +38,7 @@ from app.models.brand_analysis import AsinOfferSnapshot
 from app.models.product import Product
 from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.services.brand_analysis_service import (
     InsufficientDataError,
     ParsedBrandExport,
@@ -105,11 +106,11 @@ class AmazonAccountDataSource:
         account_summary = await self._year_sales_summary(year)
 
         units_expr = (
-            func.coalesce(func.sum(SalesData.units_ordered), 0)
+            func.coalesce(func.sum(display_units_expr()), 0)
             + func.coalesce(func.sum(SalesData.units_ordered_b2b), 0)
         )
         revenue_expr = (
-            func.coalesce(func.sum(SalesData.ordered_product_sales), 0)
+            func.coalesce(func.sum(display_revenue_expr()), 0)
             + func.coalesce(func.sum(SalesData.ordered_product_sales_b2b), 0)
         )
         stmt = (
