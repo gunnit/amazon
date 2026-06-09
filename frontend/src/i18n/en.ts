@@ -1044,6 +1044,11 @@ const en: Record<string, string> = {
   'brandAnalysis.action.provideAsinsHelp': 'Use explicit ASINs when brand discovery is incomplete or too broad.',
   'brandAnalysis.action.uploadExternal': 'Upload yearly exports',
   'brandAnalysis.action.uploadExternalHelp': 'Fallback for missing 2024 or 2025 internal history.',
+  'brandAnalysis.action.delete': 'Delete',
+  'brandAnalysis.action.deleted': 'Analysis deleted.',
+  'brandAnalysis.action.deleteConfirmTitle': 'Delete this analysis?',
+  'brandAnalysis.action.deleteConfirmBody':
+    'Permanently delete the analysis for {brand} and its generated deck. This cannot be undone.',
   'brandAnalysis.result.market': 'Revenue market share',
   'brandAnalysis.result.marketNa': 'N/A until a reliable competitor revenue base is available.',
   'brandAnalysis.result.content': 'Content gaps',
@@ -1163,6 +1168,7 @@ const en: Record<string, string> = {
   'marketResearch.noData': 'N/A',
 
   // ── Market Tracker 360 ──
+  'marketTracker.title': 'Market Tracker 360',
   'marketTracker.overview': 'Market Overview',
   'marketTracker.totalProducts': 'Products Found',
   'marketTracker.avgPrice': 'Avg Price',

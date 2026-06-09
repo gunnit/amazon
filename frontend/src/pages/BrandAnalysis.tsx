@@ -24,11 +24,22 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
-  Sparkles,
+  Trash2,
   Upload,
   Wallet,
 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -272,23 +283,11 @@ function StatusPill({ status, label }: { status: BrandAnalysisStatus; label: str
 
 type KpiTone = 'primary' | 'success' | 'warning' | 'neutral'
 
-const kpiTone: Record<KpiTone, { surface: string; icon: string }> = {
-  primary: {
-    surface: 'from-primary/[0.08] to-transparent',
-    icon: 'bg-primary/10 text-primary',
-  },
-  success: {
-    surface: 'from-emerald-500/[0.08] to-transparent',
-    icon: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  },
-  warning: {
-    surface: 'from-amber-500/[0.08] to-transparent',
-    icon: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  },
-  neutral: {
-    surface: 'from-muted/40 to-transparent',
-    icon: 'bg-muted text-muted-foreground',
-  },
+const kpiTone: Record<KpiTone, { icon: string }> = {
+  primary: { icon: 'bg-primary/10 text-primary' },
+  success: { icon: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
+  warning: { icon: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
+  neutral: { icon: 'bg-muted text-muted-foreground' },
 }
 
 function KpiTile({
@@ -306,8 +305,7 @@ function KpiTile({
 }) {
   const t = kpiTone[tone]
   return (
-    <div className="group relative overflow-hidden rounded-xl border bg-card p-4 transition-shadow hover:shadow-sm">
-      <div className={cn('absolute inset-0 -z-10 bg-gradient-to-br', t.surface)} />
+    <div className="group rounded-xl border bg-card p-4 transition-shadow hover:shadow-sm">
       <div className="flex items-start justify-between gap-2">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
         <div className={cn('rounded-md p-1.5', t.icon)}>
@@ -330,7 +328,6 @@ export default function BrandAnalysis() {
   const [language, setLanguage] = useState<'en' | 'it'>('en')
   const [dataSource, setDataSource] = useState<DataSource>('internal')
   const [marketType, setMarketType] = useState<'brand' | 'asin'>('brand')
-  const [marketQuery, setMarketQuery] = useState('')
   const [asinText, setAsinText] = useState('')
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [file2024, setFile2024] = useState<File | null>(null)
@@ -415,7 +412,7 @@ export default function BrandAnalysis() {
         language,
         mode: dataSource,
         market_type: marketType,
-        market_query: marketQuery.trim() || brandName.trim(),
+        market_query: brandName.trim(),
         asin_list: marketType === 'asin' ? asinList : undefined,
       }),
     onSuccess: (job) => {
@@ -468,6 +465,18 @@ export default function BrandAnalysis() {
     mutationFn: () => brandAnalysisApi.download(selectedJobId!),
     onSuccess: (blob) => {
       downloadBlob(blob, selectedJob?.artifact_filename || 'brand_analysis.pptx')
+    },
+    onError: (error) => {
+      toast({ variant: 'destructive', description: getErrorMessage(error) })
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => brandAnalysisApi.delete(id),
+    onSuccess: (_data, id) => {
+      if (selectedJobId === id) setSelectedJobId(null)
+      queryClient.invalidateQueries({ queryKey: ['brand-analysis'] })
+      toast({ description: t('brandAnalysis.action.deleted') })
     },
     onError: (error) => {
       toast({ variant: 'destructive', description: getErrorMessage(error) })
@@ -703,8 +712,8 @@ export default function BrandAnalysis() {
       {/* ─── Page hero ───────────────────────────────────────────────── */}
       <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="flex items-start gap-4">
-          <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary md:flex">
-            <Sparkles className="h-5 w-5" />
+          <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary md:flex">
+            <Presentation className="h-5 w-5" />
           </div>
           <div className="min-w-0">
             <h1 className="text-3xl font-bold tracking-tight">{t('brandAnalysis.title')}</h1>
@@ -818,20 +827,8 @@ export default function BrandAnalysis() {
               </div>
             </section>
 
-            {/* Market query / ASIN list */}
-            {marketType === 'brand' ? (
-              <div className="space-y-2">
-                <Label htmlFor="market-query" className="text-xs">
-                  {t('brandAnalysis.field.marketQuery')}
-                </Label>
-                <Input
-                  id="market-query"
-                  value={marketQuery}
-                  onChange={(event) => setMarketQuery(event.target.value)}
-                  placeholder={t('brandAnalysis.field.marketQueryPlaceholder')}
-                />
-              </div>
-            ) : (
+            {/* ASIN list — only shown when scope is an explicit ASIN list */}
+            {marketType === 'asin' ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <Label htmlFor="asin-list" className="text-xs">
@@ -849,7 +846,7 @@ export default function BrandAnalysis() {
                   placeholder={t('brandAnalysis.field.asinListPlaceholder')}
                 />
               </div>
-            )}
+            ) : null}
 
             <div className="flex flex-wrap items-center gap-2 pt-2">
               <Button
@@ -923,8 +920,7 @@ export default function BrandAnalysis() {
       {selectedJobId ? (
         <Card className="overflow-hidden">
           {/* Header band */}
-          <div className="relative border-b">
-            <div className="absolute inset-0 -z-10 bg-gradient-to-br from-primary/[0.08] via-transparent to-transparent" />
+          <div className="border-b bg-muted/20">
             <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1163,12 +1159,9 @@ export default function BrandAnalysis() {
                 {/* Recommended actions */}
                 {recommendedActions.length ? (
                   <section className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="h-3.5 w-3.5 text-primary" />
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                        {t('brandAnalysis.action.title')}
-                      </p>
-                    </div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                      {t('brandAnalysis.action.title')}
+                    </p>
                     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                       {recommendedActions.map((action) => {
                         const Icon = action.icon
@@ -1461,7 +1454,7 @@ export default function BrandAnalysis() {
             <>
               {/* Desktop table */}
               <div className="hidden md:block">
-                <div className="grid grid-cols-[1.6fr_1fr_1fr_120px_64px] items-center gap-3 border-b bg-muted/20 px-6 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="grid grid-cols-[1.6fr_1fr_1fr_120px_96px] items-center gap-3 border-b bg-muted/20 px-6 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                   <span>{t('brandAnalysis.field.brandName')}</span>
                   <span>{t('brandAnalysis.label.dataSource')}</span>
                   <span>{t('brandAnalysis.progress.title')}</span>
@@ -1484,7 +1477,7 @@ export default function BrandAnalysis() {
                             }
                           }}
                           className={cn(
-                            'grid w-full grid-cols-[1.6fr_1fr_1fr_120px_64px] items-center gap-3 px-6 py-3.5 text-left transition-colors hover:bg-muted/40',
+                            'grid w-full grid-cols-[1.6fr_1fr_1fr_120px_96px] items-center gap-3 px-6 py-3.5 text-left transition-colors hover:bg-muted/40',
                             isSelected && 'bg-primary/[0.04]',
                           )}
                         >
@@ -1521,7 +1514,7 @@ export default function BrandAnalysis() {
                           <div className="text-xs text-muted-foreground">
                             {job.completed_at ? formatDate(job.completed_at) : '—'}
                           </div>
-                          <div className="flex items-center justify-end">
+                          <div className="flex items-center justify-end gap-1">
                             {job.download_ready ? (
                               <Button
                                 variant="ghost"
@@ -1541,6 +1534,11 @@ export default function BrandAnalysis() {
                                 <Download className="h-4 w-4" />
                               </Button>
                             ) : null}
+                            <DeleteAnalysisButton
+                              brand={job.brand_name}
+                              pending={deleteMutation.isPending && deleteMutation.variables === job.id}
+                              onConfirm={() => deleteMutation.mutate(job.id)}
+                            />
                           </div>
                         </div>
                       </li>
@@ -1552,14 +1550,17 @@ export default function BrandAnalysis() {
               {/* Mobile list */}
               <ul className="divide-y md:hidden">
                 {jobsQuery.data.map((job) => (
-                  <li key={`m-${job.id}`}>
+                  <li
+                    key={`m-${job.id}`}
+                    className={cn(
+                      'flex items-center gap-1 pr-2 transition-colors',
+                      selectedJobId === job.id && 'bg-primary/[0.04]',
+                    )}
+                  >
                     <button
                       type="button"
                       onClick={() => setSelectedJobId(job.id)}
-                      className={cn(
-                        'flex w-full flex-col gap-2 px-4 py-3 text-left transition-colors hover:bg-muted/40',
-                        selectedJobId === job.id && 'bg-primary/[0.04]',
-                      )}
+                      className="flex flex-1 flex-col gap-2 px-4 py-3 text-left transition-colors hover:bg-muted/40"
                     >
                       <div className="flex items-center gap-2">
                         <StatusPill status={job.status} label={statusLabel(job.status)} />
@@ -1576,6 +1577,11 @@ export default function BrandAnalysis() {
                         {formatDate(job.created_at)}
                       </p>
                     </button>
+                    <DeleteAnalysisButton
+                      brand={job.brand_name}
+                      pending={deleteMutation.isPending && deleteMutation.variables === job.id}
+                      onConfirm={() => deleteMutation.mutate(job.id)}
+                    />
                   </li>
                 ))}
               </ul>
@@ -1588,6 +1594,50 @@ export default function BrandAnalysis() {
 }
 
 /* ─── small inline pieces ────────────────────────────────────────── */
+
+function DeleteAnalysisButton({
+  brand,
+  onConfirm,
+  pending,
+}: {
+  brand: string
+  onConfirm: () => void
+  pending?: boolean
+}) {
+  const { t } = useTranslation()
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+          onClick={(event) => event.stopPropagation()}
+          aria-label={t('brandAnalysis.action.delete')}
+        >
+          {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent onClick={(event) => event.stopPropagation()}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t('brandAnalysis.action.deleteConfirmTitle')}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t('brandAnalysis.action.deleteConfirmBody', { brand })}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={onConfirm}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {t('brandAnalysis.action.delete')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
 
 function ChoiceTile({
   active,
