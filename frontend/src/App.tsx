@@ -14,7 +14,7 @@ import ProductAnalytics from '@/pages/ProductAnalytics'
 import Forecasts from '@/pages/Forecasts'
 import MarketResearch from '@/pages/MarketResearch'
 import BrandAnalysis from '@/pages/BrandAnalysis'
-import BrandPulse from '@/pages/BrandPulse'
+import BrandIntelligence from '@/pages/BrandIntelligence'
 import Catalog from '@/pages/Catalog'
 import Recommendations from '@/pages/Recommendations'
 import Settings from '@/pages/Settings'
@@ -100,13 +100,15 @@ function App() {
             }
           />
           <Route
-            path="brand-pulse"
+            path="brand-intelligence"
             element={
-              <ErrorBoundary title="Brand Pulse crashed">
-                <BrandPulse />
+              <ErrorBoundary title="Brand Intelligence crashed">
+                <BrandIntelligence />
               </ErrorBoundary>
             }
           />
+          {/* Old Brand Pulse path redirects to the repositioned reader. */}
+          <Route path="brand-pulse" element={<Navigate to="/brand-intelligence" replace />} />
           <Route path="catalog" element={<Catalog />} />
           <Route path="recommendations" element={<Recommendations />} />
           <Route path="alerts" element={<Alerts />} />

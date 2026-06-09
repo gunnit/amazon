@@ -15,6 +15,8 @@ import type {
   ApiKeysUpdate, ApiKeysResponse,
   MarketResearchReport, MarketResearchListItem, ComparisonMatrixResponse, MarketSearchResponse, CompetitorSuggestion,
   BrandAnalysisJob, BrandAnalysisListItem, BrandPulseResponse,
+  BrandIntelligenceReport, BrandIntelligenceReportListItem,
+  BrandIntelligenceGenerateResponse, BrandIntelligenceSchedule,
   AlertRule, AlertBulkMutationResponse, AlertListResponse, AlertMutationResponse, AlertStatus, AlertSummary, AlertType,
 } from '@/types'
 
@@ -1123,6 +1125,57 @@ export const brandPulseApi = {
     language?: 'en' | 'it'
   }): Promise<BrandPulseResponse> => {
     const response = await api.get('/brand-pulse', { params })
+    return response.data
+  },
+}
+
+export const brandIntelligenceApi = {
+  listReports: async (params: {
+    account_id: string
+    limit?: number
+  }): Promise<BrandIntelligenceReportListItem[]> => {
+    const response = await api.get('/brand-intelligence/reports', { params })
+    return response.data
+  },
+
+  getReport: async (id: string): Promise<BrandIntelligenceReport> => {
+    const response = await api.get(`/brand-intelligence/reports/${id}`)
+    return response.data
+  },
+
+  getLatest: async (accountId: string): Promise<BrandIntelligenceReport | null> => {
+    try {
+      const response = await api.get('/brand-intelligence/reports/latest', {
+        params: { account_id: accountId },
+      })
+      return response.data ?? null
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return null
+      }
+      throw error
+    }
+  },
+
+  generate: async (params: {
+    account_id: string
+    week?: string
+  }): Promise<BrandIntelligenceGenerateResponse> => {
+    const response = await api.post('/brand-intelligence/generate', params)
+    return response.data
+  },
+
+  getSchedule: async (accountId: string): Promise<BrandIntelligenceSchedule> => {
+    const response = await api.get('/brand-intelligence/schedule', {
+      params: { account_id: accountId },
+    })
+    return response.data
+  },
+
+  updateSchedule: async (
+    data: BrandIntelligenceSchedule,
+  ): Promise<BrandIntelligenceSchedule> => {
+    const response = await api.put('/brand-intelligence/schedule', data)
     return response.data
   },
 }

@@ -17,6 +17,7 @@ from app.services.brand_analysis_service import (  # noqa: E402
     _canonical_mode,
     assess_data_completeness,
     build_brand_analysis_pptx,
+    build_brand_analysis_section_manifest,
     build_fallback_narrative,
     build_limitation_summary,
     build_metric_source_registry,
@@ -194,7 +195,16 @@ def test_vine_suppression_rule_for_low_revenue_brand():
     assert "vine" not in serialized
 
 
-def test_pptx_generation_produces_valid_deck():
+def _section_present(manifest, section_id) -> bool:
+    entry = next((s for s in manifest if s["section_id"] == section_id), None)
+    return bool(entry and entry["present"])
+
+
+def test_pptx_generation_is_dynamic_and_placeholder_free():
+    """The deck is composed from gated blocks: it opens as a real PPTX, carries
+    its always-on front matter, and validate_pptx_bytes (which rejects any
+    header-only / empty-placeholder table) passes. Slide count is data-driven,
+    so we assert the section contract, not a magic number."""
     metrics = _metrics()
     narrative = build_fallback_narrative(metrics)
     pptx_bytes = build_brand_analysis_pptx(metrics, narrative)
@@ -202,33 +212,78 @@ def test_pptx_generation_produces_valid_deck():
     from pptx import Presentation
 
     deck = Presentation(BytesIO(pptx_bytes))
-    # The Acme sample is a manual CSV upload with no external market export, so
-    # the market share slide is skipped and the deck has 15 slides, not 16.
-    assert len(deck.slides) == 15
     assert pptx_bytes[:2] == b"PK"
+    # Always-on front matter (cover, exec summary, agenda) plus a methodology
+    # appendix mean a valid deck is never trivially short.
+    assert len(deck.slides) >= 5
+    # The validator is the real contract: it raises on empty placeholders.
+    validate_pptx_bytes(pptx_bytes)
 
 
-def test_pptx_validate_helper_returns_structural_fingerprint():
+def test_pptx_section_manifest_tracks_data_presence():
     metrics = _metrics()
     narrative = build_fallback_narrative(metrics)
-    pptx_bytes = build_brand_analysis_pptx(metrics, narrative)
+    manifest = build_brand_analysis_section_manifest(metrics, narrative)
 
-    fingerprint = validate_pptx_bytes(pptx_bytes)
-    assert fingerprint["slide_count"] == 15
+    by_id = {s["section_id"]: s for s in manifest}
+    # The Acme sample has revenue, catalog and channel data but no external
+    # market export, so those sections render and market does not.
+    assert _section_present(manifest, "performance")
+    assert _section_present(manifest, "catalog")
+    assert _section_present(manifest, "strategy")
+    assert by_id["market"]["present"] is False
+    # A skipped section carries a human reason for the methodology appendix.
+    assert by_id["market"]["reason"]
+
+    fingerprint = validate_pptx_bytes(build_brand_analysis_pptx(metrics, narrative))
     cover = fingerprint["slide_texts"][0].upper()
     assert "ACME" in cover and "AMAZON" in cover
-    as_is = fingerprint["slide_texts"][1].upper()
-    assert "CURRENT AMAZON PERFORMANCE" in as_is
     deck_text = "\n".join(fingerprint["slide_texts"]).upper()
-    # No external market export for this sample, so the market share slide is skipped.
-    assert "MARKET SHARE" not in deck_text
     assert "SEO & CONTENT" in deck_text
 
 
-def test_pptx_includes_market_share_slide_when_external_market_export_present():
+def test_sparse_data_yields_fewer_slides_with_no_empty_placeholders():
+    """The core dynamic-composition guarantee: a near-empty metrics dict
+    produces strictly fewer slides than a full one, and never an empty/
+    header-only slide (validate_pptx_bytes would raise)."""
+    full_metrics = _metrics()
+    full_narrative = build_fallback_narrative(full_metrics)
+    full_count = validate_pptx_bytes(
+        build_brand_analysis_pptx(full_metrics, full_narrative)
+    )["slide_count"]
+
+    sparse_metrics = {
+        "brand_name": "Sparse",
+        "total_revenue_2025": 0,
+        "total_revenue_2024": 0,
+        "total_asins_2025": 0,
+        "active_asins_2025": 0,
+        "inactive_asins_2025": 0,
+        "top_5_asins": [],
+        "revenue_by_subcategory": [],
+        "content_health": {},
+        "review_rating_weaknesses": {},
+        "seller_buy_box_summary": {},
+        "market_analysis": {"status": "not_available"},
+        "metric_source_registry": {},
+    }
+    sparse_narrative = {"overview": "Limited data.", "roadmap": [], "conclusions": {}}
+    sparse_count = validate_pptx_bytes(
+        build_brand_analysis_pptx(sparse_metrics, sparse_narrative)
+    )["slide_count"]
+
+    assert sparse_count < full_count
+    manifest = build_brand_analysis_section_manifest(sparse_metrics, sparse_narrative)
+    assert not _section_present(manifest, "performance")
+    assert not _section_present(manifest, "catalog")
+    assert not _section_present(manifest, "market")
+
+
+def test_pptx_includes_market_share_section_when_external_market_export_present():
     metrics = _metrics()
     narrative = build_fallback_narrative(metrics)
-    na_count = validate_pptx_bytes(build_brand_analysis_pptx(metrics, narrative))["slide_count"]
+    before = build_brand_analysis_section_manifest(metrics, narrative)
+    assert _section_present(before, "market") is False
 
     market = metrics["market_analysis"]
     market["status"] = "calculated_from_external_market_export"
@@ -239,10 +294,12 @@ def test_pptx_includes_market_share_slide_when_external_market_export_present():
         {"brand": "Competitor", "asin_count": 3, "revenue": 600.0, "market_share_percent": 75.0},
     ]
 
+    after = build_brand_analysis_section_manifest(metrics, narrative)
+    assert _section_present(after, "market") is True
+
     fingerprint = validate_pptx_bytes(build_brand_analysis_pptx(metrics, narrative))
     deck_text = "\n".join(fingerprint["slide_texts"]).upper()
     assert "MARKET SHARE" in deck_text
-    assert fingerprint["slide_count"] == na_count + 1
 
 
 def test_validate_pptx_bytes_rejects_corrupted_artifact():
@@ -277,7 +334,9 @@ def test_pptx_pipeline_from_sample_2024_2025_data_produces_downloadable_artifact
     pptx_bytes = build_brand_analysis_pptx(metrics, narrative)
 
     fingerprint = validate_pptx_bytes(pptx_bytes)
-    assert fingerprint["slide_count"] == 15
+    # Slide count is data-driven; the contract is a valid, placeholder-free deck
+    # with at least the always-on front matter.
+    assert fingerprint["slide_count"] >= 5
     # The artifact bytes are what the API hands back from /download — make
     # sure they're a real OOXML zip and not, say, an HTML error page.
     assert pptx_bytes[:2] == b"PK"

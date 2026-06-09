@@ -1,0 +1,40 @@
+import { ArrowDownRight, ArrowUpRight, Minus } from 'lucide-react'
+import type { BrandIntelligenceKpi } from '@/types'
+
+function tone(trend: BrandIntelligenceKpi['trend']): string {
+  if (trend === 'up') return 'text-emerald-600 dark:text-emerald-400'
+  if (trend === 'down') return 'text-rose-600 dark:text-rose-400'
+  return 'text-muted-foreground'
+}
+
+function TrendIcon({ trend }: { trend: BrandIntelligenceKpi['trend'] }) {
+  if (trend === 'up') return <ArrowUpRight className="h-3.5 w-3.5" />
+  if (trend === 'down') return <ArrowDownRight className="h-3.5 w-3.5" />
+  return <Minus className="h-3.5 w-3.5" />
+}
+
+function formatDelta(percent: number): string {
+  const rounded = Math.abs(percent) >= 10 ? Math.round(percent) : Math.round(percent * 10) / 10
+  const sign = percent > 0 ? '+' : ''
+  return `${sign}${rounded}%`
+}
+
+export function KpiStat({ kpi, vsLabel }: { kpi: BrandIntelligenceKpi; vsLabel: string }) {
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {kpi.label}
+      </p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums">{kpi.value}</p>
+      {kpi.delta_percent != null ? (
+        <div className={`mt-1 flex items-center gap-1 text-xs font-medium ${tone(kpi.trend)}`}>
+          <TrendIcon trend={kpi.trend} />
+          <span className="tabular-nums">{formatDelta(kpi.delta_percent)}</span>
+          <span className="text-muted-foreground">{vsLabel}</span>
+        </div>
+      ) : (
+        <div className="mt-1 h-4" />
+      )}
+    </div>
+  )
+}

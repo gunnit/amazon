@@ -1711,6 +1711,192 @@ class SPAPIClient:
         return report_data if isinstance(report_data, dict) else {}
 
     # ------------------------------------------------------------------
+    # Brand Analytics (Brand Registry) — search terms + market basket
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _report_json_payload(report_data: Any) -> dict:
+        """Unwrap a downloaded JSON report document into a dict."""
+        if isinstance(report_data, str):
+            report_data = json.loads(report_data)
+        elif isinstance(report_data, dict) and "document" in report_data:
+            document = report_data.get("document")
+            if isinstance(document, (bytes, bytearray)):
+                document = document.decode("utf-8")
+            if isinstance(document, str):
+                report_data = json.loads(document)
+            elif isinstance(document, dict):
+                report_data = document
+        return report_data if isinstance(report_data, dict) else {}
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_brand_analytics_search_terms(
+        self, start_date: date, end_date: date, *, report_period: str = "WEEK"
+    ) -> Dict[str, Any]:
+        """Fetch the Brand Analytics Search Terms report (brand-owner only).
+
+        Returns the top search terms with their search frequency rank and the
+        top three click/conversion-share ASINs per term, so competitors ranking
+        on the brand's terms are visible. Requires Brand Registry enrollment;
+        non-brand-owner accounts get a permission error which the caller guards
+        against via the persisted ``brand_analytics_available`` capability.
+
+        The window must match ``report_period``: WEEK windows align to whole
+        Amazon reporting weeks; the caller is responsible for passing an aligned
+        range or Amazon returns FATAL."""
+        report_data = self.request_and_download_report(
+            report_type="GET_BRAND_ANALYTICS_SEARCH_TERMS_REPORT",
+            start_date=start_date,
+            end_date=end_date,
+            report_options={"reportPeriod": report_period},
+        )
+        return self._parse_brand_analytics_search_terms(self._report_json_payload(report_data))
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_brand_analytics_market_basket(
+        self, start_date: date, end_date: date, *, report_period: str = "MONTH"
+    ) -> Dict[str, Any]:
+        """Fetch the Brand Analytics Market Basket report (brand-owner only).
+
+        Returns the products most frequently purchased in the same basket as the
+        brand's ASINs (cross-brand "bought together"). Requires Brand Registry."""
+        report_data = self.request_and_download_report(
+            report_type="GET_BRAND_ANALYTICS_MARKET_BASKET_REPORT",
+            start_date=start_date,
+            end_date=end_date,
+            report_options={"reportPeriod": report_period},
+        )
+        return self._parse_brand_analytics_market_basket(self._report_json_payload(report_data))
+
+    @classmethod
+    def _parse_brand_analytics_search_terms(cls, payload: dict) -> Dict[str, Any]:
+        """Normalize the Search Terms report into a compact signal block.
+
+        The report nests records under ``dataByDepartmentAndSearchTerm``; each
+        record carries the search term, its frequency rank, and up to three
+        click/conversion-share ASINs. We surface the brand's aggregate
+        click/conversion/cart-add share where the report exposes it, plus the
+        ranked terms with their top competitor ASINs."""
+        records = (
+            payload.get("dataByDepartmentAndSearchTerm")
+            or payload.get("dataByAsin")
+            or payload.get("searchTerms")
+            or []
+        )
+        terms: List[Dict[str, Any]] = []
+        click_shares: List[float] = []
+        conversion_shares: List[float] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            term = cls._normalize_text_label(
+                record.get("searchTerm") or record.get("search_term")
+            )
+            if not term:
+                continue
+            top_asins: List[Dict[str, Any]] = []
+            for slot in (1, 2, 3):
+                asin = cls._normalize_asin(record.get(f"clickedAsin{slot}") or record.get(f"#{slot}ClickedItemAsin"))
+                if not asin:
+                    continue
+                click_share = cls._coerce_share(record.get(f"clickShare{slot}") or record.get(f"#{slot}ClickShare"))
+                conversion_share = cls._coerce_share(
+                    record.get(f"conversionShare{slot}") or record.get(f"#{slot}ConversionShare")
+                )
+                top_asins.append(
+                    {
+                        "rank": slot,
+                        "asin": asin,
+                        "product_title": cls._normalize_text_label(
+                            record.get(f"clickedItemName{slot}") or record.get(f"#{slot}ProductTitle")
+                        ),
+                        "click_share": click_share,
+                        "conversion_share": conversion_share,
+                    }
+                )
+                if click_share is not None:
+                    click_shares.append(click_share)
+                if conversion_share is not None:
+                    conversion_shares.append(conversion_share)
+            terms.append(
+                {
+                    "search_term": term,
+                    "search_frequency_rank": cls._parse_int(
+                        record.get("searchFrequencyRank") or record.get("search_frequency_rank")
+                    )
+                    or None,
+                    "department": cls._normalize_text_label(
+                        record.get("departmentName") or record.get("reportingDate")
+                    ),
+                    "top_clicked_asins": top_asins,
+                }
+            )
+
+        return {
+            "source": "brand_analytics_search_terms",
+            "term_count": len(terms),
+            "terms": terms,
+            "aggregate_click_share": cls._mean_share(click_shares),
+            "aggregate_conversion_share": cls._mean_share(conversion_shares),
+        }
+
+    @classmethod
+    def _parse_brand_analytics_market_basket(cls, payload: dict) -> Dict[str, Any]:
+        """Normalize the Market Basket report into co-purchased ASIN pairs."""
+        records = (
+            payload.get("dataByAsin")
+            or payload.get("marketBasket")
+            or payload.get("dataByDepartmentAndSearchTerm")
+            or []
+        )
+        baskets: List[Dict[str, Any]] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            asin = cls._normalize_asin(record.get("asin") or record.get("purchasedAsin"))
+            purchased_with: List[Dict[str, Any]] = []
+            for slot in (1, 2, 3):
+                combo = cls._normalize_asin(
+                    record.get(f"purchasedWithAsin{slot}") or record.get(f"#{slot}PurchasedWithAsin")
+                )
+                if not combo:
+                    continue
+                purchased_with.append(
+                    {
+                        "rank": slot,
+                        "asin": combo,
+                        "combination_percent": cls._coerce_share(
+                            record.get(f"purchasedWithRate{slot}") or record.get(f"#{slot}PurchasedWithRate")
+                        ),
+                    }
+                )
+            if not asin and not purchased_with:
+                continue
+            baskets.append({"asin": asin, "purchased_with": purchased_with})
+
+        return {
+            "source": "brand_analytics_market_basket",
+            "basket_count": len(baskets),
+            "baskets": baskets,
+        }
+
+    @staticmethod
+    def _coerce_share(value: Any) -> Optional[float]:
+        """Parse a share/rate value into a float, defaulting blanks to None."""
+        if value in (None, ""):
+            return None
+        try:
+            return float(Decimal(str(value).strip().rstrip("%")))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _mean_share(values: List[float]) -> Optional[float]:
+        if not values:
+            return None
+        return round(sum(values) / len(values), 4)
+
+    # ------------------------------------------------------------------
     # Listings Items API — write operations
     # ------------------------------------------------------------------
 

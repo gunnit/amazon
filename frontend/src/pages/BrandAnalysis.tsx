@@ -58,6 +58,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/use-toast'
 import { cn, formatDate } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
+import { ReportTable, type ReportColumn } from '@/components/shared/ReportTable'
+import { BrandOverviewCharts } from '@/components/brand-analysis/BrandOverviewCharts'
 import { accountsApi, brandAnalysisApi } from '@/services/api'
 import type {
   AmazonAccount,
@@ -748,6 +750,77 @@ export default function BrandAnalysis() {
 
   const showDownloadHero = !!selectedJob?.download_ready
 
+  const historyColumns: ReportColumn<BrandAnalysisListItem>[] = [
+    {
+      id: 'brand',
+      header: t('brandAnalysis.field.brandName'),
+      width: '40%',
+      cell: (job) => (
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill status={job.status} label={statusLabel(job.status)} />
+            <span className="truncate text-sm font-semibold">{job.brand_name}</span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {job.source_years.length
+              ? job.source_years.join(' · ')
+              : t('brandAnalysis.historyNoSourceYears')}{' '}
+            · {formatDate(job.created_at)}
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: 'source',
+      header: t('brandAnalysis.label.dataSource'),
+      hideOnMobile: true,
+      cardLabel: t('brandAnalysis.label.dataSource'),
+      cell: (job) => (
+        <div className="text-xs">
+          <span className="block font-medium text-foreground">
+            {t(`brandAnalysis.mode.${modeToDataSource(job.mode)}`)}
+          </span>
+          <span className="text-muted-foreground">
+            {job.market_type === 'asin'
+              ? t('brandAnalysis.marketType.asin')
+              : t('brandAnalysis.marketType.brand')}
+          </span>
+        </div>
+      ),
+    },
+    {
+      id: 'progress',
+      header: t('brandAnalysis.progress.title'),
+      width: '18%',
+      hideOnMobile: true,
+      cardLabel: t('brandAnalysis.progress.title'),
+      cell: (job) => (
+        <div className="flex items-center gap-2">
+          <Progress
+            value={job.progress_pct}
+            aria-label={t('brandAnalysis.history.progressLabel', { pct: job.progress_pct })}
+            className="h-1 w-20"
+          />
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">
+            {job.progress_pct}%
+          </span>
+        </div>
+      ),
+    },
+    {
+      id: 'completed',
+      header: t('brandAnalysis.readiness.lastSync'),
+      width: '120px',
+      hideOnMobile: true,
+      cardLabel: t('brandAnalysis.readiness.lastSync'),
+      cell: (job) => (
+        <span className="text-xs text-muted-foreground">
+          {job.completed_at ? formatDate(job.completed_at) : '—'}
+        </span>
+      ),
+    },
+  ]
+
   return (
     <div className="space-y-6">
       {/* ─── Page hero ───────────────────────────────────────────────── */}
@@ -1154,6 +1227,10 @@ export default function BrandAnalysis() {
                 )}
 
                 {selectedJob?.metrics ? (
+                  <BrandOverviewCharts metrics={selectedJob.metrics} />
+                ) : null}
+
+                {selectedJob?.metrics ? (
                   <section className="grid gap-3 lg:grid-cols-3">
                     <InsightTile
                       icon={BarChart3}
@@ -1470,141 +1547,48 @@ export default function BrandAnalysis() {
               <p className="max-w-sm text-sm text-muted-foreground">{t('brandAnalysis.noJobsYet')}</p>
             </div>
           ) : (
-            <>
-              {/* Desktop table */}
-              <div className="hidden md:block">
-                <div className="grid grid-cols-[1.6fr_1fr_1fr_120px_96px] items-center gap-3 border-b bg-muted/20 px-6 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  <span>{t('brandAnalysis.field.brandName')}</span>
-                  <span>{t('brandAnalysis.label.dataSource')}</span>
-                  <span>{t('brandAnalysis.progress.title')}</span>
-                  <span>{t('brandAnalysis.readiness.lastSync')}</span>
-                  <span />
-                </div>
-                <ul className="divide-y">
-                  {jobsQuery.data.map((job) => {
-                    const isSelected = selectedJobId === job.id
-                    return (
-                      <li key={job.id}>
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setSelectedJobId(job.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault()
-                              setSelectedJobId(job.id)
-                            }
-                          }}
-                          className={cn(
-                            'grid w-full grid-cols-[1.6fr_1fr_1fr_120px_96px] items-center gap-3 px-6 py-3.5 text-left transition-colors hover:bg-muted/40',
-                            isSelected && 'bg-primary/[0.04]',
-                          )}
-                        >
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <StatusPill status={job.status} label={statusLabel(job.status)} />
-                              <span className="truncate text-sm font-semibold">{job.brand_name}</span>
-                            </div>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {job.source_years.length
-                                ? job.source_years.join(' · ')
-                                : t('brandAnalysis.historyNoSourceYears')}{' '}
-                              · {formatDate(job.created_at)}
-                            </p>
-                          </div>
-                          <div className="text-xs">
-                            <span className="block font-medium text-foreground">
-                              {t(`brandAnalysis.mode.${modeToDataSource(job.mode)}`)}
-                            </span>
-                            <span className="text-muted-foreground">
-                              {job.market_type === 'asin'
-                                ? t('brandAnalysis.marketType.asin')
-                                : t('brandAnalysis.marketType.brand')}
-                            </span>
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <Progress value={job.progress_pct} className="h-1 w-20" />
-                              <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                                {job.progress_pct}%
-                              </span>
-                            </div>
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {job.completed_at ? formatDate(job.completed_at) : '—'}
-                          </div>
-                          <div className="flex items-center justify-end gap-1">
-                            {job.download_ready ? (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  setSelectedJobId(job.id)
-                                  brandAnalysisApi
-                                    .download(job.id)
-                                    .then((blob) =>
-                                      downloadBlob(blob, `${job.brand_name}_brand_analysis.pptx`),
-                                    )
-                                }}
-                                aria-label={t('brandAnalysis.cta.download')}
-                              >
-                                <Download className="h-4 w-4" />
-                              </Button>
-                            ) : null}
-                            <DeleteAnalysisButton
-                              brand={job.brand_name}
-                              pending={deleteMutation.isPending && deleteMutation.variables === job.id}
-                              onConfirm={() => deleteMutation.mutate(job.id)}
-                            />
-                          </div>
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-
-              {/* Mobile list */}
-              <ul className="divide-y md:hidden">
-                {jobsQuery.data.map((job) => (
-                  <li
-                    key={`m-${job.id}`}
-                    className={cn(
-                      'flex items-center gap-1 pr-2 transition-colors',
-                      selectedJobId === job.id && 'bg-primary/[0.04]',
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setSelectedJobId(job.id)}
-                      className="flex flex-1 flex-col gap-2 px-4 py-3 text-left transition-colors hover:bg-muted/40"
-                    >
-                      <div className="flex items-center gap-2">
-                        <StatusPill status={job.status} label={statusLabel(job.status)} />
-                        <span className="truncate text-sm font-semibold">{job.brand_name}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Progress value={job.progress_pct} className="h-1 flex-1" />
-                        <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                          {job.progress_pct}%
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {t(`brandAnalysis.mode.${modeToDataSource(job.mode)}`)} ·{' '}
-                        {formatDate(job.created_at)}
-                      </p>
-                    </button>
+            <div className="px-2 md:px-4">
+              <ReportTable
+                rows={jobsQuery.data}
+                rowKey={(job) => job.id}
+                onRowOpen={(job) => setSelectedJobId(job.id)}
+                rowOpenLabel={(job) =>
+                  t('brandAnalysis.history.openRow', { brand: job.brand_name })
+                }
+                isRowSelected={(job) => selectedJobId === job.id}
+                columns={historyColumns}
+                actions={(job) => (
+                  <>
+                    {job.download_ready ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => {
+                          setSelectedJobId(job.id)
+                          brandAnalysisApi
+                            .download(job.id)
+                            .then((blob) =>
+                              downloadBlob(blob, `${job.brand_name}_brand_analysis.pptx`),
+                            )
+                            .catch((error) =>
+                              toast({ variant: 'destructive', description: getErrorMessage(error) }),
+                            )
+                        }}
+                        aria-label={t('brandAnalysis.history.downloadRow', { brand: job.brand_name })}
+                      >
+                        <Download className="h-4 w-4" />
+                      </Button>
+                    ) : null}
                     <DeleteAnalysisButton
                       brand={job.brand_name}
                       pending={deleteMutation.isPending && deleteMutation.variables === job.id}
                       onConfirm={() => deleteMutation.mutate(job.id)}
                     />
-                  </li>
-                ))}
-              </ul>
-            </>
+                  </>
+                )}
+              />
+            </div>
           )}
         </CardContent>
       </Card>

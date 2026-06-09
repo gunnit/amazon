@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Optional, Protocol
 from uuid import UUID
 
@@ -90,6 +90,9 @@ class AmazonAccountDataSource:
     brand_filter: Optional[str] = None
     asin_list: Optional[list[str]] = None
     source_name: str = "internal"
+    # Set from the persisted capability matrix; when True the adapter attempts a
+    # one-shot Brand Analytics fetch to light up search-share metrics.
+    brand_analytics_available: bool = False
     _catalog_cache: dict[str, dict] = field(default_factory=dict)
     enrichment_failed_asins: set[str] = field(default_factory=set)
     enrichment_attempted: int = 0
@@ -98,6 +101,9 @@ class AmazonAccountDataSource:
     year_diagnostics: dict[int, dict[str, Any]] = field(default_factory=dict)
     _scope_asins_cache: Optional[set[str]] = None
     _account_marketplace_id_cache: Optional[str] = None
+    _brand_analytics_cache: Optional[dict] = None
+    _brand_analytics_attempted: bool = False
+    brand_analytics_error: Optional[str] = None
 
     async def fetch_year(self, year: int) -> ParsedBrandExport:
         start = date(year, 1, 1)
@@ -262,6 +268,8 @@ class AmazonAccountDataSource:
                 ),
             )
 
+        brand_analytics = await self._fetch_brand_analytics()
+
         df = pd.DataFrame(enriched_rows)
         columns = [
             "asin",
@@ -310,6 +318,7 @@ class AmazonAccountDataSource:
             source_name=self.source_name,
             year=year,
             validation=None,
+            brand_analytics=brand_analytics,
         )
 
     @property
@@ -612,6 +621,51 @@ class AmazonAccountDataSource:
             catalog.setdefault("aplus_limitation", str(exc)[:300])
         return catalog
 
+    async def _fetch_brand_analytics(self) -> Optional[dict]:
+        """Fetch the Brand Analytics search-terms signal once per analysis.
+
+        Only attempted when the persisted capability matrix reports Brand
+        Analytics as available (i.e. the account is Brand Registry enrolled and
+        the role is granted). Any failure is recorded and degraded to ``None``
+        so the metric layer keeps the no-fabrication discipline: search-share
+        keys stay N/A rather than being proxied from revenue.
+        """
+        if self._brand_analytics_attempted:
+            return self._brand_analytics_cache
+        self._brand_analytics_attempted = True
+
+        if not self.brand_analytics_available:
+            return None
+
+        client = await self._build_sp_api_client()
+        if client is None:
+            self.brand_analytics_error = "No SP-API client available for Brand Analytics."
+            return None
+
+        # Brand Analytics search terms are WEEK-aligned. Use the most recent
+        # complete ISO week (Monday..Sunday) ending before today so Amazon does
+        # not FATAL on an incomplete current week.
+        today = date.today()
+        last_sunday = today - timedelta(days=today.isoweekday())
+        week_start = last_sunday - timedelta(days=6)
+        try:
+            signal = client.get_brand_analytics_search_terms(
+                week_start, last_sunday, report_period="WEEK"
+            )
+        except Exception as exc:
+            logger.info("Brand Analytics search-terms fetch unavailable: %s", exc)
+            self.brand_analytics_error = str(exc)[:300]
+            return None
+
+        signal = dict(signal or {})
+        signal["period"] = {
+            "report_period": "WEEK",
+            "start_date": week_start.isoformat(),
+            "end_date": last_sunday.isoformat(),
+        }
+        self._brand_analytics_cache = signal
+        return signal
+
     async def _save_offer_snapshot(self, asin: str, catalog: dict[str, Any]) -> None:
         """Persist current offer metadata when Product Pricing returned it."""
         if not self.db or not hasattr(self.db, "add"):
@@ -669,6 +723,13 @@ class AmazonAccountDataSource:
                 "attempted": self.enrichment_attempted,
                 "failed_asins": sorted(self.enrichment_failed_asins),
                 "partial": self.enrichment_partial,
+            },
+            "brand_analytics": {
+                "available": self.brand_analytics_available,
+                "attempted": self._brand_analytics_attempted,
+                "fetched": self._brand_analytics_cache is not None,
+                "term_count": (self._brand_analytics_cache or {}).get("term_count"),
+                "error": self.brand_analytics_error,
             },
             "discovery_errors": list(self.discovery_errors),
         }

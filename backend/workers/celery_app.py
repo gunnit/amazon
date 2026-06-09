@@ -41,6 +41,7 @@ celery_app = Celery(
         "workers.tasks.maintenance",
         "workers.tasks.strategic_recommendations",
         "workers.tasks.brand_analysis",
+        "workers.tasks.brand_intelligence",
     ],
 )
 
@@ -119,6 +120,16 @@ celery_app.conf.beat_schedule = {
     "weekly-strategic-recommendations": {
         "task": "workers.tasks.strategic_recommendations.generate_weekly_recommendations",
         "schedule": crontab(hour=6, minute=0, day_of_week=1),
+    },
+    # Poll due weekly Brand Intelligence schedules every 15 minutes
+    "brand-intelligence-scan": {
+        "task": "workers.tasks.brand_intelligence.scan_brand_intelligence_due",
+        "schedule": crontab(minute="*/15"),
+    },
+    # Recover Brand Intelligence runs stalled mid-pipeline every 30 minutes
+    "brand-intelligence-recovery": {
+        "task": "workers.tasks.brand_intelligence.recover_stuck_brand_intelligence_runs",
+        "schedule": crontab(minute="*/30"),
     },
 }
 

@@ -20,6 +20,10 @@ from app.models.brand_analysis import (
     BrandAnalysisJob,
     BrandAnalysisSourceFile,
 )
+from app.models.brand_intelligence import (
+    BrandIntelligenceReport,
+    BrandIntelligenceSchedule,
+)
 from app.models.google_sheets import GoogleSheetsConnection, GoogleSheetsSync, GoogleSheetsSyncRun
 from app.models.strategic_recommendation import StrategicRecommendation
 from app.models.catalog_change_log import CatalogChangeLog
@@ -52,6 +56,8 @@ __all__ = [
     "BrandAnalysisSourceFile",
     "BrandAnalysisCapability",
     "AsinOfferSnapshot",
+    "BrandIntelligenceReport",
+    "BrandIntelligenceSchedule",
     "GoogleSheetsConnection",
     "GoogleSheetsSync",
     "GoogleSheetsSyncRun",

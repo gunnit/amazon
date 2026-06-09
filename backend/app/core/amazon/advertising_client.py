@@ -225,6 +225,44 @@ DEFAULT_REPORT_CONFIGS: dict[str, AdvertisingReportConfig] = {
             "unitsSoldClicks7d",
         ],
     ),
+    # Real shopper queries that triggered Sponsored Products ads, plus the
+    # keyword/match-type they fired on. Feeds competitor-keyword intelligence
+    # without the Brand Registry gate that Brand Analytics requires.
+    "sp_search_term": AdvertisingReportConfig(
+        report_type_id="spSearchTerm",
+        ad_product="SPONSORED_PRODUCTS",
+        group_by=["searchTerm"],
+        columns=[
+            "date",
+            "campaignId",
+            "adGroupId",
+            "keywordId",
+            "keyword",
+            "searchTerm",
+            "matchType",
+            "impressions",
+            "clicks",
+            "cost",
+            "sales7d",
+            "purchases7d",
+            "unitsSoldClicks7d",
+        ],
+    ),
+    # Cross-sell signal: which ASINs shoppers actually bought after clicking an
+    # ad for an advertised ASIN (purchasedAsin reveals cross-brand baskets).
+    "sp_purchased_product": AdvertisingReportConfig(
+        report_type_id="spPurchasedProduct",
+        ad_product="SPONSORED_PRODUCTS",
+        group_by=["asin"],
+        columns=[
+            "date",
+            "campaignId",
+            "advertisedAsin",
+            "purchasedAsin",
+            "sales7d",
+            "unitsSoldClicks7d",
+        ],
+    ),
 }
 
 

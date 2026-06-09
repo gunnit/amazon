@@ -34,6 +34,21 @@ CAPABILITY_KEYS = (
     "listings_available",
 )
 
+# Capabilities whose data the Brand Analysis pipeline actually consumes (not just
+# probes). Everything else is detected-only: the probe confirms the role/access
+# but no metric reads it yet. Keeping this explicit lets the UI matrix show
+# "detected vs integrated" honestly instead of implying probe == coverage.
+INTEGRATED_CAPABILITIES = frozenset(
+    {
+        "sales_and_traffic_available",
+        "brand_analytics_available",
+        "product_pricing_available",
+        "product_fees_available",
+        "aplus_available",
+        "catalog_items_available",
+    }
+)
+
 
 @dataclass
 class CapabilityProbeResult:
@@ -49,12 +64,30 @@ class CapabilityProbeResult:
     raw_diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        # The flat ``**self.capabilities`` booleans below are the existing shape
+        # the frontend reads and mean "detected" (probe succeeded). The new
+        # ``integrated``/``capability_status`` fields are additive: they expose
+        # whether the pipeline actually consumes each detected source, so the UI
+        # can distinguish "probed only" from "actually used".
+        integrated = {
+            key: bool(self.capabilities.get(key)) and key in INTEGRATED_CAPABILITIES
+            for key in CAPABILITY_KEYS
+        }
+        capability_status = {
+            key: {
+                "detected": bool(self.capabilities.get(key)),
+                "integrated": integrated[key],
+            }
+            for key in CAPABILITY_KEYS
+        }
         return {
             "organization_id": self.organization_id,
             "account_id": self.account_id,
             "marketplace_id": self.marketplace_id,
             "checked_at": self.checked_at.isoformat(),
             **self.capabilities,
+            "integrated_capabilities": integrated,
+            "capability_status": capability_status,
             "missing_roles": list(dict.fromkeys(self.missing_roles)),
             "last_error_by_capability": dict(self.last_error_by_capability),
             "raw_diagnostics": dict(self.raw_diagnostics),

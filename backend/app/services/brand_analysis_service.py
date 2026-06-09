@@ -244,6 +244,10 @@ class ParsedBrandExport:
     source_name: str = "manual_upload"
     year: Optional[int] = None
     validation: Optional[ColumnValidationReport] = None
+    # Optional Brand Analytics signal (search-terms / market-basket) attached
+    # by the internal adapter when the account is Brand Registry enrolled. Stays
+    # None for manual uploads and non-brand-owner accounts.
+    brand_analytics: Optional[dict] = None
 
 
 COLUMN_ALIASES = {
@@ -1714,6 +1718,45 @@ def calculate_brand_metrics(
         "Internal Amazon data is brand/account-scoped and SP-API catalog search does not expose reliable revenue."
     )
 
+    # Brand Analytics search-share signal (Brand Registry only). The search-terms
+    # report exposes click share and conversion (purchase) share per term; we
+    # surface the aggregate of those as a *search* share, never as revenue market
+    # share. Cart-add share is not part of the search-terms report, so it stays
+    # N/A unless a future source provides it. Absent Brand Analytics, all three
+    # remain None — no proxy from revenue.
+    brand_analytics_signal = getattr(export_2025, "brand_analytics", None) or getattr(
+        export_2024, "brand_analytics", None
+    )
+    search_purchase_share = None
+    search_click_share = None
+    search_cart_add_share = None
+    brand_analytics_terms: list[dict[str, Any]] = []
+    if isinstance(brand_analytics_signal, dict):
+        search_click_share = brand_analytics_signal.get("aggregate_click_share")
+        search_purchase_share = brand_analytics_signal.get("aggregate_conversion_share")
+        search_cart_add_share = brand_analytics_signal.get("aggregate_cart_add_share")
+        brand_analytics_terms = [
+            {
+                "search_term": term.get("search_term"),
+                "search_frequency_rank": term.get("search_frequency_rank"),
+                "top_clicked_asins": term.get("top_clicked_asins") or [],
+            }
+            for term in (brand_analytics_signal.get("terms") or [])[:25]
+            if isinstance(term, dict) and term.get("search_term")
+        ]
+    brand_analytics_available = (
+        isinstance(brand_analytics_signal, dict)
+        and bool(brand_analytics_signal.get("term_count"))
+    )
+    search_share_limitation = (
+        None
+        if brand_analytics_available
+        else (
+            "Brand Analytics search share is unavailable unless the Brand Analytics "
+            "capability is present; it is never used as revenue market share."
+        )
+    )
+
     competitive_brand_distribution = []
     if broad_market_available:
         brand_grouped = (
@@ -1853,10 +1896,13 @@ def calculate_brand_metrics(
             "market_share_2025": market_share_2025,
             "limitation": market_share_limitation,
             "competitive_brand_distribution": competitive_brand_distribution,
-            "search_purchase_share": None,
-            "search_click_share": None,
-            "search_cart_add_share": None,
-            "search_share_limitation": "Brand Analytics search share is unavailable unless the Brand Analytics capability is present; it is never used as revenue market share.",
+            "search_purchase_share": search_purchase_share,
+            "search_click_share": search_click_share,
+            "search_cart_add_share": search_cart_add_share,
+            "search_share_source": "brand_analytics_search_terms" if brand_analytics_available else None,
+            "search_share_period": (brand_analytics_signal or {}).get("period") if brand_analytics_available else None,
+            "search_term_competitors": brand_analytics_terms,
+            "search_share_limitation": search_share_limitation,
         },
         "growth_projection_scenarios": projection_ranges,
         "rules": {
@@ -2462,625 +2508,10 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
 }
 
 
-class BrandAnalysisPptxBuilder:
-    """Generate a PowerPoint deck from deterministic metrics."""
-
-    def __init__(
-        self,
-        metrics: dict[str, Any],
-        narrative: dict[str, Any],
-        language: str = "en",
-    ) -> None:
-        self.metrics = metrics
-        self.narrative = narrative
-        self.brand = str(metrics.get("brand_name") or "Brand").upper()
-        self.language = "it" if str(language or "").lower().startswith("it") else "en"
-
-    def _t(self, key: str) -> str:
-        strings = PPTX_STATIC_STRINGS.get(self.language) or PPTX_STATIC_STRINGS["en"]
-        return strings.get(key) or PPTX_STATIC_STRINGS["en"].get(key, key)
-
-    def _badge(self, metric_key: str) -> str:
-        registry = self.metrics.get("metric_source_registry") or {}
-        quality = (registry.get(metric_key) or {}).get("quality")
-        if not quality:
-            return ""
-        return f" [{str(quality).upper()}]"
-
-    def _has_market_share(self) -> bool:
-        return (self.metrics.get("market_analysis") or {}).get("status") == "calculated_from_external_market_export"
-
-    def _has_channel_data(self) -> bool:
-        bb = self.metrics.get("seller_buy_box_summary") or {}
-        return any(bb.get(k) for k in ("seller_count_available", "offer_count_available", "buy_box_owner_available", "current_snapshot_available"))
-
-    def build(self) -> bytes:
-        from pptx import Presentation
-        from pptx.dml.color import RGBColor
-        from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-        from pptx.util import Inches, Pt
-
-        prs = Presentation()
-        prs.slide_width = Inches(10)
-        prs.slide_height = Inches(5.625)
-
-        self._RGBColor = RGBColor
-        self._PP_ALIGN = PP_ALIGN
-        self._MSO_ANCHOR = MSO_ANCHOR
-        self._Inches = Inches
-        self._Pt = Pt
-
-        self._slide_cover(prs)
-        slides = [
-            (self._slide_as_is, True),
-            (self._slide_revenue_yoy, True),
-            (self._slide_catalog_health, True),
-            (self._slide_active_inactive, True),
-            (self._slide_top_performers, True),
-            (self._slide_content_audit, True),
-            (self._slide_review_image_weaknesses, True),
-            (self._slide_subcategory_performance, True),
-            (self._slide_operational_gap, True),
-            (self._slide_channel_gap, self._has_channel_data()),
-            (self._slide_concentration_risk, True),
-            (self._slide_market_share, self._has_market_share()),
-            (self._slide_projection, True),
-            (self._slide_roadmap, True),
-            (self._slide_conclusions, True),
-        ]
-        page = 2
-        for method, include in slides:
-            if not include:
-                continue
-            method(prs, page)
-            page += 1
-
-        output = io.BytesIO()
-        prs.save(output)
-        return output.getvalue()
-
-    def _blank(self, prs):
-        return prs.slides.add_slide(prs.slide_layouts[6])
-
-    def _add_header(self, slide, page: int) -> None:
-        red = self._RGBColor(212, 39, 45)
-        self._rect(slide, 0, 0, 10, 0.34, red)
-        self._text(slide, 0.35, 0.09, 2.8, 0.18, self.brand, size=8, bold=True, color=(255, 255, 255))
-        self._text(slide, 9.38, 0.08, 0.25, 0.18, str(page), size=8, bold=True, color=(255, 255, 255), align="right")
-        self._footer(slide)
-
-    def _footer(self, slide) -> None:
-        colors = [(29, 78, 216), (234, 88, 12), (22, 163, 74), (220, 38, 38), (245, 158, 11), (14, 165, 233), (100, 116, 139)]
-        x = 0
-        for r, g, b in colors:
-            self._rect(slide, x, 5.49, 10 / len(colors), 0.08, self._RGBColor(r, g, b))
-            x += 10 / len(colors)
-
-    def _slide_cover(self, prs) -> None:
-        slide = self._blank(prs)
-        self._rect(slide, 0, 0, 10, 5.625, self._RGBColor(212, 39, 45))
-        self._text(slide, 1.2, 2.25, 7.6, 0.55, f"{self.brand} {self._t('cover_on_amazon')}", size=30, bold=True, color=(255, 255, 255), align="center")
-        self._text(slide, 2.7, 2.92, 4.6, 0.3, self._t("cover_subtitle"), size=13, color=(255, 255, 255), align="center")
-        self._footer(slide)
-
-    def _slide_as_is(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("as_is_title"), self._t("as_is_subtitle"))
-        kpis = [
-            (self._t("kpi_revenue_2025") + self._badge("total_revenue_2025"), format_currency(self.metrics.get("total_revenue_2025")), 0.65, 1.4, 2.3, 0.95),
-            (self._t("kpi_revenue_2024") + self._badge("total_revenue_2024"), format_currency(self.metrics.get("total_revenue_2024")), 3.05, 1.4, 2.3, 0.95),
-            (self._t("kpi_yoy_change") + self._badge("yoy_percent"), format_percent(self.metrics.get("yoy_percent")), 5.45, 1.4, 1.65, 0.95),
-            (self._t("kpi_average_rating") + self._badge("weighted_average_rating"), format_number(self.metrics.get("weighted_average_rating"), 2), 7.25, 1.4, 1.65, 0.95),
-            (self._t("kpi_units_sold_2025") + self._badge("total_units_sold_2025"), format_number(self.metrics.get("total_units_sold_2025"), 0), 5.45, 2.55, 1.65, 0.95),
-            (self._t("kpi_avg_price_per_asin") + self._badge("average_price_per_asin"), format_currency(self.metrics.get("average_price_per_asin"), 2), 7.25, 2.55, 1.65, 0.95),
-        ]
-        for label, value, x, y, w, h in kpis:
-            self._kpi(slide, x, y, w, h, label, value)
-        self._body_box(slide, 0.65, 3.75, 8.4, 0.75, self.narrative.get("overview", ""))
-
-    def _slide_revenue_yoy(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("revenue_yoy_title"), self._t("revenue_yoy_subtitle"))
-        bars = [
-            ("2024", self.metrics.get("total_revenue_2024"), (100, 116, 139)),
-            ("2025", self.metrics.get("total_revenue_2025"), (212, 39, 45)),
-        ]
-        max_value = max(float(value or 0) for _, value, _ in bars) or 1
-        for idx, (label, value, color) in enumerate(bars):
-            x = 1.0 + idx * 4.25
-            bar_h = 2.4 * (float(value or 0) / max_value)
-            self._text(slide, x, 1.25, 2.7, 0.24, label, size=12, bold=True, align="center")
-            self._rect(slide, x + 0.35, 4.1 - bar_h, 2.0, bar_h, self._RGBColor(*color))
-            self._text(slide, x, 4.25, 2.7, 0.28, format_currency(value), size=16, bold=True, align="center", color=color)
-        self._kpi(slide, 3.95, 1.35, 1.9, 0.9, self._t("kpi_yoy"), format_percent(self.metrics.get("yoy_percent")))
-        self._body_box(
-            slide,
-            0.8,
-            4.82,
-            8.4,
-            0.42,
-            self._t("revenue_yoy_footnote"),
-        )
-
-    def _slide_catalog_health(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("catalog_health_title"), self._t("catalog_health_subtitle"))
-        kpis = [
-            (self._t("kpi_asins_2025"), str(self.metrics.get("total_asins_2025", 0))),
-            (self._t("kpi_active_2025"), str(self.metrics.get("active_asins_2025", 0))),
-            (self._t("kpi_inactive_2025"), str(self.metrics.get("inactive_asins_2025", 0))),
-            (self._t("kpi_new_yoy"), str(self.metrics.get("new_asins_yoy", 0))),
-        ]
-        for idx, (label, value) in enumerate(kpis):
-            self._kpi(slide, 0.65 + idx * 2.2, 1.25, 1.85, 0.78, label, value)
-        readiness = self.metrics.get("data_readiness") or {}
-        catalog = readiness.get("catalog_enrichment") or {}
-        rows = [
-            [self._t("readiness_discovered_asins"), str(readiness.get("discovered_asins_count", "N/A"))],
-            [self._t("readiness_lookups_attempted"), str(catalog.get("attempted", "N/A"))],
-            [self._t("readiness_failed_asins"), str(len(catalog.get("failed_asins") or []))],
-            [self._t("readiness_partial_enrichment"), self._t("value_yes") if catalog.get("partial") else self._t("value_no")],
-        ]
-        self._table(slide, 0.8, 2.35, 4.0, 2.25, [self._t("table_readiness_signal"), self._t("table_value")], rows, [2.6, 1.1])
-        completeness = self.metrics.get("data_completeness") or {}
-        missing = completeness.get("missing_optional_fields_2025") or []
-        limitations = (self.metrics.get("limitations") or {}).get("items") or []
-        none_bullet = f"- {self._t('value_none')}"
-        self._body_box(
-            slide,
-            5.15,
-            2.35,
-            3.95,
-            1.45,
-            f"{self._t('missing_optional_fields_2025')}\n" + ("\n".join(f"- {item}" for item in missing[:8]) if missing else none_bullet),
-            title_bold=True,
-        )
-        self._body_box(
-            slide,
-            5.15,
-            3.95,
-            3.95,
-            0.85,
-            f"{self._t('source_limitations')}\n" + ("\n".join(f"- {item.get('area')}" for item in limitations[:3]) if limitations else none_bullet),
-            title_bold=True,
-        )
-
-    def _slide_active_inactive(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("active_inactive_title"), self._t("active_inactive_subtitle"))
-        active = int(self.metrics.get("active_asins_2025") or 0)
-        inactive = int(self.metrics.get("inactive_asins_2025") or 0)
-        total = max(active + inactive, 1)
-        active_w = 7.8 * active / total
-        inactive_w = 7.8 - active_w
-        self._rect(slide, 1.1, 1.7, active_w, 0.72, self._RGBColor(22, 163, 74))
-        self._rect(slide, 1.1 + active_w, 1.7, inactive_w, 0.72, self._RGBColor(212, 39, 45))
-        self._text(slide, 1.1, 1.35, 2.5, 0.22, self._t("catalog_split_2025"), size=12, bold=True)
-        self._kpi(slide, 1.1, 2.75, 2.4, 0.86, self._t("kpi_active"), str(active))
-        self._kpi(slide, 3.8, 2.75, 2.4, 0.86, self._t("kpi_inactive"), str(inactive))
-        self._kpi(slide, 6.5, 2.75, 2.4, 0.86, self._t("kpi_pct_inactive"), format_share(self.metrics.get("percentage_inactive_asins")))
-        self._body_box(
-            slide,
-            1.1,
-            4.05,
-            7.8,
-            0.72,
-            self._t("active_inactive_footnote"),
-        )
-
-    def _slide_top_performers(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("top_performers_title"), self._t("top_performers_subtitle"))
-        rows = [
-            [item["asin"], item["product_name"], format_currency(item["revenue_2025"]), format_currency(item["revenue_2024"]), format_percent(item["yoy_percent"])]
-            for item in self.metrics.get("top_5_asins", [])
-        ]
-        self._table(
-            slide, 0.65, 1.25, 8.7, 3.65,
-            [self._t("table_asin"), self._t("table_product"), self._t("table_rev_2025"), self._t("table_rev_2024"), self._t("table_yoy_pct")], rows, [1.25, 3.45, 1.35, 1.35, 0.95],
-            yoy_columns=[4],
-        )
-
-    def _slide_catalog_audit(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("catalog_audit_title"), self._t("catalog_audit_subtitle"))
-        kpis = [
-            (self._t("kpi_asins_2025"), str(self.metrics.get("total_asins_2025", 0))),
-            (self._t("kpi_asins_2024"), str(self.metrics.get("total_asins_2024", 0))),
-            (self._t("kpi_new_yoy"), str(self.metrics.get("new_asins_yoy", 0))),
-            (self._t("kpi_inactive_asins"), str(self.metrics.get("inactive_asins_2025", 0))),
-        ]
-        for idx, (label, value) in enumerate(kpis):
-            self._kpi(slide, 0.65 + idx * 2.2, 1.25, 1.85, 0.78, label, value)
-        rows = [
-            [item["asin"], item["product_name"], format_currency(item["revenue_2025"]), format_percent(item["yoy_percent"])]
-            for item in self.metrics.get("top_5_asins", [])
-        ]
-        self._table(
-            slide, 0.65, 2.35, 8.7, 2.55,
-            [self._t("table_asin"), self._t("table_product"), self._t("table_rev_2025"), self._t("table_yoy_pct")], rows, [1.35, 4.25, 1.55, 1.0],
-            yoy_columns=[3],
-        )
-
-    def _slide_content_audit(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("content_audit_title"), self._t("content_audit_subtitle"))
-        content = self.metrics.get("content_health") or {}
-        kpis = [
-            (self._t("kpi_avg_images_per_asin"), format_number(self.metrics.get("average_images_per_asin"), 1)),
-            (self._t("kpi_missing_bullets"), format_number(content.get("asins_missing_bullets"), 0)),
-            (self._t("kpi_missing_description"), format_number(content.get("asins_missing_description"), 0)),
-            (self._t("kpi_short_titles"), format_number(content.get("short_title_count"), 0)),
-        ]
-        for idx, (label, value) in enumerate(kpis):
-            self._kpi(slide, 0.65 + idx * 2.25, 1.25, 2.0, 0.78, label, value)
-        rows = [
-            [item.get("asin"), item.get("product_name"), ", ".join(item.get("issues") or []), format_currency(item.get("revenue_2025"))]
-            for item in (content.get("content_gap_asins") or [])[:6]
-        ]
-        if not rows:
-            rows = [["N/A", self._t("content_no_gaps"), "N/A", "N/A"]]
-        self._table(
-            slide, 0.65, 2.25, 8.7, 2.75,
-            [self._t("table_asin"), self._t("table_product"), self._t("table_detected_gaps"), self._t("table_rev_2025")], rows, [1.2, 3.0, 2.8, 1.2],
-        )
-
-    def _slide_review_image_weaknesses(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("review_image_title"), self._t("review_image_subtitle"))
-        weaknesses = self.metrics.get("review_rating_weaknesses") or {}
-        kpis = [
-            (self._t("kpi_asins_few_images"), format_number(self.metrics.get("asins_with_fewer_than_5_images"), 0)),
-            (self._t("kpi_asins_few_reviews"), format_number(weaknesses.get("asins_with_fewer_than_15_reviews"), 0)),
-            (self._t("kpi_rating_below_4"), format_number(weaknesses.get("asins_with_rating_below_4"), 0)),
-        ]
-        for idx, (label, value) in enumerate(kpis):
-            self._kpi(slide, 0.85 + idx * 2.65, 1.25, 2.25, 0.82, label, value)
-        rows = [
-            [item.get("asin"), item.get("product_name"), format_number(item.get("reviews"), 0), format_number(item.get("rating"), 2), ", ".join(item.get("issues") or [])]
-            for item in (weaknesses.get("weak_asins") or [])[:7]
-        ]
-        if not rows:
-            rows = [["N/A", self._t("review_no_weakness"), "N/A", "N/A", "N/A"]]
-        self._table(
-            slide, 0.65, 2.35, 8.7, 2.55,
-            [self._t("table_asin"), self._t("table_product"), self._t("table_reviews"), self._t("table_rating"), self._t("table_issue")], rows, [1.15, 3.1, 0.95, 0.85, 2.0],
-        )
-
-    def _slide_subcategory_performance(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("subcategory_title"), self._t("subcategory_subtitle"))
-        rows = [
-            [item["subcategory"], format_currency(item["revenue_2025"]), format_currency(item["revenue_2024"]), format_percent(item["yoy_percent"])]
-            for item in (self.metrics.get("revenue_by_subcategory") or [])[:8]
-        ]
-        self._table(
-            slide, 0.65, 2.25, 8.7, 2.75,
-            [self._t("table_subcategory"), self._t("table_rev_2025"), self._t("table_rev_2024"), self._t("table_yoy_pct")], rows, [3.6, 1.65, 1.65, 1.1],
-            yoy_columns=[3],
-        )
-
-    def _slide_operational_gap(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("operational_gap_title"), self._t("operational_gap_subtitle"))
-        decline = self.metrics.get("subcategory_with_largest_decline") or {}
-        kpis = [
-            (self._t("kpi_pct_inactive_asins"), format_share(self.metrics.get("percentage_inactive_asins"))),
-            (self._t("kpi_pct_declining_asins"), format_share(self.metrics.get("percentage_declining_asins_among_active"))),
-            (self._t("kpi_asins_multi_seller"), format_number(self.metrics.get("asins_with_more_than_1_seller"), 0)),
-            (self._t("kpi_largest_subcat_decline"), f"{decline.get('subcategory', 'N/A')} {format_percent(decline.get('yoy_percent')) if decline else ''}".strip()),
-        ]
-        for idx, (label, value) in enumerate(kpis):
-            x = 0.65 + (idx % 2) * 4.3
-            y = 1.25 + (idx // 2) * 1.05
-            self._kpi(slide, x, y, 3.8, 0.78, label, value)
-        self._text(slide, 0.85, 3.6, 2.8, 0.24, self._t("revenue_concentration"), size=13, bold=True, color=(212, 39, 45))
-        concentration = [
-            (self._t("kpi_top_5_asins"), format_share(self.metrics.get("top_5_revenue_share"))),
-            (self._t("kpi_top_10_asins"), format_share(self.metrics.get("top_10_revenue_share"))),
-            (self._t("kpi_avg_rev_per_active_asin"), format_currency(self.metrics.get("average_revenue_per_active_asin"))),
-        ]
-        for idx, (label, value) in enumerate(concentration):
-            self._kpi(slide, 0.85 + idx * 2.75, 3.95, 2.25, 0.72, label, value)
-
-    def _slide_channel_gap(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("channel_gap_title"), self._t("channel_gap_subtitle"))
-        summary = self.metrics.get("seller_buy_box_summary") or {}
-        self._kpi(slide, 0.65, 1.15, 2.0, 0.72, self._t("kpi_avg_sellers"), format_number(summary.get("average_seller_count"), 1))
-        self._kpi(slide, 2.9, 1.15, 2.0, 0.72, self._t("kpi_avg_offers"), format_number(summary.get("average_offer_count"), 1))
-        self._kpi(slide, 5.15, 1.15, 2.0, 0.72, self._t("kpi_missing_buy_box"), format_number(summary.get("asins_missing_buy_box_owner"), 0))
-        rows = [
-            [item["reseller"], str(item["asin_count"]), format_currency(item["revenue"]), format_share(item["share_percent"])]
-            for item in (self.metrics.get("reseller_buy_box_distribution") or [])[:8]
-        ]
-        if not rows and summary.get("current_buy_box_snapshot_distribution"):
-            rows = [
-                [item.get("reseller"), str(item.get("asin_count")), "N/A", self._t("current_snapshot")]
-                for item in summary.get("current_buy_box_snapshot_distribution", [])[:8]
-            ]
-        if not rows:
-            rows = [[self._t("channel_not_available"), "N/A", "N/A", "N/A"]]
-        self._table(slide, 0.65, 2.15, 8.7, 2.8, [self._t("table_reseller_buy_box"), self._t("table_asins"), self._t("table_revenue"), self._t("table_pct_impact")], rows, [4.2, 1.0, 1.8, 1.2])
-
-    def _slide_concentration_risk(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("concentration_risk_title"), self._t("concentration_risk_subtitle"))
-        self._kpi(slide, 0.85, 1.25, 2.3, 0.9, self._t("kpi_top_5_revenue_share"), format_share(self.metrics.get("top_5_revenue_share")))
-        self._kpi(slide, 3.45, 1.25, 2.3, 0.9, self._t("kpi_top_10_revenue_share"), format_share(self.metrics.get("top_10_revenue_share")))
-        self._kpi(slide, 6.05, 1.25, 2.7, 0.9, self._t("kpi_avg_rev_per_active_asin"), format_currency(self.metrics.get("average_revenue_per_active_asin")))
-        rows = [
-            [item["asin"], item["product_name"], format_currency(item["revenue_2025"]), format_percent(item["yoy_percent"])]
-            for item in self.metrics.get("top_5_asins", [])
-        ]
-        self._table(
-            slide, 0.65, 2.55, 8.7, 2.35,
-            [self._t("table_asin"), self._t("table_product"), self._t("table_revenue"), self._t("table_yoy")], rows, [1.25, 4.35, 1.45, 0.95],
-            yoy_columns=[3],
-        )
-
-    def _slide_market_share(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("market_share_title"), self._t("market_share_subtitle"))
-        market = self.metrics.get("market_analysis") or {}
-        if market.get("status") == "calculated_from_external_market_export":
-            kpis = [
-                (self._t("kpi_market_size_2025") + self._badge("market_revenue_share"), format_currency(market.get("market_size_2025"))),
-                (self._t("kpi_revenue_share_2025") + self._badge("market_revenue_share"), format_share(market.get("market_share_2025"))),
-                (self._t("kpi_revenue_share_2024") + self._badge("market_revenue_share"), format_share(market.get("market_share_2024"))),
-            ]
-            for idx, (label, value) in enumerate(kpis):
-                self._kpi(slide, 0.75 + idx * 2.8, 1.25, 2.35, 0.85, label, value)
-            rows = [
-                [item.get("brand"), str(item.get("asin_count")), format_currency(item.get("revenue")), format_share(item.get("market_share_percent"))]
-                for item in (market.get("competitive_brand_distribution") or [])[:7]
-            ]
-            self._table(slide, 0.65, 2.45, 8.7, 2.45, [self._t("table_brand"), self._t("table_asins"), self._t("table_revenue"), self._t("table_share")], rows, [3.4, 1.0, 1.8, 1.0])
-        else:
-            self._body_box(
-                slide,
-                0.85,
-                1.45,
-                8.3,
-                2.2,
-                f"{self._t('market_share_unavailable')}\n"
-                + str(market.get("limitation") or self._t("market_share_no_base")),
-                title_bold=True,
-            )
-            self._body_box(
-                slide,
-                0.85,
-                3.95,
-                8.3,
-                0.72,
-                self._t("market_share_no_invent"),
-            )
-
-    def _slide_approach(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("approach_title"), self._t("approach_subtitle"))
-        pillars = (self.narrative.get("approach_pillars") or [])[:3]
-        for idx, pillar in enumerate(pillars):
-            x = 0.65 + idx * 3.1
-            self._rect(slide, x, 1.35, 2.75, 2.1, self._RGBColor(25, 35, 50))
-            self._rect(slide, x, 1.35, 2.75, 0.12, self._RGBColor(212, 39, 45))
-            self._text(slide, x + 0.18, 1.65, 2.35, 0.35, pillar.get("title", ""), size=13, bold=True, color=(255, 255, 255))
-            self._text(slide, x + 0.18, 2.12, 2.35, 1.0, pillar.get("body", ""), size=8.5, color=(255, 255, 255))
-        banners = [
-            (self._t("approach_visibility"), self._t("approach_visibility_sub"), (29, 78, 216)),
-            (self._t("approach_conversion"), self._t("approach_conversion_sub"), (234, 88, 12)),
-            (self._t("approach_loyalty"), self._t("approach_loyalty_sub"), (22, 163, 74)),
-        ]
-        for idx, (title, subtitle, color) in enumerate(banners):
-            x = 0.65 + idx * 3.1
-            self._rect(slide, x, 3.85, 2.75, 0.7, self._RGBColor(*color))
-            self._text(slide, x, 3.98, 2.75, 0.18, title, size=10, bold=True, color=(255, 255, 255), align="center")
-            self._text(slide, x, 4.25, 2.75, 0.16, subtitle, size=7.5, color=(255, 255, 255), align="center")
-
-    def _slide_roadmap(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("roadmap_title"), self._t("roadmap_subtitle"))
-        colors = [(212, 39, 45), (234, 88, 12), (22, 163, 74)]
-        roadmap = (self.narrative.get("roadmap") or [])[:3]
-        for idx, item in enumerate(roadmap):
-            y = 1.25 + idx * 1.15
-            self._rect(slide, 0.78, y, 0.55, 0.55, self._RGBColor(*colors[idx]))
-            self._text(slide, 0.78, y + 0.17, 0.55, 0.14, item.get("phase", f"0{idx+1}"), size=10, bold=True, color=(255, 255, 255), align="center")
-            self._text(slide, 1.55, y, 7.5, 0.24, item.get("title", ""), size=13, bold=True, color=(20, 20, 20))
-            self._text(slide, 1.55, y + 0.38, 7.5, 0.45, item.get("body", ""), size=9.5, color=(70, 70, 70))
-
-    def _slide_projection(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("projection_title"), self._t("projection_subtitle"))
-        self._rect(slide, 0.65, 1.18, 8.7, 0.65, self._RGBColor(245, 245, 245))
-        self._text(slide, 0.85, 1.27, 2.0, 0.18, self._t("current_situation"), size=9, bold=True, color=(80, 80, 80))
-        self._text(slide, 2.55, 1.22, 2.2, 0.35, format_currency(self.metrics.get("total_revenue_2025")), size=22, bold=True, color=(212, 39, 45))
-        self._text(
-            slide,
-            4.75,
-            1.34,
-            4.0,
-            0.2,
-            f"{format_percent(self.metrics.get('yoy_percent'))} YoY | {self.metrics.get('active_asins_2025', 0)} {self._t('projection_active_asins')} {self.metrics.get('total_asins_2025', 0)}",
-            size=8.5,
-            color=(80, 80, 80),
-        )
-        scenarios = [
-            (self._t("scenario_conservative"), "conservative", (100, 116, 139)),
-            (self._t("scenario_realistic"), "realistic", (22, 163, 74)),
-            (self._t("scenario_optimistic"), "optimistic", (212, 39, 45)),
-        ]
-        projections = self.metrics.get("growth_projection_scenarios") or {}
-        for idx, (label, key, color) in enumerate(scenarios):
-            x = 0.65 + idx * 3.0
-            scenario = projections.get(key, {})
-            self._rect(slide, x, 2.05, 2.7, 1.45, self._RGBColor(250, 250, 250))
-            self._rect(slide, x, 2.05, 2.7, 0.18, self._RGBColor(*color))
-            growth = f"+{scenario.get('growth_low', 0)}-{scenario.get('growth_high', 0)}%"
-            self._text(slide, x + 0.12, 2.40, 2.45, 0.2, label, size=9, bold=True, color=color)
-            self._text(slide, x + 0.12, 2.70, 2.45, 0.3, growth, size=18, bold=True, color=color)
-            self._text(slide, x + 0.12, 3.10, 2.45, 0.25, f"{format_currency(scenario.get('revenue_low'))} - {format_currency(scenario.get('revenue_high'))}", size=8.5, bold=True)
-        # Brand-specific priority actions derived from real metrics (not boilerplate).
-        actions = build_priority_actions(self.metrics, self.language)
-        self._text(slide, 0.65, 3.72, 8.7, 0.2, self._t("projection_actions_title"), size=11, bold=True, color=(40, 40, 40))
-        self._text(slide, 0.65, 4.00, 4.25, 1.1, "\n".join(f"-> {a}" for a in actions[0:3]), size=9, color=(70, 70, 70))
-        if actions[3:6]:
-            self._text(slide, 5.10, 4.00, 4.25, 1.1, "\n".join(f"-> {a}" for a in actions[3:6]), size=9, color=(70, 70, 70))
-        # Honest framing: illustrative ranges, not a forecast.
-        self._text(slide, 0.65, 5.18, 8.7, 0.22, self._t("projection_disclaimer"), size=7, color=(150, 150, 150))
-
-    def _slide_conclusions(self, prs, page: int) -> None:
-        slide = self._blank(prs)
-        self._add_header(slide, page)
-        self._title(slide, self._t("conclusions_title"), self._t("conclusions_subtitle"))
-        sections = [
-            (self._t("conclusions_current_situation"), self.narrative.get("conclusions", {}).get("current_situation", []), (212, 39, 45)),
-            (self._t("conclusions_strengths"), self.narrative.get("conclusions", {}).get("strengths", []), (22, 163, 74)),
-            (self._t("conclusions_plan"), self.narrative.get("conclusions", {}).get("plan", []), (29, 78, 216)),
-            (self._t("conclusions_urgency"), self.narrative.get("conclusions", {}).get("urgency", []), (234, 88, 12)),
-        ]
-        for idx, (title, bullets, bar_color) in enumerate(sections):
-            x = 0.65 + (idx % 2) * 4.35
-            y = 1.25 + (idx // 2) * 1.65
-            # Left coloured marker bar
-            self._rect(slide, x, y, 0.12, 1.25, self._RGBColor(*bar_color))
-            self._body_box(
-                slide, x + 0.12, y, 3.83, 1.25,
-                f"{title}\n" + "\n".join(f"- {bullet}" for bullet in bullets[:4]),
-                title_bold=True,
-            )
-
-    def _title(self, slide, title: str, subtitle: str) -> None:
-        self._text(slide, 0.65, 0.62, 4.5, 0.32, title, size=22, bold=True, color=(20, 20, 20))
-        self._text(slide, 0.67, 1.0, 5.5, 0.18, subtitle, size=9, color=(90, 90, 90))
-
-    def _kpi(self, slide, x: float, y: float, w: float, h: float, label: str, value: str) -> None:
-        self._rect(slide, x, y, w, h, self._RGBColor(248, 248, 248), line=(230, 230, 230))
-        self._text(slide, x + 0.12, y + 0.12, w - 0.24, 0.18, label, size=7.5, bold=True, color=(90, 90, 90))
-        self._text(slide, x + 0.12, y + 0.38, w - 0.24, 0.28, value, size=15, bold=True, color=(30, 30, 30))
-
-    def _body_box(self, slide, x: float, y: float, w: float, h: float, text: str, title_bold: bool = False) -> None:
-        self._rect(slide, x, y, w, h, self._RGBColor(250, 250, 250), line=(230, 230, 230))
-        shape = self._text(slide, x + 0.18, y + 0.14, w - 0.36, h - 0.2, text, size=8.8, color=(55, 55, 55))
-        if title_bold and shape.text_frame.paragraphs:
-            shape.text_frame.paragraphs[0].runs[0].font.bold = True
-            shape.text_frame.paragraphs[0].runs[0].font.size = self._Pt(11)
-
-    def _table(
-        self,
-        slide,
-        x: float,
-        y: float,
-        w: float,
-        h: float,
-        headers: list[str],
-        rows: list[list[str]],
-        widths: list[float],
-        *,
-        yoy_columns: Optional[list[int]] = None,
-    ) -> None:
-        """Render a table. If ``yoy_columns`` is provided, cells in those columns
-        are coloured green/red based on the sign of their numeric value (the
-        ``+``/``-`` prefix or a leading minus sign is the cue).
-        """
-        table_shape = slide.shapes.add_table(len(rows) + 1, len(headers), self._Inches(x), self._Inches(y), self._Inches(w), self._Inches(h))
-        table = table_shape.table
-        for idx, width in enumerate(widths):
-            table.columns[idx].width = self._Inches(width)
-        for col, header in enumerate(headers):
-            cell = table.cell(0, col)
-            cell.text = header
-            cell.fill.solid()
-            cell.fill.fore_color.rgb = self._RGBColor(245, 245, 245)
-            self._cell_font(cell, bold=True, size=7.5)
-        for row_idx, row in enumerate(rows, start=1):
-            for col_idx, value in enumerate(row):
-                cell = table.cell(row_idx, col_idx)
-                cell.text = str(value)
-                colour = None
-                if yoy_columns and col_idx in yoy_columns:
-                    colour = _yoy_cell_color(value)
-                self._cell_font(cell, size=7.2, color=colour)
-
-    def _cell_font(
-        self,
-        cell,
-        *,
-        bold: bool = False,
-        size: float = 8,
-        color: Optional[tuple[int, int, int]] = None,
-    ) -> None:
-        cell.margin_left = self._Inches(0.04)
-        cell.margin_right = self._Inches(0.04)
-        cell.margin_top = self._Inches(0.02)
-        cell.margin_bottom = self._Inches(0.02)
-        for paragraph in cell.text_frame.paragraphs:
-            for run in paragraph.runs:
-                run.font.name = "Nunito"
-                run.font.size = self._Pt(size)
-                run.font.bold = bold
-                if color is not None:
-                    run.font.color.rgb = self._RGBColor(*color)
-
-    def _rect(self, slide, x: float, y: float, w: float, h: float, fill, line: Optional[tuple[int, int, int]] = None) -> None:
-        from pptx.enum.shapes import MSO_SHAPE
-
-        shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, self._Inches(x), self._Inches(y), self._Inches(w), self._Inches(h))
-        shape.fill.solid()
-        shape.fill.fore_color.rgb = fill
-        if line is None:
-            shape.line.fill.background()
-        else:
-            shape.line.color.rgb = self._RGBColor(*line)
-
-    def _text(
-        self,
-        slide,
-        x: float,
-        y: float,
-        w: float,
-        h: float,
-        text: str,
-        *,
-        size: float,
-        bold: bool = False,
-        color: tuple[int, int, int] = (20, 20, 20),
-        align: str = "left",
-    ):
-        shape = slide.shapes.add_textbox(self._Inches(x), self._Inches(y), self._Inches(w), self._Inches(h))
-        frame = shape.text_frame
-        frame.clear()
-        frame.margin_left = 0
-        frame.margin_right = 0
-        frame.margin_top = 0
-        frame.margin_bottom = 0
-        frame.word_wrap = True
-        paragraph = frame.paragraphs[0]
-        paragraph.alignment = {"center": self._PP_ALIGN.CENTER, "right": self._PP_ALIGN.RIGHT}.get(align, self._PP_ALIGN.LEFT)
-        run = paragraph.add_run()
-        run.text = str(text or "")
-        run.font.name = "Nunito"
-        run.font.size = self._Pt(size)
-        run.font.bold = bold
-        run.font.color.rgb = self._RGBColor(*color)
-        return shape
-
+# The PPTX deck is built by the dynamic block-registry engine in
+# ``app.services.brand_analysis.deck``. ``build_brand_analysis_pptx`` below is a
+# thin shim onto that composer; the old hand-drawn ``BrandAnalysisPptxBuilder``
+# was retired in favour of gated blocks (no empty placeholders).
 
 class BrandAnalysisService:
     """Create, update and process Brand Analysis jobs."""
@@ -3242,53 +2673,51 @@ def _safe_filename_part(value: str) -> str:
     return safe or "brand"
 
 
-def _yoy_cell_color(value: Any) -> Optional[tuple[int, int, int]]:
-    """Return a green/red RGB tuple for a YoY-style cell value, or None for neutral.
-
-    Accepts strings like ``"+12.3%"``, ``"-5.0%"``, ``"–0.2%"``, ``"N/A"`` and
-    raw numbers. Returns ``None`` when the sign cannot be determined.
-    """
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text or text.upper() in {"N/A", "NAN", "-", "--"}:
-        return None
-    # Normalize en-dash / minus-sign characters to ASCII minus.
-    normalized = text.replace("–", "-").replace("−", "-")
-    if normalized.startswith("+"):
-        return (22, 163, 74)
-    if normalized.startswith("-") and len(normalized) > 1 and normalized[1].isdigit():
-        return (212, 39, 45)
-    # Try to parse numeric content.
-    cleaned = re.sub(r"[^0-9.\-]+", "", normalized)
-    try:
-        number = float(cleaned)
-    except ValueError:
-        return None
-    if number > 0:
-        return (22, 163, 74)
-    if number < 0:
-        return (212, 39, 45)
-    return None
-
-
 def build_brand_analysis_pptx(metrics: dict[str, Any], narrative: dict[str, Any], language: str = "en") -> bytes:
-    return BrandAnalysisPptxBuilder(metrics, narrative, language).build()
+    """Build the deck via the dynamic block-registry composer.
+
+    Signature is intentionally stable; the body is a thin shim onto
+    ``app.services.brand_analysis.deck``.
+    """
+    from app.services.brand_analysis.deck import build_deck
+
+    return build_deck(metrics, narrative, language)
+
+
+def build_brand_analysis_section_manifest(
+    metrics: dict[str, Any], narrative: dict[str, Any], language: str = "en"
+) -> list[dict[str, Any]]:
+    """Section contract for a given metrics/narrative pair, without rendering.
+
+    Each entry is ``{section_id, present, reason}``. Sections appear or
+    disappear with data presence — this replaces the old fixed slide count.
+    """
+    from app.services.brand_analysis.deck import section_manifest
+
+    return section_manifest(metrics, narrative, language)
 
 
 def validate_pptx_bytes(pptx_bytes: bytes) -> dict[str, Any]:
     """Open a generated PPTX and return a structural fingerprint for tests.
 
-    Raises a :class:`ValueError` if the deck doesn't open or doesn't meet
-    the expected 12-16 slide structure (N/A slides are skipped, so the count
-    varies with the available data).
+    The deck is dynamic: sections render only when their data exists, so the
+    slide count is data-driven and no longer asserted against a fixed range.
+    Instead this validates *structural integrity*:
+
+    - the artifact opens as a real OOXML presentation with at least the
+      always-on front matter (cover, exec summary, agenda, methodology);
+    - no slide carries an empty-placeholder table (a header row over blank
+      data rows — the old "looks broken in front of a client" failure).
+
+    Raises :class:`ValueError` on any of these, so the pipeline fails loudly
+    rather than storing a broken artifact.
     """
     from pptx import Presentation
 
     prs = Presentation(io.BytesIO(pptx_bytes))
     slide_count = len(prs.slides)
-    if slide_count < 12 or slide_count > 16:
-        raise ValueError(f"Expected 12-16 slides, got {slide_count}")
+    if slide_count < 4:
+        raise ValueError(f"Deck is missing its always-on front matter, got {slide_count} slides")
 
     def slide_text(slide) -> str:
         parts: list[str] = []
@@ -3300,6 +2729,21 @@ def validate_pptx_bytes(pptx_bytes: bytes) -> dict[str, Any]:
                     for cell in row.cells:
                         parts.append(cell.text_frame.text)
         return "\n".join(parts)
+
+    for index, slide in enumerate(prs.slides, start=1):
+        for shape in slide.shapes:
+            if not shape.has_table:
+                continue
+            table = shape.table
+            data_rows = list(table.rows)[1:]
+            if not data_rows:
+                raise ValueError(f"Slide {index} has a header-only table (no data rows)")
+            blank = all(
+                not any(cell.text_frame.text.strip() for cell in row.cells)
+                for row in data_rows
+            )
+            if blank:
+                raise ValueError(f"Slide {index} has an empty-placeholder table")
 
     texts = [slide_text(slide) for slide in prs.slides]
     return {
@@ -3696,6 +3140,9 @@ def process_brand_analysis_job(job_id: str) -> None:
                 adapter = _resolve_adapter(job, source_by_year)
                 if isinstance(adapter, AmazonAccountDataSource):
                     adapter.db = db
+                    adapter.brand_analytics_available = bool(
+                        capability_matrix.get("brand_analytics_available")
+                    )
                 source_name = getattr(adapter, "source_name", "unknown")
 
                 await _set_status("collecting_source_data", "Resolving ASINs and loading 2024 performance", 25)

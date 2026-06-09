@@ -48,6 +48,21 @@ VALID_COLUMNS = {
         "sales", "salesClicks", "purchases", "purchasesClicks", "unitsSold", "unitsSoldClicks",
         "newToBrandPurchases", "newToBrandSales", "newToBrandUnitsSold",
     },
+    "spSearchTerm": {
+        "date", "campaignName", "campaignId", "adGroupName", "adGroupId",
+        "keywordId", "keyword", "keywordType", "matchType", "searchTerm",
+        "impressions", "clicks", "cost", "campaignBudgetCurrencyCode",
+        "purchases1d", "purchases7d", "purchases14d", "purchases30d",
+        "unitsSoldClicks1d", "unitsSoldClicks7d", "unitsSoldClicks14d", "unitsSoldClicks30d",
+        "sales1d", "sales7d", "sales14d", "sales30d",
+    },
+    "spPurchasedProduct": {
+        "date", "campaignName", "campaignId", "adGroupName", "adGroupId",
+        "advertisedAsin", "advertisedSku", "purchasedAsin", "campaignBudgetCurrencyCode",
+        "purchases1d", "purchases7d", "purchases14d", "purchases30d",
+        "unitsSoldClicks1d", "unitsSoldClicks7d", "unitsSoldClicks14d", "unitsSoldClicks30d",
+        "sales1d", "sales7d", "sales14d", "sales30d",
+    },
 }
 
 VALID_GROUP_BY = {
@@ -55,6 +70,8 @@ VALID_GROUP_BY = {
     "spAdvertisedProduct": {"advertiser"},
     "sbCampaigns": {"campaign"},
     "sdCampaigns": {"campaign"},
+    "spSearchTerm": {"searchTerm"},
+    "spPurchasedProduct": {"asin"},
 }
 
 VALID_AD_PRODUCTS = {"SPONSORED_PRODUCTS", "SPONSORED_BRANDS", "SPONSORED_DISPLAY"}

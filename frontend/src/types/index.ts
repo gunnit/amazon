@@ -90,6 +90,93 @@ export interface BrandPulseResponse {
   recommendations: PulseRecommendation[]
 }
 
+// ── Weekly Brand Intelligence ──
+export type BrandIntelligenceStatus = 'pending' | 'generating' | 'completed' | 'failed'
+
+export type BrandIntelligenceSectionKey =
+  | 'market_category'
+  | 'brand_evolution'
+  | 'competitor_activity'
+  | 'opportunities'
+  | 'risks'
+  | 'product_trends'
+  | 'strategic_recommendations'
+
+export type BrandIntelligenceConfidence = 'high' | 'medium' | 'low'
+
+export interface BrandIntelligenceKpi {
+  label: string
+  value: string
+  delta_percent: number | null
+  trend: 'up' | 'down' | 'flat'
+}
+
+export interface BrandIntelligenceItem {
+  title: string
+  detail: string
+  source: string | null
+  confidence: BrandIntelligenceConfidence | null
+  evidence: string | null
+}
+
+export interface BrandIntelligenceSection {
+  key: BrandIntelligenceSectionKey
+  title: string
+  narrative: string
+  items: BrandIntelligenceItem[]
+  delta: number | null
+}
+
+export interface BrandIntelligencePeriod {
+  start: string
+  end: string
+  previous_start: string
+  previous_end: string
+  week_label: string
+  window_days: number
+}
+
+export interface BrandIntelligenceExecSummary {
+  headline: string
+  kpis: BrandIntelligenceKpi[]
+}
+
+export interface BrandIntelligenceReport {
+  id: string
+  account_id: string
+  brand_label: string
+  period: BrandIntelligencePeriod
+  status: BrandIntelligenceStatus
+  generated_at: string | null
+  model: string | null
+  coverage_note: string | null
+  exec_summary: BrandIntelligenceExecSummary
+  sections: BrandIntelligenceSection[]
+}
+
+export interface BrandIntelligenceReportListItem {
+  id: string
+  account_id: string
+  brand_label: string
+  period_start: string
+  period_end: string
+  week_label: string
+  status: BrandIntelligenceStatus
+  generated_at: string | null
+}
+
+export interface BrandIntelligenceGenerateResponse {
+  id: string
+  status: BrandIntelligenceStatus
+}
+
+export interface BrandIntelligenceSchedule {
+  account_id: string
+  is_enabled: boolean
+  day_of_week: number
+  timezone: string
+}
+
 export interface AmazonAccount {
   id: string
   organization_id: string
