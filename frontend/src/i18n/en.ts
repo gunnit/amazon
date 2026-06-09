@@ -758,6 +758,7 @@ const en: Record<string, string> = {
   'analytics.productPage.momentumDesc': 'Recent 7-day trend signals for this product',
   'analytics.sparkline.revenue': 'Revenue',
   'analytics.sparkline.units': 'Units',
+  'analytics.sparkline.insufficient': 'Not enough history',
   'analytics.productPage.noMomentum': 'Not enough recent history to score this product’s momentum.',
   'analytics.productPage.revenueOverTime': 'Revenue over time',
   'analytics.productPage.revenueOverTimeDesc': 'Daily sales for this product across the selected period.',

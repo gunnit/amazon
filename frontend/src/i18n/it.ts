@@ -762,6 +762,7 @@ const it: Record<string, string> = {
   'analytics.productPage.momentumDesc': 'Segnali di trend degli ultimi 7 giorni per questo prodotto',
   'analytics.sparkline.revenue': 'Fatturato',
   'analytics.sparkline.units': 'Unità',
+  'analytics.sparkline.insufficient': 'Storico insufficiente',
   'analytics.productPage.noMomentum': 'Storico recente insufficiente per calcolare il momentum di questo prodotto.',
   'analytics.productPage.revenueOverTime': 'Fatturato nel tempo',
   'analytics.productPage.revenueOverTimeDesc': 'Vendite giornaliere di questo prodotto nel periodo selezionato.',

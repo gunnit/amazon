@@ -12,6 +12,13 @@ const strokeByClass: Record<ProductTrendClass, string> = {
   declining_fast: CHART_NEGATIVE,
 }
 
+// A trend line needs at least two points to draw a segment. With a single point
+// Recharts has nothing to connect and falls back to rendering a lone floating
+// dot, which reads as a broken chart rather than a trend. Products that only
+// sold on one day inside the sparkline window hit this case, so below the
+// threshold we show a muted placeholder instead of the misleading dot.
+const MIN_SPARKLINE_POINTS = 2
+
 // Trend points are ISO dates ('YYYY-MM-DD' daily, 'YYYY-MM-01' monthly). Vendor
 // data only fills the first of the month, so format both safely and skip the
 // rest as an empty label rather than rendering "Invalid Date". The locale is
@@ -49,8 +56,17 @@ export default function ProductTrendSparkline({
 }) {
   const { t, language } = useTranslation()
 
-  if (!data.length) {
-    return <div className="h-full w-full rounded bg-muted/40" />
+  if (data.length < MIN_SPARKLINE_POINTS) {
+    return (
+      <div
+        className="flex w-full items-center justify-center rounded bg-muted/30"
+        style={{ height }}
+      >
+        <span className="px-2 text-center text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+          {t('analytics.sparkline.insufficient')}
+        </span>
+      </div>
+    )
   }
 
   const metricLabel =
