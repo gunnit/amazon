@@ -65,7 +65,9 @@ class AlertRuleResponse(BaseModel):
     id: UUID
     organization_id: UUID
     name: str
-    alert_type: AlertType
+    # str (not AlertType): hidden auto-rules for brand-intelligence/analysis use
+    # dynamic type strings outside the enum — serializing them as the enum 500s.
+    alert_type: str
     conditions: dict[str, Any]
     applies_to_accounts: Optional[List[UUID]]
     applies_to_asins: Optional[List[str]]
@@ -106,7 +108,12 @@ class AlertResponse(BaseModel):
     notification_sent_at: Optional[datetime] = None
     notification_error: Optional[str] = None
     rule_name: Optional[str] = None
-    alert_type: Optional[AlertType] = None
+    # Free-text on the rule (String(50)): dynamic types such as
+    # "brand_intelligence_ready" / "brand_analysis_ready" exist alongside the
+    # AlertType enum. Serialize as a plain string so a non-enum type never
+    # raises a ValidationError and 500s the list endpoint (which silently
+    # emptied the notification dropdown while the unread badge stayed non-zero).
+    alert_type: Optional[str] = None
 
     class Config:
         from_attributes = True

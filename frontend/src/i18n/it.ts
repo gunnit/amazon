@@ -1323,6 +1323,7 @@ const it: Record<string, string> = {
   'alerts.type.product_trend': 'Trend Prodotto',
   'alerts.type.brand_analysis_ready': 'Brand Analysis Pronta',
   'alerts.type.brand_analysis_failed': 'Brand Analysis Fallita',
+  'alerts.type.brand_intelligence_ready': 'Brand Intelligence Pronta',
   'alerts.syncFailureDesc': 'Avviso quando la sincronizzazione dell\'account fallisce o è in ritardo (>24h)',
   'alerts.staleAfterHours': 'In ritardo dopo',
   'alerts.gracePeriodMinutes': 'Grace',

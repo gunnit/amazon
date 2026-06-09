@@ -1319,6 +1319,7 @@ const en: Record<string, string> = {
   'alerts.type.product_trend': 'Product Trend',
   'alerts.type.brand_analysis_ready': 'Brand Analysis Ready',
   'alerts.type.brand_analysis_failed': 'Brand Analysis Failed',
+  'alerts.type.brand_intelligence_ready': 'Brand Intelligence Ready',
   'alerts.syncFailureDesc': 'Alerts when account sync fails or is stale (>24h)',
   'alerts.staleAfterHours': 'Stale After',
   'alerts.gracePeriodMinutes': 'Grace',

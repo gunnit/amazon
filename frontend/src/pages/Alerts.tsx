@@ -74,6 +74,9 @@ function alertTypeBadge(type: string | null, t: (key: string) => string) {
     price_change: t('alerts.type.price_change'),
     bsr_drop: t('alerts.type.bsr_drop'),
     product_trend: t('alerts.type.product_trend'),
+    brand_analysis_ready: t('alerts.type.brand_analysis_ready'),
+    brand_analysis_failed: t('alerts.type.brand_analysis_failed'),
+    brand_intelligence_ready: t('alerts.type.brand_intelligence_ready'),
   }
 
   return <Badge variant="secondary">{type ? labels[type] || type : '—'}</Badge>
