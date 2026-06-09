@@ -91,6 +91,165 @@ def _normalize_asin(value: Optional[str]) -> Optional[str]:
     return val or None
 
 
+# ── Brand Pulse deterministic recommendations ────────────────────────────────
+# Rule-based, evidence-backed recommendations derived from an already-computed
+# Brand Pulse snapshot. No AI call, so they never depend on an API key and can
+# never fabricate a number — every figure is read from the snapshot. Each rec
+# carries Source, Confidence and Evidence so the UI can show why it fired.
+PULSE_MIN_BASELINE_REVENUE = 50.0  # ignore swings off a near-zero prior period
+PULSE_REVENUE_DECLINE_PCT = -10.0
+PULSE_REVENUE_DECLINE_CRITICAL_PCT = -25.0
+PULSE_REVENUE_GROWTH_PCT = 15.0
+PULSE_ACOS_HIGH_PCT = 30.0
+PULSE_ACOS_CRITICAL_PCT = 45.0
+PULSE_TACOS_HIGH_PCT = 25.0
+
+
+def _pulse_money(value: Optional[float]) -> str:
+    return f"€{float(value or 0):,.0f}"
+
+
+def _pulse_signed(value: Optional[float]) -> str:
+    return f"{float(value or 0):+.0f}"
+
+
+def _pulse_text(language: str, en: str, it: str) -> str:
+    return it if language == "it" else en
+
+
+def _pulse_rec(*, title: str, priority: str, confidence: str, source: str, evidence: str, rationale: str) -> Dict[str, Any]:
+    return {
+        "title": title,
+        "priority": _sanitize_priority(priority),
+        "confidence": _sanitize_confidence(confidence),
+        "source": source,
+        "evidence": evidence,
+        "rationale": rationale,
+    }
+
+
+def build_pulse_recommendations(pulse: Dict[str, Any], *, language: str = "en") -> List[Dict[str, Any]]:
+    """Deterministic, evidence-backed recommendations from a Brand Pulse snapshot.
+
+    Mirrors the AI engine's anti-hallucination discipline: every number is read
+    from the snapshot, swings off a near-zero baseline are suppressed, and
+    per-ASIN signals (a seller snapshot, not a 30-day sum) are flagged at medium
+    confidence with honest evidence. Returns at most five, highest priority first.
+    """
+    overview = pulse.get("overview") or {}
+    current = overview.get("current") or {}
+    previous = overview.get("previous") or {}
+    changes = overview.get("changes") or {}
+    ads = pulse.get("ads") or {}
+    declining = pulse.get("declining_asins") or []
+    period = pulse.get("period") or {}
+
+    cur_rev = float(current.get("revenue") or 0.0)
+    prev_rev = float(previous.get("revenue") or 0.0)
+    rev_change = (changes.get("revenue") or {}).get("percent")
+    window = period.get("window_days", 30)
+    # Monthly-cadence accounts with no posted data this period: the "-100%" is a
+    # reporting-lag artifact, so suppress the sales/decline alarms entirely.
+    awaiting_data = bool(period.get("awaiting_data"))
+
+    recs: List[Dict[str, Any]] = []
+
+    # Revenue trend — only off a meaningful baseline, so a near-zero prior period
+    # cannot produce a misleading "down 100%" alarm.
+    if not awaiting_data and rev_change is not None and prev_rev >= PULSE_MIN_BASELINE_REVENUE:
+        if rev_change <= PULSE_REVENUE_DECLINE_PCT:
+            critical = rev_change <= PULSE_REVENUE_DECLINE_CRITICAL_PCT
+            recs.append(_pulse_rec(
+                title=_pulse_text(language,
+                    f"Brand revenue down {abs(round(rev_change))}% vs prior {window} days",
+                    f"Fatturato in calo del {abs(round(rev_change))}% rispetto ai {window} giorni precedenti"),
+                priority="high" if critical else "medium",
+                confidence="high",
+                source="Sales (SP-API)",
+                evidence=_pulse_text(language,
+                    f"Revenue {_pulse_money(cur_rev)} vs {_pulse_money(prev_rev)} ({_pulse_signed(rev_change)}%); "
+                    f"units {current.get('units', 0)} vs {previous.get('units', 0)}.",
+                    f"Fatturato {_pulse_money(cur_rev)} vs {_pulse_money(prev_rev)} ({_pulse_signed(rev_change)}%); "
+                    f"unità {current.get('units', 0)} vs {previous.get('units', 0)}."),
+                rationale=_pulse_text(language,
+                    "Investigate the largest declining ASINs and any buy-box or pricing changes in the period.",
+                    "Analizza gli ASIN in maggior calo e le variazioni di buy-box o prezzo nel periodo."),
+            ))
+        elif rev_change >= PULSE_REVENUE_GROWTH_PCT:
+            recs.append(_pulse_rec(
+                title=_pulse_text(language,
+                    f"Brand revenue up {round(rev_change)}% vs prior {window} days",
+                    f"Fatturato in crescita del {round(rev_change)}% rispetto ai {window} giorni precedenti"),
+                priority="low",
+                confidence="high",
+                source="Sales (SP-API)",
+                evidence=f"{_pulse_money(cur_rev)} vs {_pulse_money(prev_rev)} ({_pulse_signed(rev_change)}%).",
+                rationale=_pulse_text(language,
+                    "Protect stock and ad coverage on the rising ASINs to sustain the momentum.",
+                    "Proteggi stock e copertura ADV sugli ASIN in crescita per sostenere lo slancio."),
+            ))
+
+    # Declining ASIN cluster — seller per-ASIN is a snapshot, so medium confidence.
+    if declining and not awaiting_data:
+        fast = [d for d in declining if d.get("trend_class") == "declining_fast"]
+        worst = declining[0]
+        worst_label = worst.get("title") or worst.get("asin")
+        recs.append(_pulse_rec(
+            title=_pulse_text(language,
+                f"{len(declining)} ASINs declining" + (f", {len(fast)} sharply" if fast else ""),
+                f"{len(declining)} ASIN in calo" + (f", {len(fast)} in forte calo" if fast else "")),
+            priority="high" if fast else "medium",
+            confidence="medium",
+            source="Sales by ASIN (latest snapshot)",
+            evidence=_pulse_text(language,
+                f"Worst: {worst_label} {_pulse_money(worst.get('previous_revenue'))} → "
+                f"{_pulse_money(worst.get('revenue'))} ({_pulse_signed(worst.get('change_percent'))}%).",
+                f"Peggiore: {worst_label} {_pulse_money(worst.get('previous_revenue'))} → "
+                f"{_pulse_money(worst.get('revenue'))} ({_pulse_signed(worst.get('change_percent'))}%)."),
+            rationale=_pulse_text(language,
+                "Review listing quality, price and ad support for the declining ASINs.",
+                "Rivedi qualità della scheda, prezzo e supporto ADV per gli ASIN in calo."),
+        ))
+
+    # Advertising efficiency — only when ad data actually covers the window.
+    if ads.get("is_available"):
+        acos = ads.get("acos")
+        tacos = ads.get("tacos")
+        if acos is not None and acos >= PULSE_ACOS_HIGH_PCT:
+            recs.append(_pulse_rec(
+                title=_pulse_text(language, f"Advertising ACOS high at {acos}%", f"ACOS pubblicitario alto al {acos}%"),
+                priority="high" if acos >= PULSE_ACOS_CRITICAL_PCT else "medium",
+                confidence="high",
+                source="Amazon Ads",
+                evidence=_pulse_text(language,
+                    f"Spend {_pulse_money(ads.get('spend'))}, ad sales {_pulse_money(ads.get('ad_sales'))}, "
+                    f"ACOS {acos}% (7-day attribution).",
+                    f"Spesa {_pulse_money(ads.get('spend'))}, vendite ADV {_pulse_money(ads.get('ad_sales'))}, "
+                    f"ACOS {acos}% (attribuzione 7 giorni)."),
+                rationale=_pulse_text(language,
+                    "Trim spend on targets above the brand-average ACOS and shift budget to efficient terms.",
+                    "Riduci la spesa sui target sopra l'ACOS medio e sposta budget sui termini efficienti."),
+            ))
+        if tacos is not None and tacos >= PULSE_TACOS_HIGH_PCT:
+            recs.append(_pulse_rec(
+                title=_pulse_text(language,
+                    f"Sales rely heavily on ads (TACOS {tacos}%)",
+                    f"Le vendite dipendono molto dall'ADV (TACOS {tacos}%)"),
+                priority="medium",
+                confidence="high",
+                source="Amazon Ads + Sales",
+                evidence=_pulse_text(language,
+                    f"Ad spend is {tacos}% of total revenue ({_pulse_money(ads.get('spend'))} of {_pulse_money(cur_rev)}).",
+                    f"La spesa ADV è il {tacos}% del fatturato totale ({_pulse_money(ads.get('spend'))} su {_pulse_money(cur_rev)})."),
+                rationale=_pulse_text(language,
+                    "Build organic rank on the top ASINs to reduce ad dependence over time.",
+                    "Costruisci posizionamento organico sui top ASIN per ridurre la dipendenza dall'ADV."),
+            ))
+
+    recs.sort(key=lambda r: _priority_to_score(r["priority"]), reverse=True)
+    return recs[:5]
+
+
 class _StrategicRecAnalysisService:
     """Claude wrapper that turns an org snapshot into 3-6 recommendations."""
 
@@ -139,7 +298,7 @@ Rules:
 - Return ONLY the JSON object, no markdown or commentary."""
 
         message = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=2200,
             messages=[{"role": "user", "content": prompt}],
         )

@@ -79,28 +79,57 @@ const runningStatuses: BrandAnalysisStatus[] = [
   'exporting_2024',
 ]
 
-const statusVariant: Record<BrandAnalysisStatus, BadgeVariant> = {
-  pending: 'outline',
-  capability_checking: 'secondary',
-  preflight_checking: 'secondary',
-  internal_sync_requested: 'secondary',
-  syncing_internal_data: 'secondary',
-  internal_sync_completed: 'secondary',
-  internal_sync_failed: 'warning',
-  collecting_source_data: 'secondary',
-  enriching_catalog: 'secondary',
-  generating_metrics: 'secondary',
-  generating_narrative: 'secondary',
+type StatusGroup =
+  | 'preparing'
+  | 'analyzing'
+  | 'generatingDeck'
+  | 'completed'
+  | 'completed_with_limitations'
+  | 'needs_upload'
+  | 'failed'
+
+const statusGroupOf: Record<BrandAnalysisStatus, StatusGroup> = {
+  pending: 'preparing',
+  capability_checking: 'preparing',
+  preflight_checking: 'preparing',
+  internal_sync_requested: 'preparing',
+  syncing_internal_data: 'preparing',
+  internal_sync_completed: 'preparing',
+  collecting_source_data: 'preparing',
+  configuring_market: 'preparing',
+  waiting_for_ready: 'preparing',
+  enriching_catalog: 'analyzing',
+  generating_metrics: 'analyzing',
+  generating_narrative: 'generatingDeck',
+  analyzing: 'generatingDeck',
+  generating_pptx: 'generatingDeck',
+  exporting_2024: 'generatingDeck',
+  exporting_2025: 'generatingDeck',
+  completed: 'completed',
+  completed_with_limitations: 'completed_with_limitations',
+  waiting_for_user_action: 'needs_upload',
+  internal_sync_failed: 'failed',
+  failed: 'failed',
+}
+
+const statusGroupLabelKey: Record<StatusGroup, string> = {
+  preparing: 'brandAnalysis.statusGroup.preparing',
+  analyzing: 'brandAnalysis.status.analyzing',
+  generatingDeck: 'brandAnalysis.statusGroup.generatingDeck',
+  completed: 'brandAnalysis.status.completed',
+  completed_with_limitations: 'brandAnalysis.status.completed_with_limitations',
+  needs_upload: 'brandAnalysis.status.waiting_for_user_action',
+  failed: 'brandAnalysis.status.failed',
+}
+
+const statusGroupVariant: Record<StatusGroup, BadgeVariant> = {
+  preparing: 'secondary',
   analyzing: 'secondary',
-  generating_pptx: 'secondary',
+  generatingDeck: 'secondary',
   completed: 'success',
   completed_with_limitations: 'warning',
+  needs_upload: 'warning',
   failed: 'destructive',
-  waiting_for_user_action: 'warning',
-  configuring_market: 'secondary',
-  waiting_for_ready: 'secondary',
-  exporting_2025: 'secondary',
-  exporting_2024: 'secondary',
 }
 
 const progressSteps = [
@@ -221,7 +250,7 @@ function ReadinessBadge({ state, label }: { state: ReadinessState; label: string
 }
 
 function StatusPill({ status, label }: { status: BrandAnalysisStatus; label: string }) {
-  const variant = statusVariant[status]
+  const variant = statusGroupVariant[statusGroupOf[status]]
   const isRunning = runningStatuses.includes(status)
   return (
     <Badge variant={variant} className="gap-1.5 whitespace-nowrap text-[11px] uppercase tracking-wide">
@@ -478,7 +507,7 @@ export default function BrandAnalysis() {
     uploadMutation.mutate({ year, file })
   }
 
-  const statusLabel = (status: BrandAnalysisStatus): string => t(`brandAnalysis.status.${status}`)
+  const statusLabel = (status: BrandAnalysisStatus): string => t(statusGroupLabelKey[statusGroupOf[status]])
 
   const yearState = (year: 2024 | 2025): { state: ReadinessState; label: string; detail: string } => {
     const coverageReport = coverage.years?.[year] || coverage.years?.[String(year)]
@@ -770,45 +799,22 @@ export default function BrandAnalysis() {
 
             <div className="h-px w-full bg-border" />
 
-            {/* Scope + data source as visual choice cards */}
-            <section className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-2">
-                <Label className="text-xs">{t('brandAnalysis.field.marketType')}</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  <ChoiceTile
-                    active={marketType === 'brand'}
-                    icon={Search}
-                    label={t('brandAnalysis.marketType.brand')}
-                    onClick={() => setMarketType('brand')}
-                  />
-                  <ChoiceTile
-                    active={marketType === 'asin'}
-                    icon={ListChecks}
-                    label={t('brandAnalysis.marketType.asin')}
-                    onClick={() => setMarketType('asin')}
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs">{t('brandAnalysis.field.mode')}</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  <ChoiceTile
-                    active={dataSource === 'internal'}
-                    icon={Database}
-                    label={t('brandAnalysis.mode.internal')}
-                    onClick={() => setDataSource('internal')}
-                    disabled={!accounts || accounts.length === 0}
-                  />
-                  <ChoiceTile
-                    active={dataSource === 'manual'}
-                    icon={Upload}
-                    label={t('brandAnalysis.mode.manual')}
-                    onClick={() => {
-                      setDataSource('manual')
-                      setShowAdvancedUpload(true)
-                    }}
-                  />
-                </div>
+            {/* Scope as visual choice cards */}
+            <section className="space-y-2">
+              <Label className="text-xs">{t('brandAnalysis.field.marketType')}</Label>
+              <div className="grid max-w-md grid-cols-2 gap-2">
+                <ChoiceTile
+                  active={marketType === 'brand'}
+                  icon={Search}
+                  label={t('brandAnalysis.marketType.brand')}
+                  onClick={() => setMarketType('brand')}
+                />
+                <ChoiceTile
+                  active={marketType === 'asin'}
+                  icon={ListChecks}
+                  label={t('brandAnalysis.marketType.asin')}
+                  onClick={() => setMarketType('asin')}
+                />
               </div>
             </section>
 

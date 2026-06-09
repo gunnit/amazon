@@ -247,6 +247,56 @@ class AnalyticsService:
 
         return products
 
+    async def asin_sales_breakdown(
+        self,
+        account_ids: List[UUID],
+        date_from: date,
+        date_to: date,
+    ) -> Dict[str, float]:
+        """Snapshot-aware per-ASIN sales for a period, as an ``{asin: sales}`` map.
+
+        Vendor per-ASIN rows are settled monthly figures and can be summed.
+        Seller per-ASIN rows are trailing-window snapshots re-stamped on every
+        sync, so summing them across dates multiplies a product's sales; for
+        sellers we take the single most complete snapshot date instead. This is
+        the same handling as :meth:`_fetch_asin_breakdown` but returns the full
+        map (no top-N truncation) so callers can compute period-over-period
+        deltas.
+        """
+        if not account_ids:
+            return {}
+
+        types_rows = (
+            await self.db.execute(
+                select(AmazonAccount.id, AmazonAccount.account_type).where(
+                    AmazonAccount.id.in_(account_ids)
+                )
+            )
+        ).all()
+        vendor_ids = [r.id for r in types_rows if r.account_type == AccountType.VENDOR]
+        seller_ids = [r.id for r in types_rows if r.account_type == AccountType.SELLER]
+
+        contributions: Dict[str, float] = {}
+
+        if vendor_ids:
+            for row in await self._sum_asin_sales(vendor_ids, date_from, date_to):
+                contributions[row.asin] = contributions.get(row.asin, 0.0) + self._as_float(
+                    row.total_sales
+                )
+
+        for seller_id in seller_ids:
+            snapshot_date = await self._latest_full_snapshot_date(
+                seller_id, date_from, date_to
+            )
+            if snapshot_date is None:
+                continue
+            for row in await self._sum_asin_sales([seller_id], snapshot_date, snapshot_date):
+                contributions[row.asin] = contributions.get(row.asin, 0.0) + self._as_float(
+                    row.total_sales
+                )
+
+        return contributions
+
     async def compute_advertising_metrics(
         self,
         account_ids: List[UUID],

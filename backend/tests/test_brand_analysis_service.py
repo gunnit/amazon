@@ -202,7 +202,9 @@ def test_pptx_generation_produces_valid_deck():
     from pptx import Presentation
 
     deck = Presentation(BytesIO(pptx_bytes))
-    assert len(deck.slides) == 16
+    # The Acme sample is a manual CSV upload with no external market export, so
+    # the market share slide is skipped and the deck has 15 slides, not 16.
+    assert len(deck.slides) == 15
     assert pptx_bytes[:2] == b"PK"
 
 
@@ -212,14 +214,35 @@ def test_pptx_validate_helper_returns_structural_fingerprint():
     pptx_bytes = build_brand_analysis_pptx(metrics, narrative)
 
     fingerprint = validate_pptx_bytes(pptx_bytes)
-    assert fingerprint["slide_count"] == 16
+    assert fingerprint["slide_count"] == 15
     cover = fingerprint["slide_texts"][0].upper()
     assert "ACME" in cover and "AMAZON" in cover
     as_is = fingerprint["slide_texts"][1].upper()
     assert "CURRENT AMAZON PERFORMANCE" in as_is
     deck_text = "\n".join(fingerprint["slide_texts"]).upper()
-    assert "MARKET SHARE" in deck_text
+    # No external market export for this sample, so the market share slide is skipped.
+    assert "MARKET SHARE" not in deck_text
     assert "SEO & CONTENT" in deck_text
+
+
+def test_pptx_includes_market_share_slide_when_external_market_export_present():
+    metrics = _metrics()
+    narrative = build_fallback_narrative(metrics)
+    na_count = validate_pptx_bytes(build_brand_analysis_pptx(metrics, narrative))["slide_count"]
+
+    market = metrics["market_analysis"]
+    market["status"] = "calculated_from_external_market_export"
+    market["market_size_2025"] = 800.0
+    market["market_share_2025"] = 25.0
+    market["market_share_2024"] = 20.0
+    market["competitive_brand_distribution"] = [
+        {"brand": "Competitor", "asin_count": 3, "revenue": 600.0, "market_share_percent": 75.0},
+    ]
+
+    fingerprint = validate_pptx_bytes(build_brand_analysis_pptx(metrics, narrative))
+    deck_text = "\n".join(fingerprint["slide_texts"]).upper()
+    assert "MARKET SHARE" in deck_text
+    assert fingerprint["slide_count"] == na_count + 1
 
 
 def test_validate_pptx_bytes_rejects_corrupted_artifact():
@@ -254,7 +277,7 @@ def test_pptx_pipeline_from_sample_2024_2025_data_produces_downloadable_artifact
     pptx_bytes = build_brand_analysis_pptx(metrics, narrative)
 
     fingerprint = validate_pptx_bytes(pptx_bytes)
-    assert fingerprint["slide_count"] == 16
+    assert fingerprint["slide_count"] == 15
     # The artifact bytes are what the API hands back from /download — make
     # sure they're a real OOXML zip and not, say, an HTML error page.
     assert pptx_bytes[:2] == b"PK"

@@ -14,7 +14,7 @@ import type {
   GoogleSheetsConnection, GoogleSheetsSync, GoogleSheetsSyncRun,
   ApiKeysUpdate, ApiKeysResponse,
   MarketResearchReport, MarketResearchListItem, ComparisonMatrixResponse, MarketSearchResponse, CompetitorSuggestion,
-  BrandAnalysisJob, BrandAnalysisListItem,
+  BrandAnalysisJob, BrandAnalysisListItem, BrandPulseResponse,
   AlertRule, AlertBulkMutationResponse, AlertListResponse, AlertMutationResponse, AlertStatus, AlertSummary, AlertType,
 } from '@/types'
 
@@ -1107,6 +1107,18 @@ export const brandAnalysisApi = {
 
   delete: async (id: string): Promise<void> => {
     await api.delete(`/brand-analysis/${id}`)
+  },
+}
+
+export const brandPulseApi = {
+  get: async (params: {
+    account_ids?: string[]
+    window_days?: number
+    end_date?: string
+    language?: 'en' | 'it'
+  }): Promise<BrandPulseResponse> => {
+    const response = await api.get('/brand-pulse', { params })
+    return response.data
   },
 }
 

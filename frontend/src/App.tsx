@@ -14,6 +14,7 @@ import ProductAnalytics from '@/pages/ProductAnalytics'
 import Forecasts from '@/pages/Forecasts'
 import MarketResearch from '@/pages/MarketResearch'
 import BrandAnalysis from '@/pages/BrandAnalysis'
+import BrandPulse from '@/pages/BrandPulse'
 import Catalog from '@/pages/Catalog'
 import Recommendations from '@/pages/Recommendations'
 import Settings from '@/pages/Settings'
@@ -95,6 +96,14 @@ function App() {
             element={
               <ErrorBoundary title="Brand Analysis crashed">
                 <BrandAnalysis />
+              </ErrorBoundary>
+            }
+          />
+          <Route
+            path="brand-pulse"
+            element={
+              <ErrorBoundary title="Brand Pulse crashed">
+                <BrandPulse />
               </ErrorBoundary>
             }
           />

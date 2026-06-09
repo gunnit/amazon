@@ -26,6 +26,70 @@ export interface AuthTokens {
 export type AccountType = 'seller' | 'vendor'
 export type SyncStatus = 'pending' | 'syncing' | 'success' | 'error'
 
+// Brand Pulse
+export interface PulsePeriod {
+  start: string
+  end: string
+  previous_start: string
+  previous_end: string
+  window_days: number
+  cadence: string
+  awaiting_data: boolean
+}
+export interface PulsePeriodMetrics {
+  revenue: number
+  units: number
+  orders: number
+  average_order_value: number
+  active_asins: number
+}
+export interface PulseMetricChange {
+  absolute: number
+  percent: number
+  trend: 'up' | 'down' | 'stable'
+}
+export interface PulseOverview {
+  current: PulsePeriodMetrics
+  previous: PulsePeriodMetrics
+  changes: Record<string, PulseMetricChange>
+}
+export interface PulseAsin {
+  asin: string
+  title: string | null
+  revenue: number
+  previous_revenue: number
+  change_percent: number
+}
+export interface PulseDecliningAsin extends PulseAsin {
+  trend_class: 'declining' | 'declining_fast'
+}
+export interface PulseAds {
+  is_available: boolean
+  unavailable_reason?: string | null
+  spend?: number | null
+  ad_sales?: number | null
+  acos?: number | null
+  tacos?: number | null
+  roas?: number | null
+  attribution_window?: string | null
+}
+export interface PulseRecommendation {
+  title: string
+  priority: 'high' | 'medium' | 'low'
+  confidence: 'high' | 'medium' | 'low'
+  source: string
+  evidence: string
+  rationale?: string | null
+}
+export interface BrandPulseResponse {
+  period: PulsePeriod
+  overview: PulseOverview
+  top_asins: PulseAsin[]
+  declining_asins: PulseDecliningAsin[]
+  ads: PulseAds
+  recommendations: PulseRecommendation[]
+}
+
 export interface AmazonAccount {
   id: string
   organization_id: string

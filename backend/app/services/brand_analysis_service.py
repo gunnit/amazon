@@ -1925,7 +1925,7 @@ def build_fallback_narrative(metrics: dict[str, Any], language: str = "en") -> d
             ],
             "plan": [
                 "Use a 3-phase 12-month operating plan",
-                f"Realistic scenario range: {format_currency(metrics['growth_projection_scenarios']['realistic']['revenue_low'])} - {format_currency(metrics['growth_projection_scenarios']['realistic']['revenue_high'])}",
+                f"Illustrative scenario range: {format_currency((metrics.get('growth_projection_scenarios') or {}).get('realistic', {}).get('revenue_low'))} - {format_currency((metrics.get('growth_projection_scenarios') or {}).get('realistic', {}).get('revenue_high'))}",
             ],
             "urgency": [
                 f"Inactive catalog: {format_percent(inactive_pct)}",
@@ -1936,6 +1936,49 @@ def build_fallback_narrative(metrics: dict[str, Any], language: str = "en") -> d
     if not metrics.get("rules", {}).get("can_mention_vine", False):
         narrative = _remove_vine_mentions(narrative)
     return narrative
+
+
+def build_priority_actions(metrics: dict[str, Any], language: str = "en") -> list[str]:
+    """Brand-specific priority actions derived from the deck's real metrics.
+
+    Replaces the old hard-coded per-scenario playbook (identical for every brand)
+    with actions grounded in this brand's actual gaps. Only actions whose
+    underlying metric is present and non-zero are emitted, so the list is never
+    boilerplate; the largest gaps come first.
+    """
+    it = language == "it"
+    content = metrics.get("content_health") or {}
+    candidates: list[tuple[int, str]] = []
+
+    def add(count: Any, en_text: str, it_text: str) -> None:
+        n = int(count or 0)
+        if n > 0:
+            candidates.append((n, (it_text if it else en_text).format(n=n)))
+
+    add(metrics.get("inactive_asins_2025"),
+        "Reactivate {n} inactive ASINs", "Riattivare {n} ASIN inattivi")
+    add(metrics.get("asins_with_fewer_than_5_images"),
+        "Add images to {n} ASINs (under 5)", "Aggiungere immagini a {n} ASIN (meno di 5)")
+    add(content.get("asins_missing_aplus_content"),
+        "Add A+ content to {n} ASINs", "Aggiungere contenuti A+ a {n} ASIN")
+    add(content.get("short_title_count"),
+        "Improve {n} short titles", "Migliorare {n} titoli troppo corti")
+    add(content.get("asins_missing_description"),
+        "Add descriptions to {n} ASINs", "Aggiungere descrizioni a {n} ASIN")
+    add(metrics.get("declining_asins_count"),
+        "Review {n} declining ASINs", "Rivedere {n} ASIN in calo")
+    add(metrics.get("asins_with_fewer_than_15_reviews"),
+        "Build reviews on {n} ASINs (under 15)", "Aumentare le recensioni su {n} ASIN (meno di 15)")
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    actions = [text for _, text in candidates[:6]]
+    if not actions:
+        actions = [
+            "Mantenere copertura di catalogo e qualità dei contenuti"
+            if it
+            else "Maintain catalog coverage and content quality"
+        ]
+    return actions
 
 
 class BrandAnalysisNarrativeService:
@@ -2005,7 +2048,7 @@ Return ONLY valid JSON with exactly this structure:
   }}
 }}"""
             message = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=2200,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -2197,25 +2240,15 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
         "roadmap_title": "Operational Roadmap",
         "roadmap_subtitle": "3-phase action plan for the first 12 months",
         # Projection
-        "projection_title": "Growth Projection",
-        "projection_subtitle": "12-month revenue growth scenarios",
+        "projection_title": "Growth Scenarios",
+        "projection_subtitle": "Illustrative 12-month revenue ranges, not a forecast",
         "current_situation": "Current Situation",
         "projection_active_asins": "active ASINs out of",
         "scenario_conservative": "CONSERVATIVE",
         "scenario_realistic": "REALISTIC",
         "scenario_optimistic": "OPTIMISTIC",
-        "scenario_cons_1": "Basic SEO on top ASINs",
-        "scenario_cons_2": "Image upgrade priority set",
-        "scenario_cons_3": "ADV on key categories",
-        "scenario_cons_4": "Basic Buy Box monitoring",
-        "scenario_real_1": "SEO across broad catalog",
-        "scenario_real_2": "A+ Content on priority ASINs",
-        "scenario_real_3": "Inactive ASIN reactivation",
-        "scenario_real_4": "ADV and competitor targeting",
-        "scenario_opt_1": "Full catalog SEO",
-        "scenario_opt_2": "A+ plus video on hero ASINs",
-        "scenario_opt_3": "Aggressive reactivation",
-        "scenario_opt_4": "Brand Store and ADV scale-up",
+        "projection_actions_title": "Priority actions for this brand",
+        "projection_disclaimer": "Illustrative scenarios based on uniform growth assumptions, not a forecast. Adjust with brand-specific targets.",
         # Conclusions
         "conclusions_title": "Conclusions",
         "conclusions_subtitle": "Summary and next steps",
@@ -2357,25 +2390,15 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
         "roadmap_title": "Roadmap operativa",
         "roadmap_subtitle": "Piano d'azione in 3 fasi per i primi 12 mesi",
         # Projection
-        "projection_title": "Proiezione di crescita",
-        "projection_subtitle": "Scenari di crescita del fatturato a 12 mesi",
+        "projection_title": "Scenari di crescita",
+        "projection_subtitle": "Intervalli di fatturato illustrativi a 12 mesi, non una previsione",
         "current_situation": "Situazione attuale",
         "projection_active_asins": "ASIN attivi su",
         "scenario_conservative": "CONSERVATIVO",
         "scenario_realistic": "REALISTICO",
         "scenario_optimistic": "OTTIMISTICO",
-        "scenario_cons_1": "SEO di base sugli ASIN principali",
-        "scenario_cons_2": "Priorità di upgrade delle immagini definita",
-        "scenario_cons_3": "ADV sulle categorie chiave",
-        "scenario_cons_4": "Monitoraggio Buy Box di base",
-        "scenario_real_1": "SEO sull'intero catalogo",
-        "scenario_real_2": "Contenuti A+ sugli ASIN prioritari",
-        "scenario_real_3": "Riattivazione degli ASIN inattivi",
-        "scenario_real_4": "ADV e targeting dei concorrenti",
-        "scenario_opt_1": "SEO sull'intero catalogo",
-        "scenario_opt_2": "A+ con video sugli ASIN di punta",
-        "scenario_opt_3": "Riattivazione aggressiva",
-        "scenario_opt_4": "Scale-up di Brand Store e ADV",
+        "projection_actions_title": "Azioni prioritarie per questa marca",
+        "projection_disclaimer": "Scenari illustrativi basati su ipotesi di crescita uniforme, non una previsione. Da adattare con obiettivi specifici della marca.",
         # Conclusions
         "conclusions_title": "Conclusioni",
         "conclusions_subtitle": "Sintesi e prossimi passi",
@@ -2412,6 +2435,13 @@ class BrandAnalysisPptxBuilder:
             return ""
         return f" [{str(quality).upper()}]"
 
+    def _has_market_share(self) -> bool:
+        return (self.metrics.get("market_analysis") or {}).get("status") == "calculated_from_external_market_export"
+
+    def _has_channel_data(self) -> bool:
+        bb = self.metrics.get("seller_buy_box_summary") or {}
+        return any(bb.get(k) for k in ("seller_count_available", "offer_count_available", "buy_box_owner_available", "current_snapshot_available"))
+
     def build(self) -> bytes:
         from pptx import Presentation
         from pptx.dml.color import RGBColor
@@ -2429,21 +2459,29 @@ class BrandAnalysisPptxBuilder:
         self._Pt = Pt
 
         self._slide_cover(prs)
-        self._slide_as_is(prs, 2)
-        self._slide_revenue_yoy(prs, 3)
-        self._slide_catalog_health(prs, 4)
-        self._slide_active_inactive(prs, 5)
-        self._slide_top_performers(prs, 6)
-        self._slide_content_audit(prs, 7)
-        self._slide_review_image_weaknesses(prs, 8)
-        self._slide_subcategory_performance(prs, 9)
-        self._slide_operational_gap(prs, 10)
-        self._slide_channel_gap(prs, 11)
-        self._slide_concentration_risk(prs, 12)
-        self._slide_market_share(prs, 13)
-        self._slide_projection(prs, 14)
-        self._slide_roadmap(prs, 15)
-        self._slide_conclusions(prs, 16)
+        slides = [
+            (self._slide_as_is, True),
+            (self._slide_revenue_yoy, True),
+            (self._slide_catalog_health, True),
+            (self._slide_active_inactive, True),
+            (self._slide_top_performers, True),
+            (self._slide_content_audit, True),
+            (self._slide_review_image_weaknesses, True),
+            (self._slide_subcategory_performance, True),
+            (self._slide_operational_gap, True),
+            (self._slide_channel_gap, self._has_channel_data()),
+            (self._slide_concentration_risk, True),
+            (self._slide_market_share, self._has_market_share()),
+            (self._slide_projection, True),
+            (self._slide_roadmap, True),
+            (self._slide_conclusions, True),
+        ]
+        page = 2
+        for method, include in slides:
+            if not include:
+                continue
+            method(prs, page)
+            page += 1
 
         output = io.BytesIO()
         prs.save(output)
@@ -2832,21 +2870,28 @@ class BrandAnalysisPptxBuilder:
             color=(80, 80, 80),
         )
         scenarios = [
-            (self._t("scenario_conservative"), "conservative", (100, 116, 139), [self._t("scenario_cons_1"), self._t("scenario_cons_2"), self._t("scenario_cons_3"), self._t("scenario_cons_4")]),
-            (self._t("scenario_realistic"), "realistic", (22, 163, 74), [self._t("scenario_real_1"), self._t("scenario_real_2"), self._t("scenario_real_3"), self._t("scenario_real_4")]),
-            (self._t("scenario_optimistic"), "optimistic", (212, 39, 45), [self._t("scenario_opt_1"), self._t("scenario_opt_2"), self._t("scenario_opt_3"), self._t("scenario_opt_4")]),
+            (self._t("scenario_conservative"), "conservative", (100, 116, 139)),
+            (self._t("scenario_realistic"), "realistic", (22, 163, 74)),
+            (self._t("scenario_optimistic"), "optimistic", (212, 39, 45)),
         ]
         projections = self.metrics.get("growth_projection_scenarios") or {}
-        for idx, (label, key, color, actions) in enumerate(scenarios):
+        for idx, (label, key, color) in enumerate(scenarios):
             x = 0.65 + idx * 3.0
             scenario = projections.get(key, {})
-            self._rect(slide, x, 2.05, 2.7, 2.55, self._RGBColor(250, 250, 250))
+            self._rect(slide, x, 2.05, 2.7, 1.45, self._RGBColor(250, 250, 250))
             self._rect(slide, x, 2.05, 2.7, 0.18, self._RGBColor(*color))
             growth = f"+{scenario.get('growth_low', 0)}-{scenario.get('growth_high', 0)}%"
-            self._text(slide, x + 0.12, 2.38, 2.45, 0.2, label, size=9, bold=True, color=color)
-            self._text(slide, x + 0.12, 2.67, 2.45, 0.25, growth, size=18, bold=True, color=color)
-            self._text(slide, x + 0.12, 3.02, 2.45, 0.2, f"{format_currency(scenario.get('revenue_low'))} - {format_currency(scenario.get('revenue_high'))}", size=8.5, bold=True)
-            self._text(slide, x + 0.12, 3.42, 2.45, 0.75, "\n".join(f"-> {action}" for action in actions), size=7.5, color=(70, 70, 70))
+            self._text(slide, x + 0.12, 2.40, 2.45, 0.2, label, size=9, bold=True, color=color)
+            self._text(slide, x + 0.12, 2.70, 2.45, 0.3, growth, size=18, bold=True, color=color)
+            self._text(slide, x + 0.12, 3.10, 2.45, 0.25, f"{format_currency(scenario.get('revenue_low'))} - {format_currency(scenario.get('revenue_high'))}", size=8.5, bold=True)
+        # Brand-specific priority actions derived from real metrics (not boilerplate).
+        actions = build_priority_actions(self.metrics, self.language)
+        self._text(slide, 0.65, 3.72, 8.7, 0.2, self._t("projection_actions_title"), size=11, bold=True, color=(40, 40, 40))
+        self._text(slide, 0.65, 4.00, 4.25, 1.1, "\n".join(f"-> {a}" for a in actions[0:3]), size=9, color=(70, 70, 70))
+        if actions[3:6]:
+            self._text(slide, 5.10, 4.00, 4.25, 1.1, "\n".join(f"-> {a}" for a in actions[3:6]), size=9, color=(70, 70, 70))
+        # Honest framing: illustrative ranges, not a forecast.
+        self._text(slide, 0.65, 5.18, 8.7, 0.22, self._t("projection_disclaimer"), size=7, color=(150, 150, 150))
 
     def _slide_conclusions(self, prs, page: int) -> None:
         slide = self._blank(prs)
@@ -3143,14 +3188,15 @@ def validate_pptx_bytes(pptx_bytes: bytes) -> dict[str, Any]:
     """Open a generated PPTX and return a structural fingerprint for tests.
 
     Raises a :class:`ValueError` if the deck doesn't open or doesn't meet
-    the expected 16-slide structure.
+    the expected 12-16 slide structure (N/A slides are skipped, so the count
+    varies with the available data).
     """
     from pptx import Presentation
 
     prs = Presentation(io.BytesIO(pptx_bytes))
     slide_count = len(prs.slides)
-    if slide_count != 16:
-        raise ValueError(f"Expected 16 slides, got {slide_count}")
+    if slide_count < 12 or slide_count > 16:
+        raise ValueError(f"Expected 12-16 slides, got {slide_count}")
 
     def slide_text(slide) -> str:
         parts: list[str] = []

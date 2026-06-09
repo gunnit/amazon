@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
+  Activity,
   LayoutDashboard,
   LineChart,
   TrendingUp,
@@ -34,6 +35,7 @@ const navItems = [
   { key: 'nav.forecasts', href: '/forecasts', icon: TrendingUp },
   { key: 'nav.marketResearch', href: '/market-research', icon: Search },
   { key: 'nav.brandAnalysis', href: '/brand-analysis', icon: Sparkles },
+  { key: 'nav.brandPulse', href: '/brand-pulse', icon: Activity },
   { key: 'nav.catalog', href: '/catalog', icon: Package },
   { key: 'nav.recommendations', href: '/recommendations', icon: Lightbulb },
   { key: 'nav.alerts', href: '/alerts', icon: Bell },
