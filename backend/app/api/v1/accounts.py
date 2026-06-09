@@ -315,6 +315,18 @@ async def create_account(
     await db.flush()
     await db.refresh(account)
 
+    # A freshly connected account has no data yet. Kick off an initial sync plus
+    # a historical sales backfill in the background so dashboards and forecasts
+    # are populated without the user triggering anything manually. The row must
+    # be committed first: the background thread opens its own DB connection and
+    # would not see an uncommitted account (same pattern as trigger_sync).
+    if account.sp_api_refresh_token_encrypted or account.advertising_refresh_token_encrypted:
+        account.sync_status = SyncStatus.SYNCING
+        await db.commit()
+        await db.refresh(account)
+        from app.services.extraction_runner import initial_sync_in_thread
+        initial_sync_in_thread(account.id)
+
     return _account_to_response(account, organization)
 
 
@@ -652,6 +664,45 @@ async def trigger_sync_all(
     sync_accounts_in_thread([a.id for a in accounts])
 
     return [_account_to_status_response(a) for a in accounts]
+
+
+@router.post("/{account_id}/backfill", response_model=AccountStatusResponse)
+async def trigger_backfill(
+    account_id: UUID,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    months: int = Query(default=24, ge=1, le=24),
+):
+    """Re-sync an account and backfill historical sales (up to 24 months).
+
+    For accounts connected before auto-backfill existed, or whose history is too
+    short for a reliable forecast. Runs in the background; poll account status."""
+    result = await db.execute(
+        select(AmazonAccount).where(
+            AmazonAccount.id == account_id,
+            AmazonAccount.organization_id == organization.id,
+        )
+    )
+    account = result.scalar_one_or_none()
+
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Account not found"
+        )
+
+    account.sync_status = SyncStatus.SYNCING
+    account.sync_error_message = None
+    account.sync_error_code = None
+    account.sync_error_kind = None
+    await db.commit()
+    await db.refresh(account)
+
+    from app.services.extraction_runner import initial_sync_in_thread
+    initial_sync_in_thread(account_id, backfill_months=months)
+
+    return _account_to_status_response(account)
 
 
 @router.get("/{account_id}/status", response_model=AccountStatusResponse)

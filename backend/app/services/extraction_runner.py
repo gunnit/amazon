@@ -9,10 +9,10 @@ safely from a separate thread/loop.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import date, datetime, timedelta
 import logging
 import threading
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import select
@@ -25,10 +25,18 @@ from sqlalchemy.ext.asyncio import (
 from app.config import settings
 from app.core.sync_health import classify_sync_exception
 from app.db.session import db_url as _db_url
-from app.models.amazon_account import AmazonAccount, SyncStatus
+from app.models.amazon_account import AccountType, AmazonAccount, SyncStatus
 from app.services.data_extraction import DataExtractionService
 
 logger = logging.getLogger(__name__)
+
+# A freshly connected account gets a historical sales backfill this many months
+# deep so forecasts have enough history immediately, clamped to SP-API's 2-year
+# limit below.
+DEFAULT_BACKFILL_MONTHS = 24
+# GET_SALES_AND_TRAFFIC_REPORT cancels reports whose start is more than two years
+# old; stay a few days inside the boundary.
+SP_API_MAX_LOOKBACK_DAYS = 729
 
 
 def _make_local_session_factory():
@@ -120,6 +128,106 @@ def sync_accounts_in_thread(account_ids: Iterable[UUID]) -> None:
         target=_run_sync,
         args=(ids,),
         name=f"sync-batch-{len(ids)}",
+        daemon=True,
+    )
+    thread.start()
+
+
+# ---------------------------------------------------------------------------
+# Initial sync + historical backfill (first connect / on-demand re-backfill)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_backfill_window(months: int) -> Tuple[date, date]:
+    """[start, end] for a backfill ``months`` deep, clamped to SP-API's 2-year cap."""
+    end_date = date.today()
+    earliest = end_date - timedelta(days=SP_API_MAX_LOOKBACK_DAYS)
+    start_date = max(end_date - timedelta(days=30 * months), earliest)
+    return start_date, end_date
+
+
+async def _initial_sync_one(account_id: UUID, backfill_months: int, session_factory) -> None:
+    """First-connect pipeline: a full current sync, then a historical sales
+    backfill. Phase 1 stamps account status and fetches current
+    inventory/orders/ads/products + recent sales; phase 2 fills older sales
+    history for forecasting. The backfill is best-effort and never downgrades a
+    successful sync."""
+    # Phase 1 — full current sync (also sets sync_status / error state).
+    async with session_factory() as db:
+        service = DataExtractionService(db)
+        try:
+            result = await service.sync_account(account_id)
+            await db.commit()
+            logger.info(
+                "Initial sync completed for %s: %s",
+                account_id,
+                {k: v for k, v in result.items() if k != "status"},
+            )
+        except Exception as exc:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            await _persist_sync_failure_state(account_id, session_factory, exc)
+            logger.exception("Initial sync failed for %s; skipping backfill", account_id)
+            return
+
+    # Phase 2 — historical sales backfill (best-effort; commits per month).
+    async with session_factory() as db:
+        result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
+        account = result.scalar_one_or_none()
+        if account is None:
+            return
+        service = DataExtractionService(db)
+        start_date, end_date = _resolve_backfill_window(backfill_months)
+        try:
+            organization = await service._load_organization(account)
+            if account.account_type == AccountType.VENDOR:
+                count = await service.backfill_vendor_sales_data(
+                    account, organization, start_date=start_date, end_date=end_date
+                )
+            else:
+                count = await service.backfill_sales_data(
+                    account, organization, start_date=start_date, end_date=end_date
+                )
+            logger.info(
+                "Historical backfill completed for %s: %d records (%s..%s)",
+                account_id, count, start_date, end_date,
+            )
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            logger.exception(
+                "Historical backfill failed for %s (current sync already succeeded)",
+                account_id,
+            )
+
+
+def _run_initial_sync(account_id: UUID, backfill_months: int) -> None:
+    engine, session_factory = _make_local_session_factory()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(
+            _initial_sync_one(account_id, backfill_months, session_factory)
+        )
+    finally:
+        try:
+            loop.run_until_complete(engine.dispose())
+        finally:
+            loop.close()
+
+
+def initial_sync_in_thread(
+    account_id: UUID, backfill_months: int = DEFAULT_BACKFILL_MONTHS
+) -> None:
+    """Fire-and-forget first-connect sync + historical backfill in a daemon thread."""
+    thread = threading.Thread(
+        target=_run_initial_sync,
+        args=(account_id, backfill_months),
+        name=f"initial-sync-{account_id}",
         daemon=True,
     )
     thread.start()

@@ -490,6 +490,10 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
   const { data: accounts = [], isLoading, isError } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
     queryFn: () => accountsApi.list(),
+    // While any account is syncing/backfilling, poll so its status badge
+    // resolves from "Syncing" to "Synced" on its own, without a manual refresh.
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((a) => a.sync_status === 'syncing') ? 8000 : false,
   })
 
   const { data: summary } = useQuery<AccountSummary>({

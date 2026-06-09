@@ -47,6 +47,9 @@ VENDOR_REPORT_LAG_DAYS = 4
 # vendor sales report API with rapid back-to-back requests.
 VENDOR_BACKFILL_MONTH_PAUSE_SECONDS = 3.0
 
+# Same idea for the seller Sales & Traffic backfill.
+SELLER_BACKFILL_WINDOW_PAUSE_SECONDS = 2.0
+
 
 def _settled_month_windows(start_date: date, end_date: date) -> List[tuple]:
     """Return [(month_start, month_end), ...] for every complete calendar month
@@ -67,6 +70,31 @@ def _settled_month_windows(start_date: date, end_date: date) -> List[tuple]:
         month_end = next_month - timedelta(days=1)
         if month_end <= end_date:
             windows.append((cursor, month_end))
+        cursor = next_month
+    return windows
+
+
+def _month_windows(start_date: date, end_date: date) -> List[tuple]:
+    """Return [(window_start, window_end), ...] covering [start_date, end_date]
+    in calendar-month chunks, INCLUDING the trailing partial month up to
+    end_date.
+
+    Unlike _settled_month_windows (vendor — only whole settled months), seller
+    Sales & Traffic data is available daily up to ~today, so the current
+    incomplete month must be backfilled too. Chunking monthly keeps each request
+    inside SP-API's recommended range and keeps the per-ASIN section — which the
+    report aggregates over the whole request window — to a meaningful one-month
+    snapshot, while daily totals come through for every day."""
+    windows: List[tuple] = []
+    cursor = start_date.replace(day=1)
+    while cursor <= end_date:
+        if cursor.month == 12:
+            next_month = cursor.replace(year=cursor.year + 1, month=1)
+        else:
+            next_month = cursor.replace(month=cursor.month + 1)
+        window_start = max(cursor, start_date)
+        window_end = min(next_month - timedelta(days=1), end_date)
+        windows.append((window_start, window_end))
         cursor = next_month
     return windows
 
@@ -1069,6 +1097,48 @@ class DataExtractionService:
             logger.info(
                 "Backfilled vendor sales for %s %s..%s: %d records",
                 account.account_name, month_start, month_end, count,
+            )
+        return total
+
+    async def backfill_sales_data(
+        self,
+        account: AmazonAccount,
+        organization=None,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        """Backfill historical SELLER sales over an explicit date range.
+
+        The seller counterpart of backfill_vendor_sales_data. Reuses
+        sync_sales_data one calendar month at a time and commits per month so a
+        long history is rebuilt across small transactions. Idempotent via the
+        (account, date, asin) upsert. A window that fails on Amazon's side is
+        rolled back, logged and skipped so one bad month does not abort the whole
+        backfill. The default daily sync window is left untouched."""
+        windows = _month_windows(start_date, end_date)
+        total = 0
+        for index, (window_start, window_end) in enumerate(windows):
+            if index > 0:
+                # Pause between windows so a long backfill does not hammer the
+                # report API and trigger throttling.
+                await asyncio.sleep(SELLER_BACKFILL_WINDOW_PAUSE_SECONDS)
+            try:
+                count = await self.sync_sales_data(
+                    account, organization, window_start, window_end
+                )
+            except AmazonAPIError as exc:
+                await self.db.rollback()
+                logger.warning(
+                    "Seller backfill window %s..%s failed for %s, skipping: %s",
+                    window_start, window_end, account.account_name, exc,
+                )
+                continue
+            await self.db.commit()
+            total += count
+            logger.info(
+                "Backfilled seller sales for %s %s..%s: %d records",
+                account.account_name, window_start, window_end, count,
             )
         return total
 
