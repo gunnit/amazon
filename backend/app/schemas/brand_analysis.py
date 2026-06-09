@@ -26,9 +26,11 @@ BrandAnalysisStatus = Literal[
     "generating_narrative",
     "analyzing",
     "generating_pptx",
+    "cancelling",
     "completed",
     "completed_with_limitations",
     "failed",
+    "cancelled",
     "waiting_for_user_action",
     # Legacy statuses retained for backwards compatibility with existing jobs:
     "configuring_market",

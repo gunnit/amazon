@@ -1098,6 +1098,11 @@ export const brandAnalysisApi = {
     return response.data
   },
 
+  cancel: async (id: string): Promise<BrandAnalysisJob> => {
+    const response = await api.post(`/brand-analysis/${id}/cancel`)
+    return response.data
+  },
+
   download: async (id: string): Promise<Blob> => {
     const response = await api.get(`/brand-analysis/${id}/download`, {
       responseType: 'blob',

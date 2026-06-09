@@ -855,6 +855,8 @@ export type BrandAnalysisStatus =
   | 'completed_with_limitations'
   | 'failed'
   | 'waiting_for_user_action'
+  | 'cancelling'
+  | 'cancelled'
   // Legacy statuses kept for older jobs in the DB:
   | 'configuring_market'
   | 'waiting_for_ready'

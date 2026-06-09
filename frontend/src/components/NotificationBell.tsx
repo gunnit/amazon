@@ -46,6 +46,8 @@ function alertTypeLabel(alert: Alert, t: (key: string) => string): string | null
     price_change: t('alerts.type.price_change'),
     bsr_drop: t('alerts.type.bsr_drop'),
     product_trend: t('alerts.type.product_trend'),
+    brand_analysis_ready: t('alerts.type.brand_analysis_ready'),
+    brand_analysis_failed: t('alerts.type.brand_analysis_failed'),
   }
 
   return labels[alert.alert_type] ?? alert.alert_type

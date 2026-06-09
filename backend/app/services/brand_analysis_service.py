@@ -58,9 +58,11 @@ STATUS_PROGRESS = {
     "generating_narrative": 82,
     "analyzing": 70,
     "generating_pptx": 90,
+    "cancelling": 95,
     "completed": 100,
     "completed_with_limitations": 100,
     "failed": 100,
+    "cancelled": 100,
     "waiting_for_user_action": 50,
     # Legacy statuses kept for backwards compatibility with existing rows:
     "configuring_market": 10,
@@ -68,6 +70,41 @@ STATUS_PROGRESS = {
     "exporting_2025": 40,
     "exporting_2024": 50,
 }
+
+# Statuses a job moves through while work is in flight. The start guard and
+# the cancel endpoint both consult this set; keep it the single source of truth.
+RUNNING_STATUSES = frozenset(
+    {
+        "capability_checking",
+        "preflight_checking",
+        "internal_sync_requested",
+        "syncing_internal_data",
+        "internal_sync_completed",
+        "internal_sync_failed",
+        "analyzing",
+        "generating_metrics",
+        "generating_narrative",
+        "generating_pptx",
+        "collecting_source_data",
+        "enriching_catalog",
+        "cancelling",
+        # Legacy statuses kept for older rows:
+        "configuring_market",
+        "waiting_for_ready",
+        "exporting_2025",
+        "exporting_2024",
+    }
+)
+
+# Statuses from which a job will never advance on its own.
+TERMINAL_STATUSES = frozenset(
+    {
+        "completed",
+        "completed_with_limitations",
+        "failed",
+        "cancelled",
+    }
+)
 
 BRAND_ANALYSIS_YEARS = (2024, 2025)
 SALES_AND_TRAFFIC_REPORT_TYPE = "GET_SALES_AND_TRAFFIC_REPORT"
@@ -121,6 +158,20 @@ COMPLETENESS_OPTIONAL_FIELDS = (
 
 class BrandAnalysisDataError(ValueError):
     """Raised for invalid or unsupported source exports."""
+
+
+class BrandAnalysisJobRunningError(RuntimeError):
+    """Raised when an operation requires the job not to be actively running."""
+
+
+def _revoke_celery_task(task_id: str) -> None:
+    """Best-effort Celery revoke; never raises into the caller."""
+    try:
+        from workers.celery_app import celery_app
+
+        celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+    except Exception as exc:  # pragma: no cover - broker may be unavailable
+        logger.warning("Failed to revoke brand analysis task %s: %s", task_id, exc)
 
 
 class MissingColumnError(BrandAnalysisDataError):
@@ -624,6 +675,7 @@ def parse_brand_export(
 
     normalized["asin"] = normalized["asin"].apply(lambda value: str(value or "").strip().upper())
     normalized = normalized[normalized["asin"] != ""]
+    normalized = normalized[normalized["asin"] != DAILY_TOTAL_ASIN]
     if normalized.empty:
         raise BrandAnalysisDataError("Source file does not contain any valid ASIN rows")
 
@@ -3094,10 +3146,50 @@ class BrandAnalysisService:
         )
         return list(result.scalars().all())
 
+    async def request_cancel(self, job_id: UUID, org_id: UUID) -> Optional[BrandAnalysisJob]:
+        """Cooperatively cancel a job.
+
+        A job that has not started running yet (``pending`` or already in a
+        non-running, non-terminal state) is moved straight to ``cancelled``.
+        A running job is flagged ``cancel_requested`` and parked in
+        ``cancelling`` so the processor aborts at its next phase boundary; the
+        Celery task is also revoked best-effort. Terminal jobs are rejected by
+        the caller (409) before reaching here.
+        """
+        job = await self.get_job(job_id, org_id)
+        if not job:
+            return None
+        if job.status in TERMINAL_STATUSES:
+            return job
+
+        job.cancel_requested = True
+        if job.celery_task_id:
+            _revoke_celery_task(job.celery_task_id)
+
+        if job.status in RUNNING_STATUSES:
+            job.status = "cancelling"
+            job.progress_step = "Cancellation requested"
+            job.progress_pct = STATUS_PROGRESS["cancelling"]
+        else:
+            job.status = "cancelled"
+            job.progress_step = "Cancelled by user"
+            job.progress_pct = 100
+            job.error_message = None
+            job.completed_at = datetime.utcnow()
+        job.updated_at = datetime.utcnow()
+        await self.db.flush()
+        return job
+
     async def delete_job(self, job_id: UUID, org_id: UUID) -> bool:
         job = await self.get_job(job_id, org_id)
         if not job:
             return False
+        # A running job must be cancelled first: deleting the row out from under
+        # the worker leaves orphaned artifacts and races the final commit.
+        if job.status in RUNNING_STATUSES:
+            raise BrandAnalysisJobRunningError(
+                "Cancel the running job before deleting it."
+            )
         await self.db.delete(job)
         await self.db.flush()
         return True
@@ -3216,6 +3308,115 @@ def validate_pptx_bytes(pptx_bytes: bytes) -> dict[str, Any]:
     }
 
 
+# Alert types surfaced to the NotificationBell on terminal brand-analysis
+# transitions. The alerts API exposes ``alert_type`` from the owning rule, so
+# each org gets one auto-created rule per type the first time a job finishes.
+BRAND_ANALYSIS_READY_ALERT_TYPE = "brand_analysis_ready"
+BRAND_ANALYSIS_FAILED_ALERT_TYPE = "brand_analysis_failed"
+
+
+async def _ensure_brand_analysis_alert_rule(db: "AsyncSession", organization_id: UUID, alert_type: str):
+    """Return (creating one if needed) the org's auto rule for a job alert type.
+
+    Job-completion alerts are not user-configured; they hang off a hidden
+    per-org rule so they reuse the existing alerts join/serialization and
+    render in the NotificationBell without bespoke API work.
+    """
+    from app.models.alert import AlertRule
+
+    result = await db.execute(
+        select(AlertRule).where(
+            AlertRule.organization_id == organization_id,
+            AlertRule.alert_type == alert_type,
+        )
+    )
+    rule = result.scalars().first()
+    if rule:
+        return rule
+
+    rule = AlertRule(
+        organization_id=organization_id,
+        name="Brand Analysis",
+        alert_type=alert_type,
+        conditions={"auto_created": True},
+        applies_to_accounts=None,
+        applies_to_asins=None,
+        notification_channels=[],
+        notification_emails=None,
+        webhook_url=None,
+        is_enabled=True,
+    )
+    db.add(rule)
+    await db.flush()
+    return rule
+
+
+def _emit_terminal_notification_factory(session_factory):
+    """Build a coroutine that records a terminal-transition Alert.
+
+    Bound to a session factory so it can run on the worker's private engine
+    after the job's own commit. Best-effort: notification failures never fail
+    the job.
+    """
+
+    async def _emit(*, organization_id, account_id, brand_name: str, status: str) -> None:
+        from app.models.alert import Alert
+
+        if status in {"completed", "completed_with_limitations"}:
+            alert_type = BRAND_ANALYSIS_READY_ALERT_TYPE
+            severity = "info"
+            message = f"Brand analysis for {brand_name} is ready."
+        elif status == "failed":
+            alert_type = BRAND_ANALYSIS_FAILED_ALERT_TYPE
+            severity = "critical"
+            message = f"Brand analysis for {brand_name} failed."
+        else:
+            return
+
+        dedup_key = f"{alert_type}:{organization_id}:{brand_name}:{status}"
+        now = datetime.utcnow()
+        try:
+            async with session_factory() as ndb:
+                rule = await _ensure_brand_analysis_alert_rule(ndb, organization_id, alert_type)
+                existing = await ndb.execute(
+                    select(Alert).where(
+                        Alert.rule_id == rule.id,
+                        Alert.dedup_key == dedup_key,
+                        Alert.resolved_at.is_(None),
+                    )
+                )
+                alert = existing.scalars().first()
+                if alert is not None:
+                    alert.message = message
+                    alert.severity = severity
+                    alert.is_read = False
+                    alert.last_seen_at = now
+                else:
+                    ndb.add(
+                        Alert(
+                            rule_id=rule.id,
+                            organization_id=organization_id,
+                            account_id=account_id,
+                            asin=None,
+                            event_kind=alert_type,
+                            dedup_key=dedup_key,
+                            message=message,
+                            details={"brand_name": brand_name, "status": status},
+                            severity=severity,
+                            is_read=False,
+                            triggered_at=now,
+                            last_seen_at=now,
+                            notification_status="pending",
+                        )
+                    )
+                rule.last_triggered_at = now
+                await ndb.commit()
+        except Exception as exc:
+            logger.warning("Brand analysis notification emit failed for %s: %s", organization_id, exc)
+
+    return _emit
+
+
 def process_brand_analysis_job(job_id: str) -> None:
     """Process a brand analysis job in a background worker or thread."""
     from app.db.session import db_url as _db_url
@@ -3239,13 +3440,16 @@ def process_brand_analysis_job(job_id: str) -> None:
         autoflush=False,
     )
 
+    _emit_terminal_notification = _emit_terminal_notification_factory(_LocalSession)
+
     async def _set_status(status_: str, step: str, pct: Optional[int] = None) -> None:
         try:
             async with _LocalSession() as pdb:
                 await pdb.execute(
                     sa_text(
                         "UPDATE brand_analysis_jobs "
-                        "SET status = :status, progress_step = :step, progress_pct = :pct, updated_at = :updated_at "
+                        "SET status = :status, progress_step = :step, progress_pct = :pct, "
+                        "updated_at = :updated_at, heartbeat_at = :updated_at "
                         "WHERE id = :rid"
                     ),
                     {
@@ -3259,6 +3463,62 @@ def process_brand_analysis_job(job_id: str) -> None:
                 await pdb.commit()
         except Exception as exc:
             logger.warning("Brand analysis progress update failed for %s: %s", job_id, exc)
+
+    async def _job_state() -> Optional[tuple[bool, bool]]:
+        """Return (still_exists, cancel_requested) for the job, on a fresh session.
+
+        Used at phase boundaries so a delete or a cancel that lands mid-run is
+        observed cooperatively instead of being silently overwritten by the
+        worker's final commit.
+        """
+        try:
+            async with _LocalSession() as pdb:
+                row = (
+                    await pdb.execute(
+                        sa_text("SELECT cancel_requested FROM brand_analysis_jobs WHERE id = :rid"),
+                        {"rid": job_id},
+                    )
+                ).first()
+            if row is None:
+                return None
+            return True, bool(row[0])
+        except Exception as exc:
+            logger.warning("Brand analysis state probe failed for %s: %s", job_id, exc)
+            return True, False
+
+    async def _finalize_cancel() -> None:
+        try:
+            async with _LocalSession() as pdb:
+                await pdb.execute(
+                    sa_text(
+                        "UPDATE brand_analysis_jobs "
+                        "SET status = 'cancelled', progress_step = 'Cancelled by user', "
+                        "progress_pct = 100, error_message = NULL, completed_at = :now, "
+                        "updated_at = :now, heartbeat_at = :now "
+                        "WHERE id = :rid AND status NOT IN ('completed', 'completed_with_limitations', 'failed', 'cancelled')"
+                    ),
+                    {"now": datetime.utcnow(), "rid": job_id},
+                )
+                await pdb.commit()
+        except Exception as exc:
+            logger.warning("Brand analysis cancel finalize failed for %s: %s", job_id, exc)
+
+    async def _cancel_or_deleted() -> bool:
+        """True if the job has been deleted or asked to cancel.
+
+        On cancel, finalizes the row to ``cancelled`` so the caller can abort
+        cleanly without committing a half-built artifact.
+        """
+        state = await _job_state()
+        if state is None:
+            logger.info("Brand analysis job %s deleted mid-run; aborting", job_id)
+            return True
+        _, cancel_requested = state
+        if cancel_requested:
+            logger.info("Brand analysis job %s cancellation requested; aborting", job_id)
+            await _finalize_cancel()
+            return True
+        return False
 
     def _resolve_adapter(job: BrandAnalysisJob, source_by_year: dict) -> Any:
         """Pick the right adapter for the job.
@@ -3430,6 +3690,9 @@ def process_brand_analysis_job(job_id: str) -> None:
                                 job.data_coverage = data_coverage
                                 await db.commit()
 
+                if await _cancel_or_deleted():
+                    return
+
                 adapter = _resolve_adapter(job, source_by_year)
                 if isinstance(adapter, AmazonAccountDataSource):
                     adapter.db = db
@@ -3480,6 +3743,9 @@ def process_brand_analysis_job(job_id: str) -> None:
                 if isinstance(adapter, AmazonAccountDataSource) and adapter.enrichment_partial:
                     partial_enrichment_code = "catalog_enrichment_partial"
 
+                if await _cancel_or_deleted():
+                    return
+
                 await _set_status("generating_metrics", "Calculating deterministic metrics")
                 metrics = calculate_brand_metrics(parsed_2024, parsed_2025, brand_name=job.brand_name)
                 completeness = assess_data_completeness(parsed_2024, parsed_2025)
@@ -3516,6 +3782,9 @@ def process_brand_analysis_job(job_id: str) -> None:
                 )
                 validate_metric_provenance_for_deck(metrics, provenance)
 
+                if await _cancel_or_deleted():
+                    return
+
                 await _set_status("generating_narrative", "Generating strategic narrative", 82)
                 narrative = BrandAnalysisNarrativeService().generate(
                     metrics,
@@ -3523,6 +3792,9 @@ def process_brand_analysis_job(job_id: str) -> None:
                     provenance=provenance,
                     limitations=limitations,
                 )
+
+                if await _cancel_or_deleted():
+                    return
 
                 await _set_status("generating_pptx", "Generating PowerPoint deck")
                 pptx_bytes = build_brand_analysis_pptx(metrics, narrative, language=job.language)
@@ -3550,6 +3822,24 @@ def process_brand_analysis_job(job_id: str) -> None:
                     data=pptx_bytes,
                 )
 
+                # Re-select on the work session before the final commit so a
+                # delete or cancel that landed mid-run cannot be resurrected by
+                # writing the completed artifact back onto a vanished/cancelled row.
+                guard = await db.execute(
+                    select(BrandAnalysisJob).where(BrandAnalysisJob.id == UUID(job_id)).with_for_update()
+                )
+                fresh_job = guard.scalar_one_or_none()
+                if fresh_job is None:
+                    logger.info("Brand analysis job %s deleted before completion; discarding artifact", job_id)
+                    await db.rollback()
+                    return
+                if fresh_job.cancel_requested or fresh_job.status in TERMINAL_STATUSES:
+                    logger.info("Brand analysis job %s cancelled before completion; finalizing", job_id)
+                    await db.rollback()
+                    await _finalize_cancel()
+                    return
+                job = fresh_job
+
                 job.metrics = metrics
                 job.metric_provenance = provenance
                 job.capability_matrix = capability_matrix
@@ -3570,20 +3860,43 @@ def process_brand_analysis_job(job_id: str) -> None:
                 job.completed_at = datetime.utcnow()
                 job.updated_at = datetime.utcnow()
                 await db.commit()
+
+                await _emit_terminal_notification(
+                    organization_id=job.organization_id,
+                    account_id=job.account_id,
+                    brand_name=job.brand_name,
+                    status=job.status,
+                )
             except Exception as exc:
                 logger.exception("Brand analysis job %s failed", job_id)
                 await db.rollback()
+                notify_args: Optional[dict] = None
                 async with _LocalSession() as fdb:
                     fail_result = await fdb.execute(select(BrandAnalysisJob).where(BrandAnalysisJob.id == UUID(job_id)))
                     failed_job = fail_result.scalar_one_or_none()
                     if failed_job:
-                        failed_job.status = "failed"
-                        failed_job.error_message = str(exc)[:1000]
-                        failed_job.progress_step = "Failed"
+                        # A delete or cancel that landed mid-run wins over the failure.
+                        if failed_job.cancel_requested:
+                            failed_job.status = "cancelled"
+                            failed_job.error_message = None
+                            failed_job.progress_step = "Cancelled by user"
+                        else:
+                            failed_job.status = "failed"
+                            failed_job.error_message = str(exc)[:1000]
+                            failed_job.progress_step = "Failed"
+                            notify_args = {
+                                "organization_id": failed_job.organization_id,
+                                "account_id": failed_job.account_id,
+                                "brand_name": failed_job.brand_name,
+                                "status": "failed",
+                            }
                         failed_job.progress_pct = 100
                         failed_job.completed_at = datetime.utcnow()
                         failed_job.updated_at = datetime.utcnow()
+                        failed_job.heartbeat_at = datetime.utcnow()
                         await fdb.commit()
+                if notify_args is not None:
+                    await _emit_terminal_notification(**notify_args)
 
     import asyncio
 

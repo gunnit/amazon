@@ -45,6 +45,11 @@ class BrandAnalysisJob(Base):
     next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     sync_idempotency_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
+    celery_task_id: Mapped[Optional[str]] = mapped_column(String(155), nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     metrics: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     narrative: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 

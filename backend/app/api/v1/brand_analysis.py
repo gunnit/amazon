@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import logging
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
@@ -22,7 +23,13 @@ from app.schemas.brand_analysis import (
     BrandAnalysisSourceFileResponse,
     ColumnValidationReport,
 )
-from app.services.brand_analysis_service import BrandAnalysisDataError, BrandAnalysisService
+from app.services.brand_analysis_service import (
+    RUNNING_STATUSES,
+    TERMINAL_STATUSES,
+    BrandAnalysisDataError,
+    BrandAnalysisJobRunningError,
+    BrandAnalysisService,
+)
 from app.services.brand_analysis_storage import BrandAnalysisStorage, StorageRef
 from app.config import settings
 from workers.tasks.brand_analysis import process_brand_analysis
@@ -213,26 +220,7 @@ async def start_brand_analysis_processing(
     job = await service.get_job(job_id, organization.id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Brand analysis job not found")
-    running_statuses = {
-        "capability_checking",
-        "preflight_checking",
-        "internal_sync_requested",
-        "syncing_internal_data",
-        "internal_sync_completed",
-        "internal_sync_failed",
-        "analyzing",
-        "generating_metrics",
-        "generating_narrative",
-        "generating_pptx",
-        "collecting_source_data",
-        "enriching_catalog",
-        # Legacy statuses kept for older rows:
-        "configuring_market",
-        "waiting_for_ready",
-        "exporting_2025",
-        "exporting_2024",
-    }
-    if job.status in running_statuses:
+    if job.status in RUNNING_STATUSES:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Job is already running ({job.status})")
 
     from app.services.brand_analysis_service import _canonical_mode
@@ -257,22 +245,61 @@ async def start_brand_analysis_processing(
     job.error_code = None
     job.last_sync_error = None
     job.next_retry_at = None
+    job.cancel_requested = False
+    job.celery_task_id = None
+    job.started_at = None
     await db.commit()
 
     try:
-        process_brand_analysis.delay(str(job.id))
+        async_result = process_brand_analysis.delay(str(job.id))
+        job.celery_task_id = async_result.id
+        job.started_at = datetime.utcnow()
+        await db.commit()
     except Exception:
         logger.exception(
             "Failed to enqueue brand analysis %s on Celery; falling back to in-process thread",
             job.id,
         )
+        await db.rollback()
         import threading
 
         from app.services.brand_analysis_service import process_brand_analysis_job
 
+        job.started_at = datetime.utcnow()
+        await db.commit()
         thread = threading.Thread(target=process_brand_analysis_job, args=(str(job.id),), daemon=True)
         thread.start()
 
+    job = await service.get_job(job_id, organization.id)
+    return _job_to_response(job)
+
+
+@router.post("/{job_id}/cancel", response_model=BrandAnalysisJobResponse)
+async def cancel_brand_analysis_job(
+    job_id: UUID,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """Request cancellation of a running or queued brand analysis job.
+
+    Pending/not-yet-running jobs are cancelled immediately. Running jobs are
+    flagged for cooperative cancellation (the processor aborts at its next
+    phase boundary) and the Celery task is revoked best-effort. Already
+    terminal jobs return 409.
+    """
+    service = BrandAnalysisService(db)
+    job = await service.get_job(job_id, organization.id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Brand analysis job not found")
+    if job.status in TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Job is already finished ({job.status})",
+        )
+
+    await service.request_cancel(job_id, organization.id)
+    await db.commit()
     job = await service.get_job(job_id, organization.id)
     return _job_to_response(job)
 
@@ -333,9 +360,16 @@ async def delete_brand_analysis_job(
     organization: CurrentOrganization,
     db: DbSession,
 ):
-    """Delete a brand analysis job and its artifacts."""
+    """Delete a brand analysis job and its artifacts.
+
+    A running job cannot be deleted directly; cancel it first to avoid
+    orphaning artifacts and racing the worker's final commit.
+    """
     service = BrandAnalysisService(db)
-    deleted = await service.delete_job(job_id, organization.id)
+    try:
+        deleted = await service.delete_job(job_id, organization.id)
+    except BrandAnalysisJobRunningError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Brand analysis job not found")
     await db.commit()

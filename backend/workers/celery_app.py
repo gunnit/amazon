@@ -105,6 +105,11 @@ celery_app.conf.beat_schedule = {
         "task": "workers.tasks.scheduled_reports.recover_stuck_scheduled_report_runs",
         "schedule": crontab(minute="*/15"),
     },
+    # Recover brand analysis jobs stalled mid-run every 10 minutes
+    "brand-analysis-recovery": {
+        "task": "workers.tasks.brand_analysis.recover_stuck_brand_analysis_jobs",
+        "schedule": crontab(minute="*/10"),
+    },
     # Poll Google Sheets syncs every 5 minutes
     "google-sheets-sync-scan": {
         "task": "workers.tasks.google_sheets.scan_google_sheets_syncs_due",

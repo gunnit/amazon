@@ -18,6 +18,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.analytics_service import AnalyticsService
+from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.granularity import Granularity
 from app.services.strategic_recommendations_service import build_pulse_recommendations
 
@@ -110,7 +111,10 @@ class BrandPulseService:
         titles: Dict[str, Optional[str]],
         limit: int,
     ) -> List[Dict[str, Any]]:
-        ranked = sorted(current_map.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]
+        ranked = sorted(
+            ((asin, sales) for asin, sales in current_map.items() if asin != DAILY_TOTAL_ASIN),
+            key=lambda kv: (-kv[1], kv[0]),
+        )[:limit]
         return [
             {
                 "asin": asin,
@@ -131,6 +135,8 @@ class BrandPulseService:
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         for asin, previous in previous_map.items():
+            if asin == DAILY_TOTAL_ASIN:
+                continue
             if previous <= 0:
                 continue
             current = current_map.get(asin, 0.0)

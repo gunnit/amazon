@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
   AlertTriangle,
   BarChart3,
-  Boxes,
   CheckCircle2,
   Circle,
   Database,
@@ -27,6 +26,8 @@ import {
   Trash2,
   Upload,
   Wallet,
+  X,
+  XCircle,
 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
@@ -70,6 +71,9 @@ type DataSource = 'internal' | 'manual'
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning'
 type ReadinessState = 'ready' | 'warning' | 'missing' | 'unknown'
 
+// Single section-label style shared by every "eyebrow" heading on the page.
+const eyebrow = 'text-xs font-medium uppercase tracking-wide text-muted-foreground'
+
 const runningStatuses: BrandAnalysisStatus[] = [
   'pending',
   'capability_checking',
@@ -88,6 +92,7 @@ const runningStatuses: BrandAnalysisStatus[] = [
   'waiting_for_ready',
   'exporting_2025',
   'exporting_2024',
+  'cancelling',
 ]
 
 type StatusGroup =
@@ -98,6 +103,8 @@ type StatusGroup =
   | 'completed_with_limitations'
   | 'needs_upload'
   | 'failed'
+  | 'cancelling'
+  | 'cancelled'
 
 const statusGroupOf: Record<BrandAnalysisStatus, StatusGroup> = {
   pending: 'preparing',
@@ -119,6 +126,8 @@ const statusGroupOf: Record<BrandAnalysisStatus, StatusGroup> = {
   completed: 'completed',
   completed_with_limitations: 'completed_with_limitations',
   waiting_for_user_action: 'needs_upload',
+  cancelling: 'cancelling',
+  cancelled: 'cancelled',
   internal_sync_failed: 'failed',
   failed: 'failed',
 }
@@ -131,6 +140,8 @@ const statusGroupLabelKey: Record<StatusGroup, string> = {
   completed_with_limitations: 'brandAnalysis.status.completed_with_limitations',
   needs_upload: 'brandAnalysis.status.waiting_for_user_action',
   failed: 'brandAnalysis.status.failed',
+  cancelling: 'brandAnalysis.status.cancelling',
+  cancelled: 'brandAnalysis.status.cancelled',
 }
 
 const statusGroupVariant: Record<StatusGroup, BadgeVariant> = {
@@ -141,6 +152,8 @@ const statusGroupVariant: Record<StatusGroup, BadgeVariant> = {
   completed_with_limitations: 'warning',
   needs_upload: 'warning',
   failed: 'destructive',
+  cancelling: 'secondary',
+  cancelled: 'outline',
 }
 
 const progressSteps = [
@@ -212,6 +225,13 @@ function formatShare(value: unknown): string {
   return typeof value === 'number' ? `${value.toFixed(1)}%` : '—'
 }
 
+function signTone(value: unknown): 'pos' | 'neg' | undefined {
+  if (typeof value !== 'number') return undefined
+  if (value > 0) return 'pos'
+  if (value < 0) return 'neg'
+  return undefined
+}
+
 function metric(job: BrandAnalysisJob | undefined, key: string): unknown {
   return job?.metrics?.[key]
 }
@@ -271,6 +291,8 @@ function StatusPill({ status, label }: { status: BrandAnalysisStatus; label: str
         <CheckCircle2 className="h-3 w-3" />
       ) : status === 'failed' ? (
         <AlertCircle className="h-3 w-3" />
+      ) : status === 'cancelled' ? (
+        <XCircle className="h-3 w-3" />
       ) : status === 'waiting_for_user_action' || status === 'completed_with_limitations' ? (
         <AlertTriangle className="h-3 w-3" />
       ) : (
@@ -281,38 +303,31 @@ function StatusPill({ status, label }: { status: BrandAnalysisStatus; label: str
   )
 }
 
-type KpiTone = 'primary' | 'success' | 'warning' | 'neutral'
-
-const kpiTone: Record<KpiTone, { icon: string }> = {
-  primary: { icon: 'bg-primary/10 text-primary' },
-  success: { icon: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
-  warning: { icon: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' },
-  neutral: { icon: 'bg-muted text-muted-foreground' },
+// Color encodes the value, not the label: positive=emerald, negative=rose,
+// otherwise the plain foreground. Most tiles render neutral.
+function valueClass(valueTone?: 'pos' | 'neg'): string {
+  if (valueTone === 'pos') return 'text-emerald-600 dark:text-emerald-400'
+  if (valueTone === 'neg') return 'text-rose-600 dark:text-rose-400'
+  return 'text-foreground'
 }
 
 function KpiTile({
   label,
   value,
   hint,
-  icon: Icon,
-  tone = 'neutral',
+  valueTone,
 }: {
   label: string
   value: string
   hint?: string
-  icon: typeof Database
-  tone?: KpiTone
+  valueTone?: 'pos' | 'neg'
 }) {
-  const t = kpiTone[tone]
   return (
-    <div className="group rounded-xl border bg-card p-4 transition-shadow hover:shadow-sm">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-        <div className={cn('rounded-md p-1.5', t.icon)}>
-          <Icon className="h-3.5 w-3.5" />
-        </div>
-      </div>
-      <p className="mt-3 text-2xl font-semibold tabular-nums tracking-tight">{value}</p>
+    <div className="rounded-lg border bg-card p-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={cn('mt-2 text-2xl font-semibold tabular-nums tracking-tight', valueClass(valueTone))}>
+        {value}
+      </p>
       {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   )
@@ -370,6 +385,29 @@ export default function BrandAnalysis() {
   })
 
   const selectedJob = selectedJobQuery.data
+
+  // Fire a one-shot toast when the polled job crosses into a terminal state.
+  const notifiedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!selectedJob) return
+    const terminal: Record<string, { titleKey: string; variant?: 'destructive' }> = {
+      completed: { titleKey: 'brandAnalysis.toast.completed' },
+      completed_with_limitations: { titleKey: 'brandAnalysis.toast.completedWithLimitations' },
+      failed: { titleKey: 'brandAnalysis.toast.failed', variant: 'destructive' },
+      cancelled: { titleKey: 'brandAnalysis.toast.cancelled' },
+    }
+    const outcome = terminal[selectedJob.status]
+    if (!outcome) return
+    const marker = `${selectedJob.id}:${selectedJob.status}`
+    if (notifiedRef.current === marker) return
+    notifiedRef.current = marker
+    toast({
+      variant: outcome.variant,
+      title: t(outcome.titleKey),
+      description: selectedJob.brand_name,
+    })
+  }, [selectedJob?.id, selectedJob?.status, selectedJob?.brand_name, t, toast])
+
   const selectedJobFromList = jobsQuery.data?.find((job) => job.id === selectedJobId)
   const selectedJobDataSource = modeToDataSource(selectedJob?.mode)
   const sourceYears = new Set(selectedJob?.source_files.map((file) => file.year) || [])
@@ -477,6 +515,17 @@ export default function BrandAnalysis() {
       if (selectedJobId === id) setSelectedJobId(null)
       queryClient.invalidateQueries({ queryKey: ['brand-analysis'] })
       toast({ description: t('brandAnalysis.action.deleted') })
+    },
+    onError: (error) => {
+      toast({ variant: 'destructive', description: getErrorMessage(error) })
+    },
+  })
+
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => brandAnalysisApi.cancel(id),
+    onSuccess: (job) => {
+      queryClient.invalidateQueries({ queryKey: ['brand-analysis'] })
+      queryClient.invalidateQueries({ queryKey: ['brand-analysis', job.id] })
     },
     onError: (error) => {
       toast({ variant: 'destructive', description: getErrorMessage(error) })
@@ -654,41 +703,33 @@ export default function BrandAnalysis() {
       key: 'sync',
       visible: dataSource === 'internal' && !!selectedAccountObj,
       label: t('brandAnalysis.action.syncAmazon'),
-      description: t('brandAnalysis.action.syncAmazonHelp'),
       onClick: () => selectedAccountObj && syncMutation.mutate(selectedAccountObj.id),
-      icon: RefreshCw,
       disabled: syncMutation.isPending || selectedAccountObj?.sync_status === 'syncing',
     },
     {
       key: 'connection',
       visible: dataSource === 'internal',
       label: t('brandAnalysis.action.checkConnection'),
-      description: t('brandAnalysis.action.checkConnectionHelp'),
       onClick: () => {
         window.location.href = '/settings'
       },
-      icon: ShieldCheck,
       disabled: false,
     },
     {
       key: 'asin',
       visible: marketType === 'brand',
       label: t('brandAnalysis.action.provideAsins'),
-      description: t('brandAnalysis.action.provideAsinsHelp'),
       onClick: () => setMarketType('asin'),
-      icon: ListChecks,
       disabled: false,
     },
     {
       key: 'upload',
       visible: true,
       label: t('brandAnalysis.action.uploadExternal'),
-      description: t('brandAnalysis.action.uploadExternalHelp'),
       onClick: () => {
         setShowAdvancedUpload(true)
         setActiveTab('files')
       },
-      icon: Upload,
       disabled: !selectedJob,
     },
   ].filter((action) => action.visible)
@@ -808,20 +849,18 @@ export default function BrandAnalysis() {
 
             <div className="h-px w-full bg-border" />
 
-            {/* Scope as visual choice cards */}
+            {/* Scope as a restrained segmented control */}
             <section className="space-y-2">
-              <Label className="text-xs">{t('brandAnalysis.field.marketType')}</Label>
-              <div className="grid max-w-md grid-cols-2 gap-2">
-                <ChoiceTile
+              <Label className="text-xs">{t('brandAnalysis.scope.label')}</Label>
+              <div className="inline-flex rounded-md border bg-muted/40 p-0.5">
+                <SegmentButton
                   active={marketType === 'brand'}
-                  icon={Search}
-                  label={t('brandAnalysis.marketType.brand')}
+                  label={t('brandAnalysis.scope.brand')}
                   onClick={() => setMarketType('brand')}
                 />
-                <ChoiceTile
+                <SegmentButton
                   active={marketType === 'asin'}
-                  icon={ListChecks}
-                  label={t('brandAnalysis.marketType.asin')}
+                  label={t('brandAnalysis.scope.asin')}
                   onClick={() => setMarketType('asin')}
                 />
               </div>
@@ -955,21 +994,25 @@ export default function BrandAnalysis() {
                   </p>
                 </div>
 
-                {/* Linear progress bar */}
-                <div className="max-w-2xl space-y-2 pt-1">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      {t('brandAnalysis.progress.title')}
-                    </p>
+                {/* Compact at-a-glance progress; the stepper below carries step detail */}
+                {isRunning ? (
+                  <div className="flex max-w-2xl items-center gap-3 pt-1">
+                    <Progress value={progressPct} className="h-1 flex-1" />
                     <span className="font-mono text-xs tabular-nums text-muted-foreground">
                       {progressPct}%
                     </span>
                   </div>
-                  <Progress value={progressPct} className="h-1.5" />
-                </div>
+                ) : null}
               </div>
 
               <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                {isRunning && currentStatus !== 'cancelling' ? (
+                  <CancelRunButton
+                    brand={selectedJob?.brand_name || ''}
+                    pending={cancelMutation.isPending}
+                    onConfirm={() => selectedJobId && cancelMutation.mutate(selectedJobId)}
+                  />
+                ) : null}
                 <Button
                   type="button"
                   onClick={() => selectedJobId && startMutation.mutate(selectedJobId)}
@@ -1034,22 +1077,22 @@ export default function BrandAnalysis() {
               </Alert>
             ) : null}
 
-            {/* Pipeline stepper */}
-            <div className="space-y-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                {t('brandAnalysis.progress.title')}
-              </p>
-              <StepperPipeline
-                steps={progressSteps.map((step) => ({
-                  key: step.key,
-                  label: t(step.labelKey),
-                  pct: step.pct,
-                }))}
-                currentPct={progressPct}
-                status={currentStatus}
-                isRunning={isRunning}
-              />
-            </div>
+            {/* Pipeline stepper — the single detailed progress view */}
+            {isRunning || (progressPct > 0 && progressPct < 100) ? (
+              <div className="space-y-3">
+                <p className={eyebrow}>{t('brandAnalysis.progress.title')}</p>
+                <StepperPipeline
+                  steps={progressSteps.map((step) => ({
+                    key: step.key,
+                    label: t(step.labelKey),
+                    pct: step.pct,
+                  }))}
+                  currentPct={progressPct}
+                  status={currentStatus}
+                  isRunning={isRunning}
+                />
+              </div>
+            ) : null}
 
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="space-y-5">
               <TabsList className="bg-muted">
@@ -1074,48 +1117,37 @@ export default function BrandAnalysis() {
                     <KpiTile
                       label={t('brandAnalysis.label.revenue2025')}
                       value={formatCurrency(metric(selectedJob, 'total_revenue_2025'))}
-                      icon={Wallet}
-                      tone="primary"
                     />
                     <KpiTile
                       label={t('brandAnalysis.label.revenue2024')}
                       value={formatCurrency(metric(selectedJob, 'total_revenue_2024'))}
-                      icon={Wallet}
-                      tone="neutral"
                     />
                     <KpiTile
                       label={t('brandAnalysis.label.yoy')}
                       value={formatPercent(metric(selectedJob, 'yoy_percent'))}
-                      icon={LineChart}
-                      tone={
-                        typeof metric(selectedJob, 'yoy_percent') === 'number' &&
-                        (metric(selectedJob, 'yoy_percent') as number) >= 0
-                          ? 'success'
-                          : 'warning'
-                      }
+                      valueTone={signTone(metric(selectedJob, 'yoy_percent'))}
                     />
                     <KpiTile
                       label={t('brandAnalysis.label.marketShare')}
                       value={formatShare(metric(selectedJob, 'market_share_2025'))}
-                      icon={Percent}
-                      tone="primary"
                     />
                     <KpiTile
                       label={t('brandAnalysis.label.activeAsins')}
                       value={formatNumber(metric(selectedJob, 'active_asins_2025'))}
-                      icon={Boxes}
-                      tone="success"
                     />
                     <KpiTile
                       label={t('brandAnalysis.label.inactiveAsins')}
                       value={formatNumber(metric(selectedJob, 'inactive_asins_2025'))}
-                      icon={Package}
-                      tone="warning"
+                      valueTone={
+                        typeof metric(selectedJob, 'inactive_asins_2025') === 'number' &&
+                        (metric(selectedJob, 'inactive_asins_2025') as number) > 0
+                          ? 'neg'
+                          : undefined
+                      }
                     />
                   </section>
                 ) : (
                   <EmptyHint
-                    icon={LineChart}
                     title={t('brandAnalysis.label.metricsPreview')}
                     body={t('brandAnalysis.readiness.runToCheck')}
                   />
@@ -1156,36 +1188,23 @@ export default function BrandAnalysis() {
                   </section>
                 ) : null}
 
-                {/* Recommended actions */}
+                {/* Fix data — quiet inline strip of navigational shortcuts */}
                 {recommendedActions.length ? (
-                  <section className="space-y-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                      {t('brandAnalysis.action.title')}
-                    </p>
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                      {recommendedActions.map((action) => {
-                        const Icon = action.icon
-                        return (
-                          <button
-                            key={action.key}
-                            type="button"
-                            disabled={action.disabled}
-                            onClick={action.onClick}
-                            className="group flex h-full flex-col rounded-lg border bg-card p-3 text-left transition-all hover:border-primary/40 hover:bg-primary/[0.03] hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border disabled:hover:bg-card disabled:hover:shadow-none"
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 text-primary group-hover:bg-primary/15">
-                                <Icon className="h-3.5 w-3.5" />
-                              </div>
-                              <span className="text-sm font-medium leading-tight">{action.label}</span>
-                            </div>
-                            <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                              {action.description}
-                            </p>
-                          </button>
-                        )
-                      })}
-                    </div>
+                  <section className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-muted/20 px-4 py-3">
+                    <span className={eyebrow}>{t('brandAnalysis.action.title')}</span>
+                    {recommendedActions.map((action) => (
+                      <Button
+                        key={action.key}
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        disabled={action.disabled}
+                        onClick={action.onClick}
+                        className="h-auto p-0 text-sm font-medium"
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
                   </section>
                 ) : null}
               </TabsContent>
@@ -1193,7 +1212,7 @@ export default function BrandAnalysis() {
               {/* ── Data & capabilities tab ── */}
               <TabsContent value="data" className="mt-4 space-y-6">
                 <section className="space-y-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  <p className={eyebrow}>
                     {t('brandAnalysis.readiness.title')}
                   </p>
                   <div className="grid gap-2.5 md:grid-cols-2">
@@ -1205,7 +1224,7 @@ export default function BrandAnalysis() {
 
                 {hasCapabilityData ? (
                   <section className="space-y-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    <p className={eyebrow}>
                       {t('brandAnalysis.readiness.capabilities')}
                     </p>
                     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -1274,7 +1293,7 @@ export default function BrandAnalysis() {
 
                 {limitationItems.length ? (
                   <section className="space-y-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    <p className={eyebrow}>
                       {t('brandAnalysis.readiness.limitations')}
                     </p>
                     <div className="space-y-2">
@@ -1300,7 +1319,7 @@ export default function BrandAnalysis() {
 
                 {missingOptional.length ? (
                   <section className="space-y-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    <p className={eyebrow}>
                       {t('brandAnalysis.readiness.optionalMissing')}
                     </p>
                     <div className="flex flex-wrap gap-1.5">
@@ -1639,41 +1658,71 @@ function DeleteAnalysisButton({
   )
 }
 
-function ChoiceTile({
+function CancelRunButton({
+  brand,
+  onConfirm,
+  pending,
+}: {
+  brand: string
+  onConfirm: () => void
+  pending?: boolean
+}) {
+  const { t } = useTranslation()
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button type="button" variant="outline" disabled={pending}>
+          {pending ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <X className="mr-2 h-4 w-4" />
+          )}
+          {t('brandAnalysis.cta.cancel')}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t('brandAnalysis.action.cancelConfirmTitle')}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t('brandAnalysis.action.cancelConfirmBody', { brand })}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t('brandAnalysis.action.cancelKeep')}</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={onConfirm}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {t('brandAnalysis.action.cancel')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+function SegmentButton({
   active,
-  icon: Icon,
   label,
   onClick,
-  disabled,
 }: {
   active: boolean
-  icon: typeof Database
   label: string
   onClick: () => void
-  disabled?: boolean
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled}
+      aria-pressed={active}
       className={cn(
-        'group flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-sm transition-all',
+        'rounded px-3 py-1.5 text-sm font-medium transition-colors',
         active
-          ? 'border-primary bg-primary/[0.04] text-foreground ring-1 ring-primary/30'
-          : 'border-input bg-background hover:border-primary/40 hover:bg-muted/40',
-        disabled && 'cursor-not-allowed opacity-50 hover:border-input hover:bg-background',
+          ? 'bg-background text-foreground shadow-sm'
+          : 'text-muted-foreground hover:text-foreground',
       )}
     >
-      <span
-        className={cn(
-          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors',
-          active ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground',
-        )}
-      >
-        <Icon className="h-3.5 w-3.5" />
-      </span>
-      <span className={cn('font-medium leading-tight', active && 'text-foreground')}>{label}</span>
+      {label}
     </button>
   )
 }
@@ -1799,20 +1848,9 @@ function InsightTile({
   )
 }
 
-function EmptyHint({
-  icon: Icon,
-  title,
-  body,
-}: {
-  icon: typeof Database
-  title: string
-  body: string
-}) {
+function EmptyHint({ title, body }: { title: string; body: string }) {
   return (
-    <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed bg-muted/20 px-6 py-10 text-center">
-      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-        <Icon className="h-5 w-5" />
-      </div>
+    <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed bg-muted/20 px-6 py-10 text-center">
       <p className="text-sm font-semibold">{title}</p>
       <p className="max-w-xs text-xs leading-5 text-muted-foreground">{body}</p>
     </div>
