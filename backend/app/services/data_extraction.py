@@ -1134,7 +1134,10 @@ class DataExtractionService:
                         account, organization, window_start, window_end
                     )
                 except AmazonAPIError as exc:
-                    await self.db.rollback()
+                    # Amazon report failures happen before sync_sales_data writes
+                    # any rows. Rolling back here expires the loaded account and
+                    # organization objects, which breaks the retry under
+                    # SQLAlchemy async sessions with MissingGreenlet.
                     should_retry = (
                         exc.error_code == "THROTTLED"
                         and attempt < SELLER_BACKFILL_MAX_WINDOW_ATTEMPTS

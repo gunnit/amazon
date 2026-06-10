@@ -49,6 +49,6 @@ async def test_seller_backfill_retries_throttled_month_after_quota_cooldown(monk
 
     assert count == 7
     assert calls == 2
-    assert db.rollbacks == 1
+    assert db.rollbacks == 0
     assert db.commits == 1
     assert data_extraction.SELLER_BACKFILL_THROTTLE_COOLDOWN_SECONDS in sleeps
