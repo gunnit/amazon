@@ -49,6 +49,11 @@ VENDOR_BACKFILL_MONTH_PAUSE_SECONDS = 3.0
 
 # Same idea for the seller Sales & Traffic backfill.
 SELLER_BACKFILL_WINDOW_PAUSE_SECONDS = 2.0
+# createReport defaults to roughly one request per minute. The SP-API client's
+# short exponential retries handle brief contention, while a historical
+# backfill needs a full quota-window cooldown before it gives up on the month.
+SELLER_BACKFILL_THROTTLE_COOLDOWN_SECONDS = 65.0
+SELLER_BACKFILL_MAX_WINDOW_ATTEMPTS = 3
 
 
 def _settled_month_windows(start_date: date, end_date: date) -> List[tuple]:
@@ -1123,23 +1128,48 @@ class DataExtractionService:
                 # Pause between windows so a long backfill does not hammer the
                 # report API and trigger throttling.
                 await asyncio.sleep(SELLER_BACKFILL_WINDOW_PAUSE_SECONDS)
-            try:
-                count = await self.sync_sales_data(
-                    account, organization, window_start, window_end
-                )
-            except AmazonAPIError as exc:
-                await self.db.rollback()
-                logger.warning(
-                    "Seller backfill window %s..%s failed for %s, skipping: %s",
-                    window_start, window_end, account.account_name, exc,
-                )
-                continue
-            await self.db.commit()
-            total += count
-            logger.info(
-                "Backfilled seller sales for %s %s..%s: %d records",
-                account.account_name, window_start, window_end, count,
-            )
+            for attempt in range(1, SELLER_BACKFILL_MAX_WINDOW_ATTEMPTS + 1):
+                try:
+                    count = await self.sync_sales_data(
+                        account, organization, window_start, window_end
+                    )
+                except AmazonAPIError as exc:
+                    await self.db.rollback()
+                    should_retry = (
+                        exc.error_code == "THROTTLED"
+                        and attempt < SELLER_BACKFILL_MAX_WINDOW_ATTEMPTS
+                    )
+                    if should_retry:
+                        logger.warning(
+                            "Seller backfill window %s..%s throttled for %s; "
+                            "cooling down %.0fs before attempt %d/%d",
+                            window_start,
+                            window_end,
+                            account.account_name,
+                            SELLER_BACKFILL_THROTTLE_COOLDOWN_SECONDS,
+                            attempt + 1,
+                            SELLER_BACKFILL_MAX_WINDOW_ATTEMPTS,
+                        )
+                        await asyncio.sleep(SELLER_BACKFILL_THROTTLE_COOLDOWN_SECONDS)
+                        continue
+                    logger.warning(
+                        "Seller backfill window %s..%s failed for %s after %d attempt(s), "
+                        "skipping: %s",
+                        window_start,
+                        window_end,
+                        account.account_name,
+                        attempt,
+                        exc,
+                    )
+                    break
+                else:
+                    await self.db.commit()
+                    total += count
+                    logger.info(
+                        "Backfilled seller sales for %s %s..%s: %d records",
+                        account.account_name, window_start, window_end, count,
+                    )
+                    break
         return total
 
     # ---- Orders ----
