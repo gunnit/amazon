@@ -406,7 +406,10 @@ export default function BrandAnalysis() {
     toast({
       variant: outcome.variant,
       title: t(outcome.titleKey),
-      description: selectedJob.brand_name,
+      description:
+        selectedJob.status === 'completed_with_limitations'
+          ? `${selectedJob.brand_name} — ${t('brandAnalysis.toast.completedWithLimitationsBody')}`
+          : selectedJob.brand_name,
     })
   }, [selectedJob?.id, selectedJob?.status, selectedJob?.brand_name, t, toast])
 
@@ -700,7 +703,67 @@ export default function BrandAnalysis() {
   const progressPct = selectedJob?.progress_pct || 0
   const hasCapabilityData = capabilityKeys.some((key) => capabilityMatrix[key] !== undefined)
 
-  const recommendedActions = [
+  // Error-specific fixes come first: when the job failed with a known error
+  // code, the most relevant repair action leads the list instead of leaving
+  // the user to map the error onto a generic action themselves.
+  const goToUpload = () => {
+    setShowAdvancedUpload(true)
+    setActiveTab('files')
+  }
+  const errorFixActions = (() => {
+    const code = selectedJob?.error_code
+    if (!code) return []
+    if (code === 'missing_2024_data' || code === 'missing_2025_data') {
+      const year = code === 'missing_2024_data' ? 2024 : 2025
+      return [
+        {
+          key: `fix-${code}`,
+          visible: true,
+          label: t('brandAnalysis.action.uploadYearExport', { year }),
+          onClick: goToUpload,
+          disabled: false,
+        },
+      ]
+    }
+    if (code === 'insufficient_yearly_data' || code === 'manual_upload_required') {
+      return [
+        {
+          key: `fix-${code}`,
+          visible: true,
+          label: t('brandAnalysis.action.uploadExternal'),
+          onClick: goToUpload,
+          disabled: false,
+        },
+      ]
+    }
+    if ((code === 'internal_sync_failed' || code === 'internal_data_missing') && selectedAccountObj) {
+      return [
+        {
+          key: `fix-${code}`,
+          visible: true,
+          label: t('brandAnalysis.action.syncAmazon'),
+          onClick: () => syncMutation.mutate(selectedAccountObj.id),
+          disabled: syncMutation.isPending || selectedAccountObj.sync_status === 'syncing',
+        },
+      ]
+    }
+    if (code === 'connected_account_required') {
+      return [
+        {
+          key: `fix-${code}`,
+          visible: true,
+          label: t('brandAnalysis.action.checkConnection'),
+          onClick: () => {
+            window.location.href = '/settings'
+          },
+          disabled: false,
+        },
+      ]
+    }
+    return []
+  })()
+
+  const baseActions = [
     {
       key: 'sync',
       visible: dataSource === 'internal' && !!selectedAccountObj,
@@ -728,13 +791,15 @@ export default function BrandAnalysis() {
       key: 'upload',
       visible: true,
       label: t('brandAnalysis.action.uploadExternal'),
-      onClick: () => {
-        setShowAdvancedUpload(true)
-        setActiveTab('files')
-      },
+      onClick: goToUpload,
       disabled: !selectedJob,
     },
-  ].filter((action) => action.visible)
+  ]
+  const errorFixLabels = new Set(errorFixActions.map((action) => action.label))
+  const recommendedActions = [
+    ...errorFixActions,
+    ...baseActions.filter((action) => action.visible && !errorFixLabels.has(action.label)),
+  ]
 
   const readinessItems = [
     {
@@ -1422,6 +1487,44 @@ export default function BrandAnalysis() {
                     <AlertCircle className="h-4 w-4" />
                     <AlertDescription>{t('brandAnalysis.upload.createFirst')}</AlertDescription>
                   </Alert>
+                ) : null}
+
+                {selectedJob && selectedJobDataSource === 'manual' ? (
+                  <div
+                    className={cn(
+                      'flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 text-sm',
+                      hasBothManualFiles
+                        ? 'border-emerald-500/30 bg-emerald-500/[0.05] text-emerald-700 dark:text-emerald-300'
+                        : 'bg-muted/30 text-muted-foreground',
+                    )}
+                  >
+                    <div className="flex items-start gap-3">
+                      {hasBothManualFiles ? (
+                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                      ) : (
+                        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                      )}
+                      <p className="leading-5">
+                        {hasBothManualFiles
+                          ? t('brandAnalysis.upload.allFilesReady')
+                          : t('brandAnalysis.upload.filesProgress', { count: sourceYears.size })}
+                      </p>
+                    </div>
+                    {hasBothManualFiles && !isRunning ? (
+                      <Button
+                        size="sm"
+                        onClick={() => selectedJobId && startMutation.mutate(selectedJobId)}
+                        disabled={startMutation.isPending}
+                      >
+                        {startMutation.isPending ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <Play className="mr-2 h-4 w-4" />
+                        )}
+                        {t('brandAnalysis.cta.start')}
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
 
                 <div className="grid gap-4 md:grid-cols-2">

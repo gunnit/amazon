@@ -17,9 +17,9 @@ Adapters:
   2025 years share the same lookup.
 * :class:`ManualUploadDataSource` — fallback for when internal data is
   incomplete. Wraps the generic :func:`parse_brand_export` parser.
-* :class:`Helium10ApiDataSource` — deprecated. Kept only as a
-  forward-compatible boundary for a hypothetical future official API.
-  The processor no longer selects it.
+
+Legacy external-provider modes (``helium10_api`` & co.) are normalized to
+``manual`` by :func:`_canonical_mode`; their adapter and service were removed.
 """
 from __future__ import annotations
 
@@ -771,32 +771,4 @@ class ManualUploadDataSource:
         return {
             "name": self.source_name,
             "details": {"years": sorted(self.source_files.keys())},
-        }
-
-
-@dataclass
-class Helium10ApiDataSource:
-    """Deprecated. Forward-compatible boundary for a hypothetical future
-    official Helium10 Enterprise API.
-
-    The processor no longer selects this adapter — Brand Analysis is
-    autonomous and Helium10 is not a required dependency. The class
-    stays here so any legacy job rows or tests that reference it still
-    raise cleanly via :class:`Helium10UnavailableError`.
-    """
-
-    market_id: Optional[str] = None
-    source_name: str = "helium10_api"
-
-    async def fetch_year(self, year: int) -> ParsedBrandExport:
-        from app.services.helium10_service import Helium10Service, Helium10UnavailableError
-
-        service = Helium10Service()
-        service.fetch_products_for_year(market_id=self.market_id, year=year)
-        raise Helium10UnavailableError("Unreachable: Helium10Service should have raised")
-
-    def describe(self) -> dict:
-        return {
-            "name": self.source_name,
-            "details": {"market_id": self.market_id, "deprecated": True},
         }

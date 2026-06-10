@@ -17,7 +17,7 @@ from app.services.brand_analysis.deck.blocks.front_matter import (
     CoverBlock,
     ExecSummaryBlock,
 )
-from app.services.brand_analysis.deck.blocks.market import MarketShareBlock
+from app.services.brand_analysis.deck.blocks.market import MarketShareBlock, SearchVisibilityBlock
 from app.services.brand_analysis.deck.blocks.methodology import MethodologyAppendixBlock
 from app.services.brand_analysis.deck.blocks.performance import (
     ActiveInactiveBlock,
@@ -57,6 +57,7 @@ def default_blocks() -> list[Block]:
         ChannelGapBlock(),
         ConcentrationRiskBlock(),
         MarketShareBlock(),
+        SearchVisibilityBlock(),
         PriorityActionsBlock(),
         RoadmapBlock(),
         ConclusionsBlock(),

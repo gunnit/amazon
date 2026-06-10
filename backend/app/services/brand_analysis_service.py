@@ -1,6 +1,7 @@
 """Brand Analysis Automation service."""
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -604,6 +605,65 @@ def _pct(part: float, total: float) -> float:
     return round((part / total) * 100, 1) if total else 0.0
 
 
+GROWTH_SCENARIO_ILLUSTRATIVE_BANDS = {
+    "conservative": (10, 15),
+    "realistic": (25, 35),
+    "optimistic": (40, 55),
+}
+
+
+def build_growth_projection_scenarios(
+    total_revenue_2025: float,
+    yoy_pct: Optional[float],
+    pct_declining_active: Optional[float] = None,
+) -> dict[str, Any]:
+    """Growth scenario bands anchored on the brand's own momentum.
+
+    With usable history, the three bands derive from the actual YoY growth
+    (clamped to [-50, +80] pp), shifted down when a large share of active
+    ASINs is declining. Without usable history (no 2024 baseline) the bands
+    fall back to fixed illustrative ranges; ``basis`` records which path was
+    taken so the narrative and provenance never present defaults as derived.
+    """
+    revenue_base = float(total_revenue_2025 or 0)
+
+    def _band(low: float, high: float) -> dict[str, Any]:
+        low_i, high_i = int(round(low)), int(round(high))
+        if high_i <= low_i:
+            high_i = low_i + 1
+        return {
+            "growth_low": low_i,
+            "growth_high": high_i,
+            "revenue_low": round(max(revenue_base * (1 + low_i / 100), 0.0), 2),
+            "revenue_high": round(max(revenue_base * (1 + high_i / 100), 0.0), 2),
+        }
+
+    if yoy_pct is None or revenue_base <= 0:
+        scenarios: dict[str, Any] = {
+            name: _band(low, high)
+            for name, (low, high) in GROWTH_SCENARIO_ILLUSTRATIVE_BANDS.items()
+        }
+        scenarios["basis"] = "illustrative_default"
+        scenarios["anchor_yoy_percent"] = None
+        scenarios["risk_adjustment_pp"] = 0
+        return scenarios
+
+    anchor = max(-50.0, min(80.0, float(yoy_pct)))
+    risk_drag = 5.0 if (pct_declining_active or 0) >= 40 else 0.0
+    center = anchor - risk_drag
+    half_width = max(5.0, abs(anchor) * 0.15)
+    offset = max(10.0, abs(anchor) * 0.35)
+    scenarios = {
+        "conservative": _band(center - offset - half_width, center - offset + half_width),
+        "realistic": _band(center - half_width, center + half_width),
+        "optimistic": _band(center + offset - half_width, center + offset + half_width),
+    }
+    scenarios["basis"] = "derived_from_yoy_history"
+    scenarios["anchor_yoy_percent"] = round(anchor, 1)
+    scenarios["risk_adjustment_pp"] = int(risk_drag)
+    return scenarios
+
+
 def _read_export_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame:
     suffix = Path(filename).suffix.lower()
     data = io.BytesIO(file_bytes)
@@ -960,6 +1020,18 @@ def build_metric_source_registry(metrics: dict[str, Any], source_name: str) -> d
             "quality": "exact" if content.get("aplus_content_available") else "unavailable",
             "formula": "count ASINs with A+ content only when A+ API/cache source confirms it",
             "limitation": content.get("aplus_limitation"),
+        },
+        "growth_projection_scenarios": {
+            "preferred_source": "deterministic scenario engine",
+            "fallback_sources": [],
+            "required_fields": ["total_revenue_2025", "yoy_percent"],
+            "quality": "estimated",
+            "formula": (
+                "bands anchored on the brand's actual YoY growth, clamped to [-50, +80] pp and shifted down 5 pp when >=40% of active ASINs are declining"
+                if (metrics.get("growth_projection_scenarios") or {}).get("basis") == "derived_from_yoy_history"
+                else "fixed illustrative bands; no usable 2024 baseline to derive brand-specific scenarios"
+            ),
+            "limitation": "Scenario ranges are planning aids derived from yearly momentum, not a forecast.",
         },
     }
 
@@ -1731,19 +1803,41 @@ def calculate_brand_metrics(
     search_click_share = None
     search_cart_add_share = None
     brand_analytics_terms: list[dict[str, Any]] = []
+    terms_with_competitor_top_click: Optional[int] = None
     if isinstance(brand_analytics_signal, dict):
         search_click_share = brand_analytics_signal.get("aggregate_click_share")
         search_purchase_share = brand_analytics_signal.get("aggregate_conversion_share")
         search_cart_add_share = brand_analytics_signal.get("aggregate_cart_add_share")
-        brand_analytics_terms = [
-            {
-                "search_term": term.get("search_term"),
-                "search_frequency_rank": term.get("search_frequency_rank"),
-                "top_clicked_asins": term.get("top_clicked_asins") or [],
-            }
-            for term in (brand_analytics_signal.get("terms") or [])[:25]
-            if isinstance(term, dict) and term.get("search_term")
-        ]
+        for term in (brand_analytics_signal.get("terms") or [])[:25]:
+            if not (isinstance(term, dict) and term.get("search_term")):
+                continue
+            top_clicked: list[dict[str, Any]] = []
+            for entry in term.get("top_clicked_asins") or []:
+                if not isinstance(entry, dict) or not entry.get("asin"):
+                    continue
+                top_clicked.append(
+                    {
+                        "rank": entry.get("rank"),
+                        "asin": entry.get("asin"),
+                        "product_title": entry.get("product_title"),
+                        "click_share": entry.get("click_share"),
+                        "conversion_share": entry.get("conversion_share"),
+                        "is_brand_asin": entry.get("asin") in asin_set_2025,
+                    }
+                )
+            top_click_is_competitor = bool(top_clicked) and not top_clicked[0]["is_brand_asin"]
+            if top_clicked:
+                terms_with_competitor_top_click = (terms_with_competitor_top_click or 0) + (
+                    1 if top_click_is_competitor else 0
+                )
+            brand_analytics_terms.append(
+                {
+                    "search_term": term.get("search_term"),
+                    "search_frequency_rank": term.get("search_frequency_rank"),
+                    "top_clicked_asins": top_clicked,
+                    "top_click_is_competitor": top_click_is_competitor if top_clicked else None,
+                }
+            )
     brand_analytics_available = (
         isinstance(brand_analytics_signal, dict)
         and bool(brand_analytics_signal.get("term_count"))
@@ -1778,26 +1872,11 @@ def calculate_brand_metrics(
 
     top_5_revenue = float(top_2025.head(5)["revenue"].fillna(0).sum())
     top_10_revenue = float(top_2025.head(10)["revenue"].fillna(0).sum())
-    projection_ranges = {
-        "conservative": {
-            "growth_low": 10,
-            "growth_high": 15,
-            "revenue_low": round(total_revenue_2025 * 1.10, 2),
-            "revenue_high": round(total_revenue_2025 * 1.15, 2),
-        },
-        "realistic": {
-            "growth_low": 25,
-            "growth_high": 35,
-            "revenue_low": round(total_revenue_2025 * 1.25, 2),
-            "revenue_high": round(total_revenue_2025 * 1.35, 2),
-        },
-        "optimistic": {
-            "growth_low": 40,
-            "growth_high": 55,
-            "revenue_low": round(total_revenue_2025 * 1.40, 2),
-            "revenue_high": round(total_revenue_2025 * 1.55, 2),
-        },
-    }
+    projection_ranges = build_growth_projection_scenarios(
+        total_revenue_2025,
+        yoy_percent(total_revenue_2025, total_revenue_2024),
+        _pct(len(declining_asins), len(comparable_active)),
+    )
 
     metrics = {
         "brand_name": brand_name,
@@ -1902,6 +1981,8 @@ def calculate_brand_metrics(
             "search_share_source": "brand_analytics_search_terms" if brand_analytics_available else None,
             "search_share_period": (brand_analytics_signal or {}).get("period") if brand_analytics_available else None,
             "search_term_competitors": brand_analytics_terms,
+            "search_terms_total": (brand_analytics_signal or {}).get("term_count") if brand_analytics_available else None,
+            "terms_with_competitor_top_click": terms_with_competitor_top_click,
             "search_share_limitation": search_share_limitation,
         },
         "growth_projection_scenarios": projection_ranges,
@@ -2079,6 +2160,59 @@ def build_priority_actions(metrics: dict[str, Any], language: str = "en") -> lis
     return actions
 
 
+PROMPT_LIST_CAP = 12
+PROMPT_STR_CAP = 280
+PROMPT_JSON_CHAR_BUDGET = 60_000
+
+
+def _truncate_for_prompt(value: Any, list_cap: int = PROMPT_LIST_CAP, str_cap: int = PROMPT_STR_CAP) -> Any:
+    """Bound the narrative prompt payload so huge catalogs cannot blow the call.
+
+    Long lists keep their head plus an explicit truncation marker; long strings
+    are clipped. Numbers are untouched, so the no-fabrication contract holds —
+    the LLM just sees fewer examples, never different values.
+    """
+    if isinstance(value, dict):
+        return {key: _truncate_for_prompt(item, list_cap, str_cap) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        items = [_truncate_for_prompt(item, list_cap, str_cap) for item in list(value)[:list_cap]]
+        omitted = len(value) - list_cap
+        if omitted > 0:
+            items.append(f"... {omitted} more items truncated for prompt size")
+        return items
+    if isinstance(value, str) and len(value) > str_cap:
+        return value[: str_cap - 1].rstrip() + "…"
+    return value
+
+
+def _prompt_json(payload: Any, *, list_cap: int = PROMPT_LIST_CAP, str_cap: int = PROMPT_STR_CAP) -> str:
+    """Serialize a prompt payload, re-truncating harder if it exceeds the budget."""
+    compact = _truncate_for_prompt(payload, list_cap, str_cap)
+    text = json.dumps(compact, ensure_ascii=False, indent=2)
+    if len(text) > PROMPT_JSON_CHAR_BUDGET:
+        compact = _truncate_for_prompt(payload, list_cap=5, str_cap=120)
+        text = json.dumps(compact, ensure_ascii=False, indent=2)
+    if len(text) > PROMPT_JSON_CHAR_BUDGET and isinstance(compact, dict):
+        slim = dict(compact)
+        dropped: list[str] = []
+        sizes = sorted(
+            ((key, len(json.dumps(item, ensure_ascii=False))) for key, item in slim.items()),
+            key=lambda pair: pair[1],
+            reverse=True,
+        )
+        for key, _size in sizes:
+            if len(text) <= PROMPT_JSON_CHAR_BUDGET:
+                break
+            slim.pop(key)
+            dropped.append(key)
+            text = json.dumps(slim, ensure_ascii=False, indent=2)
+        if dropped:
+            slim["_truncated_keys"] = dropped
+            text = json.dumps(slim, ensure_ascii=False, indent=2)
+            logger.warning("Narrative prompt payload over budget; dropped keys: %s", dropped)
+    return text
+
+
 class BrandAnalysisNarrativeService:
     """Generate strategic narrative with Anthropic, with deterministic fallback."""
 
@@ -2111,15 +2245,17 @@ class BrandAnalysisNarrativeService:
 
 Metrics are already calculated. Do not calculate, infer, invent, round, or change numbers.
 Use only the deterministic metrics in this JSON:
-{json.dumps(metrics, ensure_ascii=False, indent=2)}
+{_prompt_json(metrics)}
 
 Metric provenance:
-{json.dumps(provenance or {}, ensure_ascii=False, indent=2)}
+{_prompt_json(provenance or {}, list_cap=6, str_cap=200)}
 
 Limitations and N/A reasons:
-{json.dumps(limitations or {}, ensure_ascii=False, indent=2)}
+{_prompt_json(limitations or {}, list_cap=8, str_cap=200)}
 
 Never convert search proxy metrics into revenue market share. Never infer historical Buy Box owner from a current snapshot. Never invent competitor revenue or market size.
+When market_analysis carries Brand Analytics search metrics (search_click_share, search_purchase_share, search_term_competitors), weave search visibility into the overview, strengths or weaknesses — especially terms where a competitor wins the top click.
+growth_projection_scenarios.basis tells you whether the scenario bands are derived from the brand's actual YoY history or are illustrative defaults; describe them accordingly and never call illustrative bands a forecast.
 
 {vine_rule}
 
@@ -2325,6 +2461,20 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
         "market_share_unavailable": "Revenue market share: N/A [UNAVAILABLE]",
         "market_share_no_base": "No reliable competitor revenue base was provided.",
         "market_share_no_invent": "The deck does not invent market size. Upload a broad yearly market export with competitor brand revenue to calculate this section.",
+        # Search & visibility (Brand Analytics)
+        "search_visibility_title": "Search & Visibility",
+        "search_visibility_subtitle": "Brand Analytics: where shoppers' searches click and convert",
+        "kpi_search_click_share": "Avg Click Share",
+        "kpi_search_purchase_share": "Avg Purchase Share",
+        "kpi_competitor_top_terms": "Terms Won by a Competitor",
+        "table_search_rank": "Freq. Rank",
+        "table_search_term": "Search Term",
+        "table_top_clicked": "Top Clicked Product",
+        "table_click_share": "Click Share",
+        "table_owner": "Who Wins the Click",
+        "label_own_brand": "Own brand",
+        "label_competitor": "Competitor",
+        "search_visibility_footnote": "Source: Amazon Brand Analytics search-terms report. Shares are search-level signals, never revenue market share.",
         # Approach
         "approach_title": "Our Approach",
         "approach_subtitle": "Three pillars for professional Amazon channel management",
@@ -2475,6 +2625,20 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
         "market_share_unavailable": "Quota di mercato a fatturato: N/A [NON DISPONIBILE]",
         "market_share_no_base": "Non è stata fornita una base affidabile di fatturato dei concorrenti.",
         "market_share_no_invent": "Il deck non inventa la dimensione del mercato. Carica un export di mercato annuale completo con il fatturato dei brand concorrenti per calcolare questa sezione.",
+        # Search & visibility (Brand Analytics)
+        "search_visibility_title": "Ricerca e visibilità",
+        "search_visibility_subtitle": "Brand Analytics: dove cliccano e convertono le ricerche dei clienti",
+        "kpi_search_click_share": "Click share media",
+        "kpi_search_purchase_share": "Quota acquisti media",
+        "kpi_competitor_top_terms": "Termini vinti da un competitor",
+        "table_search_rank": "Rank freq.",
+        "table_search_term": "Termine di ricerca",
+        "table_top_clicked": "Prodotto più cliccato",
+        "table_click_share": "Click share",
+        "table_owner": "Chi vince il click",
+        "label_own_brand": "Marca propria",
+        "label_competitor": "Competitor",
+        "search_visibility_footnote": "Fonte: report Brand Analytics sui termini di ricerca. Le quote sono segnali di ricerca, mai quota di mercato a fatturato.",
         # Approach
         "approach_title": "Il nostro approccio",
         "approach_subtitle": "Tre pilastri per una gestione professionale del canale Amazon",
@@ -3078,21 +3242,36 @@ def process_brand_analysis_job(job_id: str) -> None:
                                         continue
                                     start_date = date.fromisoformat(window["start_date"])
                                     end_date = date.fromisoformat(window["end_date"])
+                                    window_timeout = settings.BRAND_ANALYSIS_SYNC_WINDOW_TIMEOUT_SECONDS
                                     try:
                                         if account.account_type == AccountType.VENDOR:
-                                            synced_records += await extraction.sync_vendor_sales_data(
-                                                account,
-                                                organization,
-                                                start_date,
-                                                end_date,
+                                            synced_records += await asyncio.wait_for(
+                                                extraction.sync_vendor_sales_data(
+                                                    account,
+                                                    organization,
+                                                    start_date,
+                                                    end_date,
+                                                ),
+                                                timeout=window_timeout,
                                             )
                                         else:
-                                            synced_records += await extraction.sync_sales_data(
-                                                account,
-                                                organization,
-                                                start_date,
-                                                end_date,
+                                            synced_records += await asyncio.wait_for(
+                                                extraction.sync_sales_data(
+                                                    account,
+                                                    organization,
+                                                    start_date,
+                                                    end_date,
+                                                ),
+                                                timeout=window_timeout,
                                             )
+                                    except asyncio.TimeoutError as timeout_exc:
+                                        # A cancelled sync can leave the session mid-transaction;
+                                        # route through the outer failure path, which rolls back
+                                        # and re-fetches before continuing with available data.
+                                        raise RuntimeError(
+                                            f"Sales sync window {window['start_date']}..{window['end_date']} "
+                                            f"timed out after {window_timeout}s"
+                                        ) from timeout_exc
                                     except Exception as sync_window_exc:
                                         api_limitations.append(
                                             {

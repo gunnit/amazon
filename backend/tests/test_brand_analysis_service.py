@@ -724,3 +724,132 @@ def test_capability_detection_stores_exact_missing_role_reason():
     assert "Product Fees role missing" in joined
     assert "A+ Content role missing" in joined
     assert "Brand Analytics role missing" in joined
+
+
+def test_growth_projection_scenarios_derive_from_yoy_history():
+    from app.services.brand_analysis_service import build_growth_projection_scenarios
+
+    scenarios = build_growth_projection_scenarios(1900.0, 5.6, 10.0)
+    assert scenarios["basis"] == "derived_from_yoy_history"
+    assert scenarios["anchor_yoy_percent"] == 5.6
+    assert scenarios["risk_adjustment_pp"] == 0
+    assert (
+        scenarios["conservative"]["growth_low"]
+        < scenarios["realistic"]["growth_low"]
+        < scenarios["optimistic"]["growth_low"]
+    )
+    realistic = scenarios["realistic"]
+    assert realistic["growth_low"] <= scenarios["anchor_yoy_percent"] <= realistic["growth_high"]
+    assert realistic["revenue_low"] == round(1900.0 * (1 + realistic["growth_low"] / 100), 2)
+
+
+def test_growth_projection_scenarios_fall_back_to_illustrative_without_baseline():
+    from app.services.brand_analysis_service import build_growth_projection_scenarios
+
+    scenarios = build_growth_projection_scenarios(1900.0, None, None)
+    assert scenarios["basis"] == "illustrative_default"
+    assert scenarios["realistic"]["growth_low"] == 25
+    assert scenarios["optimistic"]["growth_high"] == 55
+
+
+def test_growth_projection_risk_drag_applies_when_many_asins_decline():
+    from app.services.brand_analysis_service import build_growth_projection_scenarios
+
+    base = build_growth_projection_scenarios(1000.0, 20.0, 10.0)
+    dragged = build_growth_projection_scenarios(1000.0, 20.0, 60.0)
+    assert dragged["risk_adjustment_pp"] == 5
+    assert dragged["realistic"]["growth_low"] == base["realistic"]["growth_low"] - 5
+
+
+def test_metrics_growth_scenarios_are_brand_specific_not_fixed_bands():
+    metrics = _metrics()  # fixture has a real 2024 baseline (YoY ~ +5.6%)
+    scenarios = metrics["growth_projection_scenarios"]
+    assert scenarios["basis"] == "derived_from_yoy_history"
+    assert scenarios["realistic"]["growth_low"] != 25
+    registry = build_metric_source_registry(metrics, "manual")
+    assert registry["growth_projection_scenarios"]["quality"] == "estimated"
+    assert "YoY" in registry["growth_projection_scenarios"]["formula"]
+
+
+def test_prompt_truncation_caps_lists_and_strings():
+    from app.services.brand_analysis_service import (
+        PROMPT_JSON_CHAR_BUDGET,
+        _prompt_json,
+        _truncate_for_prompt,
+    )
+
+    payload = {
+        "big_list": list(range(100)),
+        "text": "x" * 1000,
+        "nested": {"items": [{"k": "v"}] * 50},
+    }
+    out = _truncate_for_prompt(payload)
+    assert len(out["big_list"]) == 13  # 12 kept + truncation marker
+    assert "truncated" in out["big_list"][-1]
+    assert len(out["text"]) <= 280
+    assert len(out["nested"]["items"]) == 13
+
+    huge = {f"key_{i}": ["y" * 200] * 12 for i in range(400)}
+    text = _prompt_json(huge)
+    assert len(text) <= PROMPT_JSON_CHAR_BUDGET * 1.1
+
+
+def test_search_visibility_block_lights_market_section_without_market_export():
+    metrics = _metrics()
+    narrative = build_fallback_narrative(metrics, "en")
+    before = build_brand_analysis_section_manifest(metrics, narrative)
+    assert _section_present(before, "market") is False
+
+    market = metrics["market_analysis"]
+    market["search_share_source"] = "brand_analytics_search_terms"
+    market["search_click_share"] = 12.5
+    market["search_purchase_share"] = 8.0
+    market["search_terms_total"] = 10
+    market["terms_with_competitor_top_click"] = 4
+    market["search_share_period"] = {"start_date": "2026-06-01", "end_date": "2026-06-07"}
+    market["search_term_competitors"] = [
+        {
+            "search_term": "chef knife",
+            "search_frequency_rank": 2,
+            "top_clicked_asins": [
+                {"asin": "B999", "product_title": "Rival Knife", "click_share": 9.9}
+            ],
+            "top_click_is_competitor": True,
+        }
+    ]
+    after = build_brand_analysis_section_manifest(metrics, narrative)
+    assert _section_present(after, "market") is True
+
+    pptx_bytes = build_brand_analysis_pptx(metrics, narrative, language="en")
+    assert pptx_bytes[:2] == b"PK"
+
+
+def test_search_term_competitor_annotation_marks_own_vs_competitor_asins():
+    parsed_2024 = parse_brand_export(_csv_bytes(_source_rows_2024()), "2024.csv")
+    parsed_2025 = parse_brand_export(_csv_bytes(_source_rows_2025()), "2025.csv")
+    parsed_2025.brand_analytics = {
+        "source": "brand_analytics_search_terms",
+        "term_count": 2,
+        "aggregate_click_share": 0.3,
+        "aggregate_conversion_share": 0.2,
+        "terms": [
+            {
+                "search_term": "chef knife",
+                "search_frequency_rank": 1,
+                "top_clicked_asins": [{"asin": "B001", "click_share": 0.4}],
+            },
+            {
+                "search_term": "pan set",
+                "search_frequency_rank": 2,
+                "top_clicked_asins": [{"asin": "B999", "click_share": 0.5}],
+            },
+        ],
+    }
+    metrics = calculate_brand_metrics(parsed_2024, parsed_2025, brand_name="Acme")
+    market = metrics["market_analysis"]
+    terms = {t["search_term"]: t for t in market["search_term_competitors"]}
+    assert terms["chef knife"]["top_click_is_competitor"] is False
+    assert terms["chef knife"]["top_clicked_asins"][0]["is_brand_asin"] is True
+    assert terms["pan set"]["top_click_is_competitor"] is True
+    assert market["terms_with_competitor_top_click"] == 1
+    assert market["search_terms_total"] == 2
