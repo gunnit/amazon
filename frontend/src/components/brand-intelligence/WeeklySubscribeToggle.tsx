@@ -56,11 +56,13 @@ export function WeeklySubscribeToggle({ accountId }: { accountId: string }) {
   }
 
   return (
-    <label className="flex cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-sm">
+    <label className="flex cursor-pointer items-center gap-3 rounded-sm border border-foreground/25 px-3 py-2 text-sm">
       <CalendarClock className="h-4 w-4 text-muted-foreground" />
       <span className="flex flex-col leading-tight">
-        <span className="font-medium">{t('brandIntelligence.subscribe.label')}</span>
-        <span className="text-xs text-muted-foreground">
+        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground">
+          {t('brandIntelligence.subscribe.label')}
+        </span>
+        <span className="mt-0.5 text-xs text-muted-foreground">
           {enabled
             ? t('brandIntelligence.subscribe.next', { day: dayLabel })
             : t('brandIntelligence.subscribe.hint')}

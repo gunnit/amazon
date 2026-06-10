@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Radar, RefreshCw } from 'lucide-react'
+import { Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Select,
@@ -11,11 +10,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useToast } from '@/components/ui/use-toast'
 import { ReportTable, type ReportColumn } from '@/components/shared/ReportTable'
+import { SectionMark } from '@/components/shared/SectionMark'
 import { accountsApi, brandIntelligenceApi } from '@/services/api'
-import { formatDate } from '@/lib/utils'
+import { cn, formatDate } from '@/lib/utils'
+import { eyebrow, fieldInput, inkButton } from '@/lib/editorial'
 import { useTranslation } from '@/i18n'
 import type {
   BrandIntelligenceReportListItem,
@@ -28,19 +28,30 @@ import { WeeklySubscribeToggle } from '@/components/brand-intelligence/WeeklySub
 const RUNNING: BrandIntelligenceStatus[] = ['pending', 'generating']
 const LATEST = '__latest__'
 
-const STATUS_VARIANT: Record<BrandIntelligenceStatus, 'default' | 'secondary' | 'outline' | 'destructive'> = {
-  completed: 'default',
-  generating: 'secondary',
-  pending: 'outline',
-  failed: 'destructive',
+const STATUS_TONE: Record<BrandIntelligenceStatus, { dot: string; text: string }> = {
+  completed: { dot: 'bg-emerald-500', text: 'text-emerald-700 dark:text-emerald-400' },
+  generating: { dot: 'bg-sky-500', text: 'text-sky-700 dark:text-sky-300' },
+  pending: { dot: 'bg-muted-foreground/50', text: 'text-muted-foreground' },
+  failed: { dot: 'bg-rose-500', text: 'text-rose-700 dark:text-rose-400' },
 }
 
 function StatusBadge({ status }: { status: BrandIntelligenceStatus }) {
   const { t } = useTranslation()
+  const tone = STATUS_TONE[status]
   return (
-    <Badge variant={STATUS_VARIANT[status]} className="shrink-0">
+    <span
+      className={cn(
+        'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-[10px] font-medium uppercase tracking-[0.14em]',
+        tone.text,
+      )}
+    >
+      {RUNNING.includes(status) ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <span aria-hidden="true" className={cn('h-1.5 w-1.5 shrink-0 rounded-full', tone.dot)} />
+      )}
       {t(`brandIntelligence.status.${status}`)}
-    </Badge>
+    </span>
   )
 }
 
@@ -131,11 +142,11 @@ export default function BrandIntelligence() {
         width: '46%',
         cell: (row) => (
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+              <span className="truncate text-sm font-semibold">{row.week_label}</span>
               <StatusBadge status={row.status} />
-              <span className="truncate text-sm font-medium">{row.week_label}</span>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">{row.brand_label}</p>
+            <p className="mt-1 font-mono text-[11px] text-muted-foreground">{row.brand_label}</p>
           </div>
         ),
       },
@@ -145,7 +156,7 @@ export default function BrandIntelligence() {
         hideOnMobile: true,
         cardLabel: t('brandIntelligence.col.period'),
         cell: (row) => (
-          <span className="text-xs text-muted-foreground">
+          <span className="font-mono text-[11px] text-muted-foreground">
             {formatDate(row.period_start)} – {formatDate(row.period_end)}
           </span>
         ),
@@ -157,7 +168,7 @@ export default function BrandIntelligence() {
         hideOnMobile: true,
         cardLabel: t('brandIntelligence.col.generated'),
         cell: (row) => (
-          <span className="text-xs text-muted-foreground">
+          <span className="font-mono text-[11px] text-muted-foreground">
             {row.generated_at ? formatDate(row.generated_at) : '—'}
           </span>
         ),
@@ -198,53 +209,70 @@ export default function BrandIntelligence() {
   }
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div className="flex items-start gap-4">
-          <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary md:flex">
-            <Radar className="h-5 w-5" />
-          </div>
+    <div className="space-y-12 pb-4">
+      {/* ─── Masthead ────────────────────────────────────────────────── */}
+      <header className="ba-rise">
+        <div aria-hidden="true" className="border-t-[3px] border-foreground" />
+        <div aria-hidden="true" className="mt-[3px] border-t border-foreground/30" />
+        <div className="flex flex-col gap-6 pt-6 md:flex-row md:items-end md:justify-between">
           <div className="min-w-0">
             <h1 className="text-3xl font-bold tracking-tight">{t('brandIntelligence.title')}</h1>
-            <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground">
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
               {t('brandIntelligence.subtitle')}
             </p>
           </div>
+          {report ? (
+            <div className="shrink-0 text-left md:text-right">
+              <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-foreground">
+                {report.period.week_label}
+              </p>
+              <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                {formatDate(report.period.start)} – {formatDate(report.period.end)}
+              </p>
+            </div>
+          ) : null}
         </div>
       </header>
 
-      <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
-        <Select value={effectiveAccountId} onValueChange={setAccountId}>
-          <SelectTrigger className="w-full sm:w-[220px]">
-            <SelectValue placeholder={t('brandIntelligence.selectAccount')} />
-          </SelectTrigger>
-          <SelectContent>
-            {accounts?.map((a) => (
-              <SelectItem key={a.id} value={a.id}>
-                {a.account_name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {/* ─── Edition controls ─────────────────────────────────────────── */}
+      <div className="ba-rise ba-rise-2 flex flex-col gap-5 border-b border-foreground/10 pb-6 lg:flex-row lg:items-end">
+        <div className="w-full sm:w-[220px]">
+          <p className={eyebrow}>{t('brandIntelligence.selectAccount')}</p>
+          <Select value={effectiveAccountId} onValueChange={setAccountId}>
+            <SelectTrigger className={cn(fieldInput, 'mt-1 h-10')}>
+              <SelectValue placeholder={t('brandIntelligence.selectAccount')} />
+            </SelectTrigger>
+            <SelectContent>
+              {accounts?.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.account_name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
-        <Select value={selectedReportId} onValueChange={setSelectedReportId}>
-          <SelectTrigger className="w-full sm:w-[260px]">
-            <SelectValue placeholder={t('brandIntelligence.selectWeek')} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={LATEST}>{t('brandIntelligence.latestWeek')}</SelectItem>
-            {reports.map((r) => (
-              <SelectItem key={r.id} value={r.id}>
-                {r.week_label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="w-full sm:w-[260px]">
+          <p className={eyebrow}>{t('brandIntelligence.selectWeek')}</p>
+          <Select value={selectedReportId} onValueChange={setSelectedReportId}>
+            <SelectTrigger className={cn(fieldInput, 'mt-1 h-10')}>
+              <SelectValue placeholder={t('brandIntelligence.selectWeek')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={LATEST}>{t('brandIntelligence.latestWeek')}</SelectItem>
+              {reports.map((r) => (
+                <SelectItem key={r.id} value={r.id}>
+                  {r.week_label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
         {effectiveAccountId ? <WeeklySubscribeToggle accountId={effectiveAccountId} /> : null}
 
         <Button
-          className="lg:ml-auto"
+          className={cn(inkButton, 'lg:ml-auto')}
           onClick={() => generateMutation.mutate()}
           disabled={generateDisabled}
         >
@@ -257,13 +285,13 @@ export default function BrandIntelligence() {
         </Button>
       </div>
 
-      {readerState()}
+      {/* ─── The report ───────────────────────────────────────────────── */}
+      <div className="ba-rise ba-rise-3">{readerState()}</div>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">{t('brandIntelligence.previousReports')}</CardTitle>
-        </CardHeader>
-        <CardContent>
+      {/* ─── Archive ──────────────────────────────────────────────────── */}
+      <section className="ba-rise ba-rise-4">
+        <SectionMark title={t('brandIntelligence.previousReports')} />
+        <div className="mt-5">
           <ReportTable
             columns={historyColumns}
             rows={reports}
@@ -272,15 +300,17 @@ export default function BrandIntelligence() {
             rowOpenLabel={(r) => t('brandIntelligence.openRow', { week: r.week_label })}
             isRowSelected={(r) => r.id === selectedReportId}
             emptyState={
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                {effectiveAccountId
-                  ? t('brandIntelligence.noReports')
-                  : t('brandIntelligence.noAccount')}
-              </p>
+              <div className="flex flex-col items-center gap-2 rounded-sm border border-dashed border-foreground/25 px-6 py-12 text-center">
+                <p className="max-w-md text-sm leading-6 text-muted-foreground">
+                  {effectiveAccountId
+                    ? t('brandIntelligence.noReports')
+                    : t('brandIntelligence.noAccount')}
+                </p>
+              </div>
             }
           />
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   )
 }

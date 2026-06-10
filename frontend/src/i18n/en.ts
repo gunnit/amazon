@@ -29,6 +29,9 @@ const en: Record<string, string> = {
   'nav.logout': 'Log out',
   'nav.orgSettings': 'Organization settings',
   'nav.organization': 'Organization:',
+  'nav.group.analytics': 'Analytics',
+  'nav.group.intelligence': 'Intelligence',
+  'nav.group.operations': 'Operations',
   'nav.expandSidebar': 'Expand sidebar',
   'nav.collapseSidebar': 'Collapse sidebar',
 

@@ -3,31 +3,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
   AlertTriangle,
-  BarChart3,
   CheckCircle2,
-  Circle,
-  Database,
   Download,
   FileSpreadsheet,
-  FileText,
-  History,
   Info,
-  Languages,
-  LineChart,
-  ListChecks,
   Loader2,
-  Package,
-  Percent,
   Play,
-  Presentation,
   RefreshCw,
-  Search,
-  ShieldCheck,
   Trash2,
   Upload,
-  Wallet,
   X,
-  XCircle,
 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
@@ -41,9 +26,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
@@ -57,8 +40,10 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/components/ui/use-toast'
 import { cn, formatDate } from '@/lib/utils'
+import { eyebrow, fieldInput, ghostButton, inkButton, monoTag, tabTrigger } from '@/lib/editorial'
 import { useTranslation } from '@/i18n'
 import { ReportTable, type ReportColumn } from '@/components/shared/ReportTable'
+import { SectionMark } from '@/components/shared/SectionMark'
 import { BrandOverviewCharts } from '@/components/brand-analysis/BrandOverviewCharts'
 import { accountsApi, brandAnalysisApi } from '@/services/api'
 import type {
@@ -70,11 +55,7 @@ import type {
 } from '@/types'
 
 type DataSource = 'internal' | 'manual'
-type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning'
 type ReadinessState = 'ready' | 'warning' | 'missing' | 'unknown'
-
-// Single section-label style shared by every "eyebrow" heading on the page.
-const eyebrow = 'text-xs font-medium uppercase tracking-wide text-muted-foreground'
 
 const runningStatuses: BrandAnalysisStatus[] = [
   'pending',
@@ -146,16 +127,16 @@ const statusGroupLabelKey: Record<StatusGroup, string> = {
   cancelled: 'brandAnalysis.status.cancelled',
 }
 
-const statusGroupVariant: Record<StatusGroup, BadgeVariant> = {
-  preparing: 'secondary',
-  analyzing: 'secondary',
-  generatingDeck: 'secondary',
-  completed: 'success',
-  completed_with_limitations: 'warning',
-  needs_upload: 'warning',
-  failed: 'destructive',
-  cancelling: 'secondary',
-  cancelled: 'outline',
+const statusGroupTone: Record<StatusGroup, { dot: string; text: string }> = {
+  preparing: { dot: 'bg-sky-500', text: 'text-sky-700 dark:text-sky-300' },
+  analyzing: { dot: 'bg-sky-500', text: 'text-sky-700 dark:text-sky-300' },
+  generatingDeck: { dot: 'bg-sky-500', text: 'text-sky-700 dark:text-sky-300' },
+  completed: { dot: 'bg-emerald-500', text: 'text-emerald-700 dark:text-emerald-400' },
+  completed_with_limitations: { dot: 'bg-amber-500', text: 'text-amber-700 dark:text-amber-400' },
+  needs_upload: { dot: 'bg-amber-500', text: 'text-amber-700 dark:text-amber-400' },
+  failed: { dot: 'bg-rose-500', text: 'text-rose-700 dark:text-rose-400' },
+  cancelling: { dot: 'bg-muted-foreground', text: 'text-muted-foreground' },
+  cancelled: { dot: 'bg-muted-foreground/50', text: 'text-muted-foreground' },
 }
 
 const progressSteps = [
@@ -169,20 +150,6 @@ const progressSteps = [
   { key: 'pptx', labelKey: 'brandAnalysis.progress.pptx', pct: 90 },
   { key: 'completed', labelKey: 'brandAnalysis.progress.completed', pct: 100 },
 ]
-
-const capabilityIcons: Record<string, typeof Database> = {
-  sales_and_traffic_available: BarChart3,
-  data_kiosk_available: Database,
-  brand_analytics_available: ShieldCheck,
-  brand_registry_available_or_inferred: ShieldCheck,
-  product_pricing_available: Wallet,
-  product_fees_available: Percent,
-  aplus_available: FileText,
-  finance_reports_available: Wallet,
-  settlement_reports_available: Wallet,
-  catalog_items_available: Package,
-  listings_available: ListChecks,
-}
 
 function modeToDataSource(mode: BrandAnalysisMode | undefined): DataSource {
   if (!mode) return 'internal'
@@ -254,54 +221,55 @@ function downloadBlob(blob: Blob, filename: string) {
   window.URL.revokeObjectURL(url)
 }
 
-const readinessTone: Record<ReadinessState, string> = {
-  ready: 'border-l-emerald-500 bg-emerald-500/[0.04] dark:bg-emerald-500/[0.08]',
-  warning: 'border-l-amber-500 bg-amber-500/[0.05] dark:bg-amber-500/[0.08]',
-  missing: 'border-l-rose-500 bg-rose-500/[0.05] dark:bg-rose-500/[0.08]',
-  unknown: 'border-l-border bg-muted/30',
-}
-
-const readinessIconTone: Record<ReadinessState, string> = {
-  ready: 'text-emerald-600 dark:text-emerald-400',
-  warning: 'text-amber-600 dark:text-amber-400',
-  missing: 'text-rose-600 dark:text-rose-400',
-  unknown: 'text-muted-foreground',
-}
-
-function ReadinessBadge({ state, label }: { state: ReadinessState; label: string }) {
-  const variant: Record<ReadinessState, BadgeVariant> = {
-    ready: 'success',
-    warning: 'warning',
-    missing: 'destructive',
-    unknown: 'outline',
-  }
-  return (
-    <Badge variant={variant[state]} className="shrink-0 whitespace-nowrap">
-      {label}
-    </Badge>
-  )
+const stateDot: Record<ReadinessState, string> = {
+  ready: 'bg-emerald-500',
+  warning: 'bg-amber-500',
+  missing: 'bg-rose-500',
+  unknown: 'bg-muted-foreground/40',
 }
 
 function StatusPill({ status, label }: { status: BrandAnalysisStatus; label: string }) {
-  const variant = statusGroupVariant[statusGroupOf[status]]
+  const tone = statusGroupTone[statusGroupOf[status]]
   const isRunning = runningStatuses.includes(status)
   return (
-    <Badge variant={variant} className="gap-1.5 whitespace-nowrap text-[11px] uppercase tracking-wide">
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 whitespace-nowrap font-mono text-[10px] font-medium uppercase tracking-[0.14em]',
+        tone.text,
+      )}
+    >
       {isRunning ? (
         <Loader2 className="h-3 w-3 animate-spin" />
-      ) : status === 'completed' ? (
-        <CheckCircle2 className="h-3 w-3" />
-      ) : status === 'failed' ? (
-        <AlertCircle className="h-3 w-3" />
-      ) : status === 'cancelled' ? (
-        <XCircle className="h-3 w-3" />
-      ) : status === 'waiting_for_user_action' || status === 'completed_with_limitations' ? (
-        <AlertTriangle className="h-3 w-3" />
       ) : (
-        <Circle className="h-3 w-3" />
+        <span aria-hidden="true" className={cn('h-1.5 w-1.5 shrink-0 rounded-full', tone.dot)} />
       )}
       {label}
-    </Badge>
+    </span>
+  )
+}
+
+// Terminal runs get a rubber-stamp mark in the job header; anything still
+// moving falls back to the quiet status pill.
+function StatusStamp({ status, label }: { status: BrandAnalysisStatus; label: string }) {
+  const stampTone: Partial<Record<StatusGroup, string>> = {
+    completed: 'border-emerald-600/70 text-emerald-700 dark:border-emerald-400/70 dark:text-emerald-400',
+    completed_with_limitations:
+      'border-amber-600/70 text-amber-700 dark:border-amber-400/70 dark:text-amber-400',
+    needs_upload: 'border-amber-600/70 text-amber-700 dark:border-amber-400/70 dark:text-amber-400',
+    failed: 'border-rose-600/70 text-rose-700 dark:border-rose-400/70 dark:text-rose-400',
+    cancelled: 'border-foreground/30 text-muted-foreground',
+  }
+  const tone = runningStatuses.includes(status) ? undefined : stampTone[statusGroupOf[status]]
+  if (!tone) return <StatusPill status={status} label={label} />
+  return (
+    <span
+      className={cn(
+        'inline-block -rotate-2 rounded-sm border-2 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.22em]',
+        tone,
+      )}
+    >
+      {label}
+    </span>
   )
 }
 
@@ -325,15 +293,21 @@ function KpiTile({
   valueTone?: 'pos' | 'neg'
 }) {
   return (
-    <div className="rounded-lg border bg-card p-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={cn('mt-2 text-2xl font-semibold tabular-nums tracking-tight', valueClass(valueTone))}>
+    <div className="border-t-2 border-foreground/80 pt-2.5">
+      <p className={eyebrow}>{label}</p>
+      <p
+        className={cn(
+          'mt-2 font-mono text-2xl font-semibold leading-none tracking-tight tabular-nums',
+          valueClass(valueTone),
+        )}
+      >
         {value}
       </p>
-      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
+      {hint ? <p className="mt-1.5 text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   )
 }
+
 
 export default function BrandAnalysis() {
   const { t } = useTranslation()
@@ -802,15 +776,10 @@ export default function BrandAnalysis() {
   ]
 
   const readinessItems = [
-    {
-      key: 'account',
-      icon: ShieldCheck,
-      title: t('brandAnalysis.readiness.account'),
-      ...accountState,
-    },
-    { key: '2024', icon: Database, title: '2024', ...yearState(2024) },
-    { key: '2025', icon: Database, title: '2025', ...yearState(2025) },
-    { key: 'catalog', icon: FileSpreadsheet, title: t('brandAnalysis.readiness.catalog'), ...catalogState },
+    { key: 'account', title: t('brandAnalysis.readiness.account'), ...accountState },
+    { key: '2024', title: '2024', ...yearState(2024) },
+    { key: '2025', title: '2025', ...yearState(2025) },
+    { key: 'catalog', title: t('brandAnalysis.readiness.catalog'), ...catalogState },
   ]
 
   const showDownloadHero = !!selectedJob?.download_ready
@@ -822,11 +791,11 @@ export default function BrandAnalysis() {
       width: '40%',
       cell: (job) => (
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusPill status={job.status} label={statusLabel(job.status)} />
+          <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
             <span className="truncate text-sm font-semibold">{job.brand_name}</span>
+            <StatusPill status={job.status} label={statusLabel(job.status)} />
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 font-mono text-[11px] text-muted-foreground">
             {job.source_years.length
               ? job.source_years.join(' · ')
               : t('brandAnalysis.historyNoSourceYears')}{' '}
@@ -887,110 +856,100 @@ export default function BrandAnalysis() {
   ]
 
   return (
-    <div className="space-y-6">
-      {/* ─── Page hero ───────────────────────────────────────────────── */}
-      <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div className="flex items-start gap-4">
-          <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary md:flex">
-            <Presentation className="h-5 w-5" />
-          </div>
+    <div className="space-y-12 pb-4">
+      {/* ─── Masthead ────────────────────────────────────────────────── */}
+      <header className="ba-rise">
+        <div aria-hidden="true" className="border-t-[3px] border-foreground" />
+        <div aria-hidden="true" className="mt-[3px] border-t border-foreground/30" />
+        <div className="flex flex-col gap-6 pt-6 md:flex-row md:items-end md:justify-between">
           <div className="min-w-0">
             <h1 className="text-3xl font-bold tracking-tight">{t('brandAnalysis.title')}</h1>
-            <p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground">
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
               {t('brandAnalysis.subtitle')}
             </p>
           </div>
+          <div className="flex shrink-0 flex-col items-start gap-3 md:items-end">
+            {jobsQuery.data?.length ? (
+              <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                Nº {String(jobsQuery.data.length).padStart(3, '0')}
+              </span>
+            ) : null}
+            {showDownloadHero ? (
+              <Button
+                size="lg"
+                onClick={() => downloadMutation.mutate()}
+                disabled={downloadMutation.isPending}
+                className={inkButton}
+              >
+                {downloadMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
+                {t('brandAnalysis.cta.download')}
+              </Button>
+            ) : null}
+          </div>
         </div>
-        {showDownloadHero ? (
-          <Button
-            size="lg"
-            onClick={() => downloadMutation.mutate()}
-            disabled={downloadMutation.isPending}
-            className="shrink-0"
-          >
-            {downloadMutation.isPending ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="mr-2 h-4 w-4" />
-            )}
-            {t('brandAnalysis.cta.download')}
-          </Button>
-        ) : null}
       </header>
 
-      {/* ─── Setup grid (form + readiness preview) ───────────────────── */}
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(340px,0.9fr)]">
-        <Card className="overflow-hidden">
-          <CardHeader className="border-b bg-muted/30">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Play className="h-4 w-4" />
+      {/* ─── 01 · Brief (setup form + readiness manifest) ─────────────── */}
+      <section className="ba-rise ba-rise-2">
+        <SectionMark
+          index="01"
+          title={t('brandAnalysis.newAnalysis')}
+          hint={t('brandAnalysis.newAnalysisDescription')}
+        />
+        <div className="mt-8 grid gap-10 xl:grid-cols-[minmax(0,1.5fr)_minmax(320px,0.9fr)] xl:gap-12">
+          {/* Brief form */}
+          <div className="space-y-7">
+            <div className="grid gap-x-8 gap-y-6 lg:grid-cols-[minmax(0,1.4fr)_170px_220px]">
+              <div>
+                <Label htmlFor="brand-name" className={eyebrow}>
+                  {t('brandAnalysis.field.brandName')}
+                </Label>
+                <Input
+                  id="brand-name"
+                  value={brandName}
+                  onChange={(event) => setBrandName(event.target.value)}
+                  placeholder={t('brandAnalysis.field.brandNamePlaceholder')}
+                  className={cn(fieldInput, 'mt-1 h-11 text-base font-medium')}
+                />
               </div>
-              <div className="min-w-0">
-                <CardTitle className="text-lg">{t('brandAnalysis.newAnalysis')}</CardTitle>
-                <CardDescription className="mt-1">
-                  {t('brandAnalysis.newAnalysisDescription')}
-                </CardDescription>
+              <div>
+                <Label className={eyebrow}>{t('brandAnalysis.field.language')}</Label>
+                <Select value={language} onValueChange={(value) => setLanguage(value as 'en' | 'it')}>
+                  <SelectTrigger className={cn(fieldInput, 'mt-1 h-11')}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="en">English</SelectItem>
+                    <SelectItem value="it">Italiano</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className={eyebrow}>{t('brandAnalysis.field.account')}</Label>
+                <Select value={selectedAccount} onValueChange={setSelectedAccount}>
+                  <SelectTrigger className={cn(fieldInput, 'mt-1 h-11')}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t('brandAnalysis.field.accountPlaceholder')}</SelectItem>
+                    {accounts?.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>
+                        {account.account_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
-          </CardHeader>
-          <CardContent className="space-y-6 p-6">
-            {/* Identity */}
-            <section className="space-y-4">
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_180px_220px]">
-                <div className="space-y-2">
-                  <Label htmlFor="brand-name" className="text-xs">
-                    {t('brandAnalysis.field.brandName')}
-                  </Label>
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      id="brand-name"
-                      value={brandName}
-                      onChange={(event) => setBrandName(event.target.value)}
-                      placeholder={t('brandAnalysis.field.brandNamePlaceholder')}
-                      className="pl-9"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs">{t('brandAnalysis.field.language')}</Label>
-                  <Select value={language} onValueChange={(value) => setLanguage(value as 'en' | 'it')}>
-                    <SelectTrigger>
-                      <Languages className="mr-2 h-4 w-4 text-muted-foreground" />
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="en">English</SelectItem>
-                      <SelectItem value="it">Italiano</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs">{t('brandAnalysis.field.account')}</Label>
-                  <Select value={selectedAccount} onValueChange={setSelectedAccount}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">{t('brandAnalysis.field.accountPlaceholder')}</SelectItem>
-                      {accounts?.map((account) => (
-                        <SelectItem key={account.id} value={account.id}>
-                          {account.account_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </section>
 
-            <div className="h-px w-full bg-border" />
-
-            {/* Scope as a restrained segmented control */}
-            <section className="space-y-2">
-              <Label className="text-xs">{t('brandAnalysis.scope.label')}</Label>
-              <div className="inline-flex rounded-md border bg-muted/40 p-0.5">
+            {/* Scope segmented control */}
+            <div>
+              <p className={eyebrow}>{t('brandAnalysis.scope.label')}</p>
+              <div className="mt-2 inline-flex overflow-hidden rounded-sm border border-foreground/30">
                 <SegmentButton
                   active={marketType === 'brand'}
                   label={t('brandAnalysis.scope.brand')}
@@ -1002,16 +961,16 @@ export default function BrandAnalysis() {
                   onClick={() => setMarketType('asin')}
                 />
               </div>
-            </section>
+            </div>
 
             {/* ASIN list — only shown when scope is an explicit ASIN list */}
             {marketType === 'asin' ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="asin-list" className="text-xs">
+              <div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <Label htmlFor="asin-list" className={eyebrow}>
                     {t('brandAnalysis.field.asinList')}
                   </Label>
-                  <span className="text-xs tabular-nums text-muted-foreground">
+                  <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
                     {asinList.length} {t('brandAnalysis.label.asins')}
                   </span>
                 </div>
@@ -1019,17 +978,18 @@ export default function BrandAnalysis() {
                   id="asin-list"
                   value={asinText}
                   onChange={(event) => setAsinText(event.target.value)}
-                  className="min-h-[112px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm leading-6 ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  className="mt-2 min-h-[112px] w-full resize-y rounded-sm border border-foreground/30 bg-transparent px-3 py-2 font-mono text-sm leading-6 placeholder:text-muted-foreground focus-visible:border-foreground focus-visible:outline-none"
                   placeholder={t('brandAnalysis.field.asinListPlaceholder')}
                 />
               </div>
             ) : null}
 
-            <div className="flex flex-wrap items-center gap-2 pt-2">
+            <div className="flex flex-wrap items-center gap-3 border-t border-foreground/10 pt-6">
               <Button
                 onClick={handleAnalyze}
                 disabled={createMutation.isPending || startMutation.isPending}
                 size="lg"
+                className={inkButton}
               >
                 {createMutation.isPending || startMutation.isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1041,6 +1001,8 @@ export default function BrandAnalysis() {
               <Button
                 type="button"
                 variant="outline"
+                size="lg"
+                className={ghostButton}
                 onClick={() => {
                   setShowAdvancedUpload((value) => !value)
                   if (selectedJobId) setActiveTab('files')
@@ -1050,141 +1012,122 @@ export default function BrandAnalysis() {
                 {t('brandAnalysis.cta.uploadExternal')}
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
 
-        <Card>
-          <CardHeader className="border-b bg-muted/30">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                <ShieldCheck className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <CardTitle className="text-lg">{t('brandAnalysis.readiness.title')}</CardTitle>
-                <CardDescription className="mt-1">
-                  {t('brandAnalysis.readiness.description')}
-                </CardDescription>
-              </div>
+          {/* Readiness manifest */}
+          <aside className="border-t border-foreground/15 pt-6 xl:border-l xl:border-t-0 xl:pl-10 xl:pt-0">
+            <p className={eyebrow}>{t('brandAnalysis.readiness.title')}</p>
+            <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+              {t('brandAnalysis.readiness.description')}
+            </p>
+            <div className="mt-4 divide-y divide-foreground/10">
+              {readinessItems.map((item) => (
+                <ReadinessRow key={item.key} item={item} />
+              ))}
             </div>
-          </CardHeader>
-          <CardContent className="space-y-2.5 p-4">
-            {readinessItems.map((item) => (
-              <ReadinessRow key={item.key} item={item} />
-            ))}
 
             {missingOptional.length ? (
-              <div className="mt-3 rounded-lg border bg-muted/30 p-3">
+              <div className="mt-5 border-t border-foreground/10 pt-4">
                 <div className="flex items-center gap-2">
                   <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {t('brandAnalysis.readiness.optionalMissing')}
-                  </p>
+                  <p className={eyebrow}>{t('brandAnalysis.readiness.optionalMissing')}</p>
                 </div>
-                <div className="mt-2 flex flex-wrap gap-1.5">
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
                   {missingOptional.map((field) => (
-                    <Badge key={field} variant="outline" className="font-normal">
+                    <span key={field} className={monoTag}>
                       {field}
-                    </Badge>
+                    </span>
                   ))}
                 </div>
               </div>
             ) : null}
-          </CardContent>
-        </Card>
-      </div>
+          </aside>
+        </div>
+      </section>
 
-      {/* ─── Selected job: run details with tabs ──────────────────────── */}
+      {/* ─── 02 · Production (selected run) ───────────────────────────── */}
       {selectedJobId ? (
-        <Card className="overflow-hidden">
-          {/* Header band */}
-          <div className="border-b bg-muted/20">
-            <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0 space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusPill status={currentStatus} label={statusLabel(currentStatus)} />
-                  <Badge variant="outline" className="gap-1.5 font-normal">
-                    {selectedJobDataSource === 'internal' ? (
-                      <Database className="h-3 w-3" />
-                    ) : (
-                      <Upload className="h-3 w-3" />
-                    )}
-                    {selectedJobDataSource === 'internal'
-                      ? t('brandAnalysis.mode.internal')
-                      : t('brandAnalysis.mode.manual')}
-                  </Badge>
-                  {selectedJob?.market_type ? (
-                    <Badge variant="outline" className="gap-1.5 font-normal">
-                      {selectedJob.market_type === 'asin' ? (
-                        <ListChecks className="h-3 w-3" />
-                      ) : (
-                        <Search className="h-3 w-3" />
-                      )}
-                      {t(`brandAnalysis.marketType.${selectedJob.market_type}`)}
-                    </Badge>
-                  ) : null}
-                </div>
-                <div>
-                  <h2 className="text-2xl font-semibold leading-tight tracking-tight">
-                    {selectedJob?.brand_name || selectedJobFromList?.brand_name}
-                  </h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {selectedJob?.progress_step || t(`brandAnalysis.mode.${selectedJobDataSource}.help`)}
-                  </p>
-                </div>
+        <section className="ba-rise ba-rise-3">
+          <SectionMark index="02" title={t('brandAnalysis.progress.title')} />
 
-                {/* Compact at-a-glance progress; the stepper below carries step detail */}
-                {isRunning ? (
-                  <div className="flex max-w-2xl items-center gap-3 pt-1">
-                    <Progress value={progressPct} className="h-1 flex-1" />
-                    <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                      {progressPct}%
-                    </span>
-                  </div>
+          <div className="mt-8 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 space-y-4">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <StatusStamp status={currentStatus} label={statusLabel(currentStatus)} />
+                <span className={monoTag}>
+                  {selectedJobDataSource === 'internal'
+                    ? t('brandAnalysis.mode.internal')
+                    : t('brandAnalysis.mode.manual')}
+                </span>
+                {selectedJob?.market_type ? (
+                  <span className={monoTag}>
+                    {t(`brandAnalysis.marketType.${selectedJob.market_type}`)}
+                  </span>
                 ) : null}
               </div>
+              <div>
+                <h3 className="text-2xl font-semibold leading-tight tracking-tight">
+                  {selectedJob?.brand_name || selectedJobFromList?.brand_name}
+                </h3>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {selectedJob?.progress_step || t(`brandAnalysis.mode.${selectedJobDataSource}.help`)}
+                </p>
+              </div>
 
-              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                {isRunning && currentStatus !== 'cancelling' ? (
-                  <CancelRunButton
-                    brand={selectedJob?.brand_name || ''}
-                    pending={cancelMutation.isPending}
-                    onConfirm={() => selectedJobId && cancelMutation.mutate(selectedJobId)}
-                  />
-                ) : null}
+              {/* Compact at-a-glance progress; the stepper below carries step detail */}
+              {isRunning ? (
+                <div className="flex max-w-2xl items-center gap-3 pt-1">
+                  <Progress value={progressPct} className="h-0.5 flex-1 rounded-none bg-foreground/10" />
+                  <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                    {progressPct}%
+                  </span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              {isRunning && currentStatus !== 'cancelling' ? (
+                <CancelRunButton
+                  brand={selectedJob?.brand_name || ''}
+                  pending={cancelMutation.isPending}
+                  onConfirm={() => selectedJobId && cancelMutation.mutate(selectedJobId)}
+                />
+              ) : null}
+              <Button
+                type="button"
+                onClick={() => selectedJobId && startMutation.mutate(selectedJobId)}
+                disabled={!canStart || isRunning || startMutation.isPending}
+                variant={selectedJob?.download_ready ? 'outline' : 'default'}
+                className={selectedJob?.download_ready ? ghostButton : inkButton}
+              >
+                {startMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                )}
+                {selectedJob?.status === 'completed'
+                  ? t('brandAnalysis.cta.rerun')
+                  : t('brandAnalysis.cta.start')}
+              </Button>
+              {selectedJob?.download_ready ? (
                 <Button
                   type="button"
-                  onClick={() => selectedJobId && startMutation.mutate(selectedJobId)}
-                  disabled={!canStart || isRunning || startMutation.isPending}
-                  variant={selectedJob?.download_ready ? 'outline' : 'default'}
+                  onClick={() => downloadMutation.mutate()}
+                  disabled={downloadMutation.isPending}
+                  className={inkButton}
                 >
-                  {startMutation.isPending ? (
+                  {downloadMutation.isPending ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
-                    <RefreshCw className="mr-2 h-4 w-4" />
+                    <Download className="mr-2 h-4 w-4" />
                   )}
-                  {selectedJob?.status === 'completed'
-                    ? t('brandAnalysis.cta.rerun')
-                    : t('brandAnalysis.cta.start')}
+                  {t('brandAnalysis.cta.download')}
                 </Button>
-                {selectedJob?.download_ready ? (
-                  <Button
-                    type="button"
-                    onClick={() => downloadMutation.mutate()}
-                    disabled={downloadMutation.isPending}
-                  >
-                    {downloadMutation.isPending ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Download className="mr-2 h-4 w-4" />
-                    )}
-                    {t('brandAnalysis.cta.download')}
-                  </Button>
-                ) : null}
-              </div>
+              ) : null}
             </div>
           </div>
 
-          <CardContent className="space-y-6 p-6">
+          <div className="mt-8 space-y-7">
             {selectedJobQuery.isLoading ? (
               <div className="flex items-center gap-3 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1217,8 +1160,7 @@ export default function BrandAnalysis() {
 
             {/* Pipeline stepper — the single detailed progress view */}
             {isRunning || (progressPct > 0 && progressPct < 100) ? (
-              <div className="space-y-3">
-                <p className={eyebrow}>{t('brandAnalysis.progress.title')}</p>
+              <div className="border-y border-foreground/10 py-6">
                 <StepperPipeline
                   steps={progressSteps.map((step) => ({
                     key: step.key,
@@ -1232,26 +1174,23 @@ export default function BrandAnalysis() {
               </div>
             ) : null}
 
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="space-y-5">
-              <TabsList className="bg-muted">
-                <TabsTrigger value="overview" className="gap-2">
-                  <LineChart className="h-3.5 w-3.5" />
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="space-y-6">
+              <TabsList className="h-auto w-full justify-start gap-7 rounded-none border-b border-foreground/15 bg-transparent p-0 text-muted-foreground">
+                <TabsTrigger value="overview" className={tabTrigger}>
                   {t('brandAnalysis.label.metricsPreview')}
                 </TabsTrigger>
-                <TabsTrigger value="data" className="gap-2">
-                  <Database className="h-3.5 w-3.5" />
+                <TabsTrigger value="data" className={tabTrigger}>
                   {t('brandAnalysis.readiness.title')}
                 </TabsTrigger>
-                <TabsTrigger value="files" className="gap-2">
-                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                <TabsTrigger value="files" className={tabTrigger}>
                   {t('brandAnalysis.upload.title')}
                 </TabsTrigger>
               </TabsList>
 
               {/* ── Overview tab ── */}
-              <TabsContent value="overview" className="mt-4 space-y-6">
+              <TabsContent value="overview" className="mt-6 space-y-8">
                 {selectedJob?.metrics ? (
-                  <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                  <section className="grid gap-x-6 gap-y-7 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                     <KpiTile
                       label={t('brandAnalysis.label.revenue2025')}
                       value={formatCurrency(metric(selectedJob, 'total_revenue_2025'))}
@@ -1296,9 +1235,8 @@ export default function BrandAnalysis() {
                 ) : null}
 
                 {selectedJob?.metrics ? (
-                  <section className="grid gap-3 lg:grid-cols-3">
+                  <section className="grid gap-x-10 gap-y-6 lg:grid-cols-3">
                     <InsightTile
-                      icon={BarChart3}
                       label={t('brandAnalysis.result.market')}
                       body={
                         marketAnalysis.status === 'calculated_from_external_market_export'
@@ -1309,7 +1247,6 @@ export default function BrandAnalysis() {
                       }
                     />
                     <InsightTile
-                      icon={Search}
                       label={t('brandAnalysis.result.content')}
                       body={t('brandAnalysis.result.contentSummary', {
                         titles: contentHealth.short_title_count ?? 'N/A',
@@ -1317,7 +1254,6 @@ export default function BrandAnalysis() {
                       })}
                     />
                     <InsightTile
-                      icon={ShieldCheck}
                       label={t('brandAnalysis.result.buyBox')}
                       body={
                         sellerSummary.buy_box_owner_available
@@ -1332,7 +1268,7 @@ export default function BrandAnalysis() {
 
                 {/* Fix data — quiet inline strip of navigational shortcuts */}
                 {recommendedActions.length ? (
-                  <section className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-muted/20 px-4 py-3">
+                  <section className="flex flex-wrap items-baseline gap-x-5 gap-y-2 border-t border-foreground/10 pt-4">
                     <span className={eyebrow}>{t('brandAnalysis.action.title')}</span>
                     {recommendedActions.map((action) => (
                       <Button
@@ -1342,7 +1278,7 @@ export default function BrandAnalysis() {
                         size="sm"
                         disabled={action.disabled}
                         onClick={action.onClick}
-                        className="h-auto p-0 text-sm font-medium"
+                        className="h-auto p-0 text-sm font-medium underline decoration-dotted underline-offset-4"
                       >
                         {action.label}
                       </Button>
@@ -1352,12 +1288,10 @@ export default function BrandAnalysis() {
               </TabsContent>
 
               {/* ── Data & capabilities tab ── */}
-              <TabsContent value="data" className="mt-4 space-y-6">
-                <section className="space-y-3">
-                  <p className={eyebrow}>
-                    {t('brandAnalysis.readiness.title')}
-                  </p>
-                  <div className="grid gap-2.5 md:grid-cols-2">
+              <TabsContent value="data" className="mt-6 space-y-8">
+                <section>
+                  <p className={eyebrow}>{t('brandAnalysis.readiness.title')}</p>
+                  <div className="mt-2 grid gap-x-12 md:grid-cols-2">
                     {readinessItems.map((item) => (
                       <ReadinessRow key={item.key} item={item} />
                     ))}
@@ -1365,47 +1299,34 @@ export default function BrandAnalysis() {
                 </section>
 
                 {hasCapabilityData ? (
-                  <section className="space-y-3">
-                    <p className={eyebrow}>
-                      {t('brandAnalysis.readiness.capabilities')}
-                    </p>
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <section>
+                    <p className={eyebrow}>{t('brandAnalysis.readiness.capabilities')}</p>
+                    <div className="mt-2 grid gap-x-10 sm:grid-cols-2 lg:grid-cols-3">
                       {capabilityKeys.map((key) => {
                         const value = capabilityMatrix[key]
                         if (value === undefined) return null
-                        const Icon = capabilityIcons[key] || ShieldCheck
                         const available = !!value
                         return (
                           <div
                             key={key}
-                            className={cn(
-                              'flex items-center gap-3 rounded-lg border p-3 text-sm',
-                              available
-                                ? 'border-emerald-500/20 bg-emerald-500/[0.04] dark:bg-emerald-500/[0.06]'
-                                : 'border-rose-500/20 bg-rose-500/[0.04] dark:bg-rose-500/[0.06]',
-                            )}
+                            className="flex items-center gap-2.5 border-b border-foreground/10 py-2.5"
                           >
-                            <div
+                            {available ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                            ) : (
+                              <X className="h-3.5 w-3.5 shrink-0 text-rose-600 dark:text-rose-400" />
+                            )}
+                            <span
                               className={cn(
-                                'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
-                                available
-                                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                                  : 'bg-rose-500/15 text-rose-700 dark:text-rose-300',
+                                'min-w-0 flex-1 truncate font-mono text-xs',
+                                available ? 'text-foreground' : 'text-muted-foreground',
                               )}
                             >
-                              <Icon className="h-3.5 w-3.5" />
-                            </div>
-                            <span className="flex-1 truncate text-xs font-medium">
                               {key
                                 .replace(/_available$/, '')
                                 .replace(/_or_inferred$/, '')
                                 .replace(/_/g, ' ')}
                             </span>
-                            {available ? (
-                              <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                            ) : (
-                              <AlertCircle className="h-4 w-4 text-rose-600 dark:text-rose-400" />
-                            )}
                           </div>
                         )
                       })}
@@ -1420,13 +1341,9 @@ export default function BrandAnalysis() {
                     <AlertDescription>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {missingPermissions.map((role) => (
-                          <Badge
-                            key={role}
-                            variant="outline"
-                            className="border-amber-500/40 bg-background font-mono text-[11px]"
-                          >
+                          <span key={role} className={monoTag}>
                             {role}
-                          </Badge>
+                          </span>
                         ))}
                       </div>
                     </AlertDescription>
@@ -1434,25 +1351,17 @@ export default function BrandAnalysis() {
                 ) : null}
 
                 {limitationItems.length ? (
-                  <section className="space-y-3">
-                    <p className={eyebrow}>
-                      {t('brandAnalysis.readiness.limitations')}
-                    </p>
-                    <div className="space-y-2">
+                  <section>
+                    <p className={eyebrow}>{t('brandAnalysis.readiness.limitations')}</p>
+                    <div className="mt-3 space-y-4">
                       {limitationItems.map((item, index) => (
-                        <div
-                          key={`${item.area}-${index}`}
-                          className="flex items-start gap-3 rounded-lg border border-l-4 border-l-amber-500 bg-amber-500/[0.05] p-3 dark:bg-amber-500/[0.08]"
-                        >
-                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                          <div className="min-w-0 flex-1">
-                            {item.area ? (
-                              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                                {item.area.replace(/_/g, ' ')}
-                              </p>
-                            ) : null}
-                            <p className="mt-0.5 text-sm leading-5 text-foreground/90">{item.message}</p>
-                          </div>
+                        <div key={`${item.area}-${index}`} className="border-l-2 border-amber-500 pl-4">
+                          {item.area ? (
+                            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-400">
+                              {item.area.replace(/_/g, ' ')}
+                            </p>
+                          ) : null}
+                          <p className="mt-1 text-sm leading-6 text-foreground/90">{item.message}</p>
                         </div>
                       ))}
                     </div>
@@ -1460,15 +1369,13 @@ export default function BrandAnalysis() {
                 ) : null}
 
                 {missingOptional.length ? (
-                  <section className="space-y-3">
-                    <p className={eyebrow}>
-                      {t('brandAnalysis.readiness.optionalMissing')}
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
+                  <section>
+                    <p className={eyebrow}>{t('brandAnalysis.readiness.optionalMissing')}</p>
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
                       {missingOptional.map((field) => (
-                        <Badge key={field} variant="outline" className="font-normal">
+                        <span key={field} className={monoTag}>
                           {field}
-                        </Badge>
+                        </span>
                       ))}
                     </div>
                   </section>
@@ -1476,10 +1383,10 @@ export default function BrandAnalysis() {
               </TabsContent>
 
               {/* ── Files tab ── */}
-              <TabsContent value="files" className="mt-4 space-y-4">
-                <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+              <TabsContent value="files" className="mt-6 space-y-5">
+                <div className="flex items-start gap-2.5 text-sm text-muted-foreground">
                   <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                  <p className="leading-5">{t('brandAnalysis.upload.description')}</p>
+                  <p className="max-w-3xl leading-6">{t('brandAnalysis.upload.description')}</p>
                 </div>
 
                 {!selectedJob ? (
@@ -1492,27 +1399,21 @@ export default function BrandAnalysis() {
                 {selectedJob && selectedJobDataSource === 'manual' ? (
                   <div
                     className={cn(
-                      'flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 text-sm',
+                      'flex flex-wrap items-center justify-between gap-3 border-l-2 py-1 pl-4 text-sm',
                       hasBothManualFiles
-                        ? 'border-emerald-500/30 bg-emerald-500/[0.05] text-emerald-700 dark:text-emerald-300'
-                        : 'bg-muted/30 text-muted-foreground',
+                        ? 'border-emerald-500 text-emerald-700 dark:text-emerald-400'
+                        : 'border-foreground/25 text-muted-foreground',
                     )}
                   >
-                    <div className="flex items-start gap-3">
-                      {hasBothManualFiles ? (
-                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                      ) : (
-                        <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                      )}
-                      <p className="leading-5">
-                        {hasBothManualFiles
-                          ? t('brandAnalysis.upload.allFilesReady')
-                          : t('brandAnalysis.upload.filesProgress', { count: sourceYears.size })}
-                      </p>
-                    </div>
+                    <p className="leading-6">
+                      {hasBothManualFiles
+                        ? t('brandAnalysis.upload.allFilesReady')
+                        : t('brandAnalysis.upload.filesProgress', { count: sourceYears.size })}
+                    </p>
                     {hasBothManualFiles && !isRunning ? (
                       <Button
                         size="sm"
+                        className={inkButton}
                         onClick={() => selectedJobId && startMutation.mutate(selectedJobId)}
                         disabled={startMutation.isPending}
                       >
@@ -1527,7 +1428,7 @@ export default function BrandAnalysis() {
                   </div>
                 ) : null}
 
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-5 md:grid-cols-2">
                   {[2024, 2025].map((year) => {
                     const existing = selectedJob?.source_files.find((file) => file.year === year)
                     const file = year === 2024 ? file2024 : file2025
@@ -1535,42 +1436,47 @@ export default function BrandAnalysis() {
                       <div
                         key={year}
                         className={cn(
-                          'flex flex-col gap-4 rounded-lg border p-4',
+                          'rounded-sm border border-dashed p-5',
                           existing
-                            ? 'border-emerald-500/30 bg-emerald-500/[0.03] dark:bg-emerald-500/[0.06]'
-                            : 'bg-card',
+                            ? 'border-emerald-500/60 bg-emerald-500/[0.04]'
+                            : 'border-foreground/30',
                         )}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex min-w-0 items-start gap-3">
-                            <div
+                            <FileSpreadsheet
                               className={cn(
-                                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                                'mt-1 h-5 w-5 shrink-0',
                                 existing
-                                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-                                  : 'bg-muted text-muted-foreground',
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-muted-foreground',
                               )}
-                            >
-                              <FileSpreadsheet className="h-5 w-5" />
-                            </div>
+                            />
                             <div className="min-w-0">
                               <p className="text-sm font-semibold">
                                 {t('brandAnalysis.upload.yearExport', { year })}
                               </p>
-                              <p className="mt-0.5 text-xs text-muted-foreground">
+                              <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
                                 {existing
                                   ? t('brandAnalysis.upload.fileReady', { rows: existing.row_count ?? 0 })
                                   : t('brandAnalysis.upload.fileMissing')}
                               </p>
                             </div>
                           </div>
-                          <Badge variant={existing ? 'success' : 'outline'} className="shrink-0">
+                          <span
+                            className={cn(
+                              'shrink-0 font-mono text-[10px] font-semibold uppercase tracking-[0.16em]',
+                              existing
+                                ? 'text-emerald-700 dark:text-emerald-400'
+                                : 'text-muted-foreground',
+                            )}
+                          >
                             {existing
                               ? t('brandAnalysis.readiness.ready')
                               : t('brandAnalysis.readiness.missing')}
-                          </Badge>
+                          </span>
                         </div>
-                        <div className="flex flex-col gap-2 sm:flex-row">
+                        <div className="mt-5 flex flex-col gap-2 sm:flex-row">
                           <Input
                             type="file"
                             accept=".csv,.xlsx,.xls"
@@ -1580,11 +1486,12 @@ export default function BrandAnalysis() {
                               if (year === 2024) setFile2024(nextFile)
                               else setFile2025(nextFile)
                             }}
-                            className="cursor-pointer file:mr-3 file:cursor-pointer file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs file:font-medium hover:bg-muted/40"
+                            className="cursor-pointer rounded-sm border-foreground/25 file:mr-3 file:cursor-pointer file:rounded-sm file:border-0 file:bg-foreground/10 file:px-2 file:py-1 file:font-mono file:text-[11px] file:font-medium hover:bg-foreground/[0.03]"
                           />
                           <Button
                             type="button"
                             variant="outline"
+                            className={ghostButton}
                             disabled={!selectedJob || !file || uploadMutation.isPending}
                             onClick={() => handleUpload(year as 2024 | 2025)}
                           >
@@ -1602,55 +1509,44 @@ export default function BrandAnalysis() {
                 </div>
               </TabsContent>
             </Tabs>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       ) : null}
 
       {/* ─── Standalone upload zone (legacy fallback when no job) ─────── */}
       {showUploadZone && !selectedJobId ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>{t('brandAnalysis.upload.title')}</CardTitle>
-            <CardDescription>{t('brandAnalysis.upload.description')}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{t('brandAnalysis.upload.createFirst')}</AlertDescription>
-            </Alert>
-          </CardContent>
-        </Card>
+        <section className="ba-rise ba-rise-3 border-t border-foreground/15 pt-6">
+          <p className={eyebrow}>{t('brandAnalysis.upload.title')}</p>
+          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted-foreground">
+            {t('brandAnalysis.upload.description')}
+          </p>
+          <Alert className="mt-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{t('brandAnalysis.upload.createFirst')}</AlertDescription>
+          </Alert>
+        </section>
       ) : null}
 
-      {/* ─── History ─────────────────────────────────────────────────── */}
-      <Card>
-        <CardHeader className="border-b">
-          <div className="flex items-start gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              <History className="h-4 w-4" />
-            </div>
-            <div>
-              <CardTitle className="text-lg">{t('brandAnalysis.previousAnalyses')}</CardTitle>
-              <CardDescription className="mt-1">
-                {t('brandAnalysis.historyDescription')}
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
+      {/* ─── 02/03 · Archive ──────────────────────────────────────────── */}
+      <section className="ba-rise ba-rise-4">
+        <SectionMark
+          index={selectedJobId ? '03' : '02'}
+          title={t('brandAnalysis.previousAnalyses')}
+          hint={t('brandAnalysis.historyDescription')}
+        />
+        <div className="mt-6">
           {jobsQuery.isLoading ? (
             <div className="flex justify-center py-10">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : !jobsQuery.data?.length ? (
-            <div className="flex flex-col items-center gap-3 py-12 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                <Presentation className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <p className="max-w-sm text-sm text-muted-foreground">{t('brandAnalysis.noJobsYet')}</p>
+            <div className="flex flex-col items-center gap-2 rounded-sm border border-dashed border-foreground/25 px-6 py-14 text-center">
+              <p className="max-w-md text-sm leading-6 text-muted-foreground">
+                {t('brandAnalysis.noJobsYet')}
+              </p>
             </div>
           ) : (
-            <div className="px-2 md:px-4">
+            <div>
               <ReportTable
                 rows={jobsQuery.data}
                 rowKey={(job) => job.id}
@@ -1693,8 +1589,8 @@ export default function BrandAnalysis() {
               />
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   )
 }
@@ -1758,7 +1654,7 @@ function CancelRunButton({
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button type="button" variant="outline" disabled={pending}>
+        <Button type="button" variant="outline" className={ghostButton} disabled={pending}>
           {pending ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           ) : (
@@ -1803,10 +1699,10 @@ function SegmentButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        'rounded px-3 py-1.5 text-sm font-medium transition-colors',
+        'px-3.5 py-1.5 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors',
         active
-          ? 'bg-background text-foreground shadow-sm'
-          : 'text-muted-foreground hover:text-foreground',
+          ? 'bg-foreground text-background'
+          : 'bg-transparent text-muted-foreground hover:text-foreground',
       )}
     >
       {label}
@@ -1814,37 +1710,43 @@ function SegmentButton({
   )
 }
 
+// Manifest row — a table-of-contents line with a dotted leader running from
+// the item to its status.
 function ReadinessRow({
   item,
 }: {
   item: {
-    icon: typeof Database
     title: string
     state: ReadinessState
     label: string
     detail: string
   }
 }) {
-  const Icon = item.icon
   return (
-    <div
-      className={cn(
-        'flex items-start gap-3 rounded-lg border border-l-4 p-3 transition-colors',
-        readinessTone[item.state],
-      )}
-    >
-      <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', readinessIconTone[item.state])} />
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-semibold">{item.title}</p>
-          <ReadinessBadge state={item.state} label={item.label} />
-        </div>
-        <p className="text-xs leading-5 text-muted-foreground">{item.detail}</p>
+    <div className="py-3">
+      <div className="flex items-baseline gap-2.5">
+        <span className="shrink-0 font-mono text-xs font-semibold uppercase tracking-[0.08em] text-foreground">
+          {item.title}
+        </span>
+        <span
+          aria-hidden="true"
+          className="flex-1 self-center border-b border-dotted border-foreground/30"
+        />
+        <span
+          aria-hidden="true"
+          className={cn('h-1.5 w-1.5 shrink-0 self-center rounded-full', stateDot[item.state])}
+        />
+        <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+          {item.label}
+        </span>
       </div>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.detail}</p>
     </div>
   )
 }
 
+// Production line — stations on a single ink track. Done stations are filled,
+// the current one pulses, upcoming ones stay hollow.
 function StepperPipeline({
   steps,
   currentPct,
@@ -1858,54 +1760,44 @@ function StepperPipeline({
 }) {
   const completed = status === 'completed' || status === 'completed_with_limitations'
   return (
-    <ol className="grid gap-2 sm:grid-cols-3 lg:grid-cols-9">
+    <ol className="grid grid-cols-3 gap-y-6 sm:grid-cols-9">
       {steps.map((step, index) => {
         const isDone = completed || currentPct >= step.pct
         const prevPct = index === 0 ? 0 : steps[index - 1].pct
         const isActive = !completed && isRunning && currentPct < step.pct && currentPct >= prevPct - 4
         return (
-          <li key={step.key}>
-            <div
+          <li key={step.key} className="relative flex flex-col items-center gap-2 text-center">
+            {index > 0 ? (
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'absolute left-[-50%] right-[50%] top-[5px] hidden h-px sm:block',
+                  isDone ? 'bg-foreground' : 'bg-foreground/15',
+                )}
+              />
+            ) : null}
+            <span
               className={cn(
-                'flex h-full items-start gap-2 rounded-lg border px-2.5 py-2 transition-all',
+                'relative z-10 h-[11px] w-[11px] rounded-full border-2 bg-background',
                 isDone
-                  ? 'border-emerald-500/30 bg-emerald-500/[0.06] dark:bg-emerald-500/[0.1]'
+                  ? 'border-foreground bg-foreground'
                   : isActive
-                    ? 'border-primary/40 bg-primary/[0.06] shadow-[0_0_0_3px_hsl(var(--primary)/0.08)]'
-                    : 'border-dashed border-border bg-background',
+                    ? 'ba-pulse border-primary'
+                    : 'border-foreground/25',
+              )}
+            />
+            <span
+              className={cn(
+                'px-1 font-mono text-[9px] uppercase leading-snug tracking-[0.1em]',
+                isDone
+                  ? 'text-foreground'
+                  : isActive
+                    ? 'font-semibold text-primary'
+                    : 'text-muted-foreground/70',
               )}
             >
-              <span
-                className={cn(
-                  'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full',
-                  isDone
-                    ? 'bg-emerald-500 text-white'
-                    : isActive
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground',
-                )}
-              >
-                {isDone ? (
-                  <CheckCircle2 className="h-3 w-3" />
-                ) : isActive ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Circle className="h-2 w-2 fill-current" />
-                )}
-              </span>
-              <span
-                className={cn(
-                  'text-[11px] font-medium leading-4',
-                  isDone
-                    ? 'text-emerald-800 dark:text-emerald-200'
-                    : isActive
-                      ? 'text-foreground'
-                      : 'text-muted-foreground',
-                )}
-              >
-                {step.label}
-              </span>
-            </div>
+              {step.label}
+            </span>
           </li>
         )
       })}
@@ -1913,33 +1805,24 @@ function StepperPipeline({
   )
 }
 
-function InsightTile({
-  icon: Icon,
-  label,
-  body,
-}: {
-  icon: typeof Database
-  label: string
-  body: string
-}) {
+function InsightTile({ label, body }: { label: string; body: string }) {
   return (
-    <div className="flex h-full flex-col gap-2 rounded-lg border bg-card p-4">
-      <div className="flex items-center gap-2">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <Icon className="h-3.5 w-3.5" />
-        </div>
-        <p className="text-sm font-semibold">{label}</p>
-      </div>
-      <p className="text-sm leading-6 text-muted-foreground">{body}</p>
+    <div className="border-l-2 border-foreground/70 pl-4">
+      <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">
+        {label}
+      </p>
+      <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{body}</p>
     </div>
   )
 }
 
 function EmptyHint({ title, body }: { title: string; body: string }) {
   return (
-    <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed bg-muted/20 px-6 py-10 text-center">
-      <p className="text-sm font-semibold">{title}</p>
-      <p className="max-w-xs text-xs leading-5 text-muted-foreground">{body}</p>
+    <div className="flex flex-col items-center gap-2 rounded-sm border border-dashed border-foreground/25 px-6 py-12 text-center">
+      <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        {title}
+      </p>
+      <p className="max-w-xs text-sm leading-6 text-muted-foreground">{body}</p>
     </div>
   )
 }

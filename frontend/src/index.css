@@ -58,6 +58,45 @@
   }
 }
 
+/* Brand Analysis — editorial-brief page chrome: staggered load reveal and the
+   pulsing "current station" dot on the production pipeline. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes ba-rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .ba-rise {
+    animation: ba-rise 0.55s cubic-bezier(0.22, 0.68, 0.31, 1) both;
+  }
+  .ba-rise-2 {
+    animation-delay: 0.08s;
+  }
+  .ba-rise-3 {
+    animation-delay: 0.16s;
+  }
+  .ba-rise-4 {
+    animation-delay: 0.24s;
+  }
+  @keyframes ba-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 hsl(var(--primary) / 0.45);
+    }
+    70% {
+      box-shadow: 0 0 0 7px hsl(var(--primary) / 0);
+    }
+  }
+  .ba-pulse {
+    animation: ba-pulse 1.6s ease-out infinite;
+  }
+}
+
 /* Recharts — make every chart's tooltip, axes and grid match the app theme
    instead of Recharts' built-in light-mode defaults. */
 .recharts-default-tooltip {

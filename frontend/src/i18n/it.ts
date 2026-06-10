@@ -29,6 +29,9 @@ const it: Record<string, string> = {
   'nav.logout': 'Esci',
   'nav.orgSettings': 'Impostazioni organizzazione',
   'nav.organization': 'Organizzazione:',
+  'nav.group.analytics': 'Analytics',
+  'nav.group.intelligence': 'Intelligence',
+  'nav.group.operations': 'Operazioni',
   'nav.expandSidebar': 'Espandi barra laterale',
   'nav.collapseSidebar': 'Comprimi barra laterale',
 

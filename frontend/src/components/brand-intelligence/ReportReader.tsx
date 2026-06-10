@@ -14,30 +14,41 @@ function orderedSections(report: BrandIntelligenceReport) {
 
 export function ReportReader({ report }: { report: BrandIntelligenceReport }) {
   const { t } = useTranslation()
-  const sections = orderedSections(report)
+  // Filter empty sections here so the editorial numbering stays contiguous.
+  const sections = orderedSections(report).filter(
+    (section) => section.narrative || section.items.length > 0,
+  )
 
   return (
-    <article className="space-y-5">
+    <article className="space-y-10">
       <ExecSummary summary={report.exec_summary} />
 
-      {sections.map((section) => (
-        <ReportSection key={section.key} section={section} />
+      {sections.map((section, index) => (
+        <ReportSection key={section.key} section={section} index={index} />
       ))}
 
-      <footer className="rounded-lg border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+      {/* Colophon */}
+      <footer className="border-t-2 border-foreground pt-4">
         {report.coverage_note ? (
-          <p className="leading-6">{report.coverage_note}</p>
+          <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
+            {report.coverage_note}
+          </p>
         ) : null}
-        <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
           {report.generated_at ? (
-            <span>{t('brandIntelligence.footer.generated', { date: formatDate(report.generated_at) })}</span>
+            <span>
+              {t('brandIntelligence.footer.generated', { date: formatDate(report.generated_at) })}
+            </span>
           ) : null}
           {report.model ? (
             <>
-              <span aria-hidden>·</span>
+              <span aria-hidden="true">·</span>
               <span>{t('brandIntelligence.footer.model', { model: report.model })}</span>
             </>
           ) : null}
+          <span aria-hidden="true" className="text-foreground">
+            ■
+          </span>
         </p>
       </footer>
     </article>

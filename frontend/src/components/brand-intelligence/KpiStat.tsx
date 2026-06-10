@@ -1,4 +1,5 @@
 import { ArrowDownRight, ArrowUpRight, Minus } from 'lucide-react'
+import { eyebrow } from '@/lib/editorial'
 import type { BrandIntelligenceKpi } from '@/types'
 
 function tone(trend: BrandIntelligenceKpi['trend']): string {
@@ -21,19 +22,19 @@ function formatDelta(percent: number): string {
 
 export function KpiStat({ kpi, vsLabel }: { kpi: BrandIntelligenceKpi; vsLabel: string }) {
   return (
-    <div className="rounded-lg border bg-card p-4">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        {kpi.label}
+    <div className="border-t-2 border-foreground/80 pt-2.5">
+      <p className={eyebrow}>{kpi.label}</p>
+      <p className="mt-2 font-mono text-2xl font-semibold leading-none tracking-tight tabular-nums">
+        {kpi.value}
       </p>
-      <p className="mt-1 text-2xl font-semibold tabular-nums">{kpi.value}</p>
       {kpi.delta_percent != null ? (
-        <div className={`mt-1 flex items-center gap-1 text-xs font-medium ${tone(kpi.trend)}`}>
+        <div className={`mt-2 flex items-center gap-1 font-mono text-xs font-medium ${tone(kpi.trend)}`}>
           <TrendIcon trend={kpi.trend} />
           <span className="tabular-nums">{formatDelta(kpi.delta_percent)}</span>
           <span className="text-muted-foreground">{vsLabel}</span>
         </div>
       ) : (
-        <div className="mt-1 h-4" />
+        <div className="mt-2 h-4" />
       )}
     </div>
   )

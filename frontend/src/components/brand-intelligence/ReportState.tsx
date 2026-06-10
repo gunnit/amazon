@@ -1,6 +1,6 @@
-import { AlertTriangle, Loader2, Radar, Sparkles } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { eyebrow, inkButton } from '@/lib/editorial'
 import { useTranslation } from '@/i18n'
 
 interface ReportStateProps {
@@ -14,7 +14,7 @@ export function ReportState({ variant, onGenerate, generateDisabled }: ReportSta
 
   if (variant === 'loading') {
     return (
-      <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
+      <div className="flex items-center gap-2 py-12 font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
         {t('brandIntelligence.state.loading')}
       </div>
@@ -23,62 +23,51 @@ export function ReportState({ variant, onGenerate, generateDisabled }: ReportSta
 
   if (variant === 'generating') {
     return (
-      <Card>
-        <CardContent className="flex flex-col items-center gap-3 py-14 text-center">
-          <div className="relative">
-            <Radar className="h-8 w-8 text-primary" />
-            <Loader2 className="absolute inset-0 h-8 w-8 animate-spin text-primary/40" />
-          </div>
-          <div>
-            <p className="text-base font-medium">{t('brandIntelligence.state.generatingTitle')}</p>
-            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-              {t('brandIntelligence.state.generatingHelp')}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="flex flex-col items-center gap-4 rounded-sm border border-dashed border-foreground/25 px-6 py-16 text-center">
+        <Loader2 className="h-6 w-6 animate-spin text-foreground" />
+        <div>
+          <p className={eyebrow}>{t('brandIntelligence.state.generatingTitle')}</p>
+          <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+            {t('brandIntelligence.state.generatingHelp')}
+          </p>
+        </div>
+      </div>
     )
   }
 
   if (variant === 'failed') {
     return (
-      <Card>
-        <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-          <AlertTriangle className="h-8 w-8 text-destructive" />
-          <div>
-            <p className="text-base font-medium">{t('brandIntelligence.state.failedTitle')}</p>
-            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-              {t('brandIntelligence.state.failedHelp')}
-            </p>
-          </div>
-          {onGenerate ? (
-            <Button onClick={onGenerate} disabled={generateDisabled}>
-              {t('brandIntelligence.action.retry')}
-            </Button>
-          ) : null}
-        </CardContent>
-      </Card>
+      <div className="flex flex-col items-center gap-4 rounded-sm border border-dashed border-rose-500/40 px-6 py-14 text-center">
+        <div>
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-700 dark:text-rose-400">
+            {t('brandIntelligence.state.failedTitle')}
+          </p>
+          <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+            {t('brandIntelligence.state.failedHelp')}
+          </p>
+        </div>
+        {onGenerate ? (
+          <Button onClick={onGenerate} disabled={generateDisabled} className={inkButton}>
+            {t('brandIntelligence.action.retry')}
+          </Button>
+        ) : null}
+      </div>
     )
   }
 
   return (
-    <Card>
-      <CardContent className="flex flex-col items-center gap-3 py-14 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-          <Sparkles className="h-5 w-5" />
-        </div>
-        <div>
-          <p className="text-base font-medium">{t('brandIntelligence.state.emptyTitle')}</p>
-          <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            {t('brandIntelligence.state.emptyHelp')}
-          </p>
-        </div>
-        {onGenerate ? (
-          <Button onClick={onGenerate} disabled={generateDisabled}>
-            {t('brandIntelligence.action.generate')}
-          </Button>
-        ) : null}
-      </CardContent>
-    </Card>
+    <div className="flex flex-col items-center gap-4 rounded-sm border border-dashed border-foreground/25 px-6 py-16 text-center">
+      <div>
+        <p className={eyebrow}>{t('brandIntelligence.state.emptyTitle')}</p>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+          {t('brandIntelligence.state.emptyHelp')}
+        </p>
+      </div>
+      {onGenerate ? (
+        <Button onClick={onGenerate} disabled={generateDisabled} className={inkButton}>
+          {t('brandIntelligence.action.generate')}
+        </Button>
+      ) : null}
+    </div>
   )
 }
