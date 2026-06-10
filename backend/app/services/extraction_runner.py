@@ -9,7 +9,8 @@ safely from a separate thread/loop.
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timedelta
+from calendar import monthrange
+from datetime import date, datetime
 import logging
 import threading
 from typing import Iterable, List, Optional, Tuple
@@ -22,7 +23,6 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from app.config import settings
 from app.core.sync_health import classify_sync_exception
 from app.db.session import db_url as _db_url
 from app.models.amazon_account import AccountType, AmazonAccount, SyncStatus
@@ -30,13 +30,24 @@ from app.services.data_extraction import DataExtractionService
 
 logger = logging.getLogger(__name__)
 
-# A freshly connected account gets a historical sales backfill this many months
-# deep so forecasts have enough history immediately, clamped to SP-API's 2-year
-# limit below.
+# A freshly connected account gets the maximum historical sales window Amazon
+# allows so dashboards and forecasts have enough history immediately.
 DEFAULT_BACKFILL_MONTHS = 24
-# GET_SALES_AND_TRAFFIC_REPORT cancels reports whose start is more than two years
-# old; stay a few days inside the boundary.
-SP_API_MAX_LOOKBACK_DAYS = 729
+
+# Prevent the daily full sync and the lighter intraday sales refresh from
+# competing for the same Amazon Reports API quota.
+_SCHEDULED_SYNC_LOCK = threading.Lock()
+
+
+def _subtract_calendar_months(value: date, months: int) -> date:
+    """Shift a date backward by calendar months, preserving the day when possible."""
+    year = value.year
+    month = value.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+    day = min(value.day, monthrange(year, month)[1])
+    return date(year, month, day)
 
 
 def _make_local_session_factory():
@@ -138,11 +149,11 @@ def sync_accounts_in_thread(account_ids: Iterable[UUID]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_backfill_window(months: int) -> Tuple[date, date]:
+def _resolve_backfill_window(months: int, *, today: Optional[date] = None) -> Tuple[date, date]:
     """[start, end] for a backfill ``months`` deep, clamped to SP-API's 2-year cap."""
-    end_date = date.today()
-    earliest = end_date - timedelta(days=SP_API_MAX_LOOKBACK_DAYS)
-    start_date = max(end_date - timedelta(days=30 * months), earliest)
+    end_date = today or date.today()
+    earliest = _subtract_calendar_months(end_date, DEFAULT_BACKFILL_MONTHS)
+    start_date = max(_subtract_calendar_months(end_date, months), earliest)
     return start_date, end_date
 
 
@@ -245,12 +256,98 @@ async def list_active_account_ids(
     return [row[0] for row in result.all()]
 
 
+async def list_active_seller_account_ids(db: AsyncSession) -> List[UUID]:
+    """Return active seller account ids for the lightweight sales refresh."""
+    result = await db.execute(
+        select(AmazonAccount.id).where(
+            AmazonAccount.is_active.is_(True),
+            AmazonAccount.account_type == AccountType.SELLER,
+        )
+    )
+    return [row[0] for row in result.all()]
+
+
+async def _refresh_recent_seller_sales(account_id: UUID, session_factory) -> int:
+    """Refresh the rolling seller Sales & Traffic window without a full account sync."""
+    async with session_factory() as db:
+        result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
+        account = result.scalar_one_or_none()
+        if account is None:
+            return 0
+
+        service = DataExtractionService(db)
+        try:
+            organization = await service._load_organization(account)
+            count = await service.sync_sales_data(account, organization)
+            await db.commit()
+            logger.info(
+                "Recent seller sales refresh completed for %s: %d records",
+                account.account_name,
+                count,
+            )
+            return count
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            logger.exception("Recent seller sales refresh failed for %s", account.account_name)
+            return 0
+
+
+def run_recent_seller_sales_sync_all() -> dict:
+    """Refresh recent seller sales several times daily as Amazon publishes them."""
+    if not _SCHEDULED_SYNC_LOCK.acquire(blocking=False):
+        logger.info("Recent seller sales refresh skipped: another scheduled sync is running")
+        return {"status": "skipped", "accounts": 0, "records": 0}
+
+    engine = None
+    loop = None
+    try:
+        engine, session_factory = _make_local_session_factory()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def _collect() -> List[UUID]:
+            async with session_factory() as db:
+                return await list_active_seller_account_ids(db)
+
+        account_ids = loop.run_until_complete(_collect())
+        logger.info("Recent seller sales refresh: starting %d accounts", len(account_ids))
+        records = 0
+        for account_id in account_ids:
+            records += loop.run_until_complete(
+                _refresh_recent_seller_sales(account_id, session_factory)
+            )
+        logger.info(
+            "Recent seller sales refresh: finished %d accounts, %d records",
+            len(account_ids),
+            records,
+        )
+        return {"status": "success", "accounts": len(account_ids), "records": records}
+    finally:
+        try:
+            if loop is not None and engine is not None:
+                loop.run_until_complete(engine.dispose())
+        finally:
+            if loop is not None:
+                loop.close()
+            _SCHEDULED_SYNC_LOCK.release()
+
+
 def run_daily_sync_all() -> None:
     """Entrypoint for the scheduler: sync every active account once."""
-    engine, session_factory = _make_local_session_factory()
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    if not _SCHEDULED_SYNC_LOCK.acquire(blocking=False):
+        logger.info("Daily sync skipped: another scheduled sync is running")
+        return
+
+    engine = None
+    loop = None
     try:
+        engine, session_factory = _make_local_session_factory()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
         async def _collect() -> List[UUID]:
             async with session_factory() as db:
                 return await list_active_account_ids(db)
@@ -265,6 +362,9 @@ def run_daily_sync_all() -> None:
         logger.info("Daily sync: finished")
     finally:
         try:
-            loop.run_until_complete(engine.dispose())
+            if loop is not None and engine is not None:
+                loop.run_until_complete(engine.dispose())
         finally:
-            loop.close()
+            if loop is not None:
+                loop.close()
+            _SCHEDULED_SYNC_LOCK.release()

@@ -131,6 +131,14 @@ def sync_all_accounts():
 
 
 @celery_app.task
+def refresh_recent_seller_sales():
+    """Refresh the rolling Sales & Traffic window for active seller accounts."""
+    from app.services.extraction_runner import run_recent_seller_sales_sync_all
+
+    return run_recent_seller_sales_sync_all()
+
+
+@celery_app.task
 def sync_sales_data(account_id: str, start_date: str = None, end_date: str = None):
     """Sync sales data for an account."""
     from app.services.data_extraction import DataExtractionService

@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     ENABLE_INPROCESS_SCHEDULER: bool = False
     INPROCESS_SYNC_HOUR_UTC: int = 2
     INPROCESS_SYNC_MINUTE_UTC: int = 0
+    # Seller Sales & Traffic is lightweight enough to refresh several times a
+    # day. This catches Amazon's normal publication lag without re-running the
+    # heavier inventory/orders/ads/catalog sync.
+    INPROCESS_SALES_REFRESH_HOURS_UTC: str = "0,6,12,18"
+    INPROCESS_SALES_REFRESH_MINUTE_UTC: int = 15
     # How often the in-process scheduler scans for due scheduled reports. The
     # scan is a cheap query; any due report is generated + emailed in a daemon
     # thread, so no separate Celery/Redis worker is required.

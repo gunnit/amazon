@@ -66,6 +66,12 @@ celery_app.conf.beat_schedule = {
         "task": "workers.tasks.extraction.sync_all_accounts",
         "schedule": crontab(hour=2, minute=0),
     },
+    # Refresh seller Sales & Traffic several times daily without the heavier
+    # inventory/orders/ads/catalog sync.
+    "intraday-seller-sales-refresh": {
+        "task": "workers.tasks.extraction.refresh_recent_seller_sales",
+        "schedule": crontab(hour="0,6,12,18", minute=15),
+    },
     # Generate forecasts weekly on Sunday at 3 AM
     "weekly-forecasts": {
         "task": "workers.tasks.forecasting.generate_all_forecasts",

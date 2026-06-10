@@ -35,7 +35,10 @@ async def lifespan(app: FastAPI):
             from apscheduler.schedulers.background import BackgroundScheduler
             from apscheduler.triggers.cron import CronTrigger
             from apscheduler.triggers.interval import IntervalTrigger
-            from app.services.extraction_runner import run_daily_sync_all
+            from app.services.extraction_runner import (
+                run_daily_sync_all,
+                run_recent_seller_sales_sync_all,
+            )
             from app.services.scheduled_report_service import run_scheduled_report_scan
 
             scheduler = BackgroundScheduler(timezone="UTC")
@@ -46,6 +49,17 @@ async def lifespan(app: FastAPI):
                     minute=settings.INPROCESS_SYNC_MINUTE_UTC,
                 ),
                 id="daily-account-sync",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            scheduler.add_job(
+                run_recent_seller_sales_sync_all,
+                CronTrigger(
+                    hour=settings.INPROCESS_SALES_REFRESH_HOURS_UTC,
+                    minute=settings.INPROCESS_SALES_REFRESH_MINUTE_UTC,
+                ),
+                id="recent-seller-sales-refresh",
                 max_instances=1,
                 coalesce=True,
                 misfire_grace_time=3600,
@@ -64,9 +78,11 @@ async def lifespan(app: FastAPI):
             scheduler.start()
             logger.info(
                 "In-process scheduler started (daily sync at %02d:%02d UTC, "
-                "scheduled-report scan every %d min)",
+                "seller sales refresh at %s:%02d UTC, scheduled-report scan every %d min)",
                 settings.INPROCESS_SYNC_HOUR_UTC,
                 settings.INPROCESS_SYNC_MINUTE_UTC,
+                settings.INPROCESS_SALES_REFRESH_HOURS_UTC,
+                settings.INPROCESS_SALES_REFRESH_MINUTE_UTC,
                 settings.SCHEDULED_REPORT_SCAN_INTERVAL_MINUTES,
             )
         except Exception:
