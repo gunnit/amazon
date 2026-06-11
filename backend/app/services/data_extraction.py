@@ -713,6 +713,7 @@ class DataExtractionService:
         organization=None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
+        allow_po_fallback: bool = True,
     ) -> int:
         """Sync vendor sales from the SP-API Vendor Sales report.
 
@@ -723,7 +724,9 @@ class DataExtractionService:
         trailing unsettled days are excluded. If no window yields report data we
         fall back to purchase-order netCost as an estimated revenue proxy, but
         only for days that have no rows yet (the fallback never overwrites
-        report-derived data)."""
+        report-derived data). The backfill disables the fallback entirely: a
+        throttled-out historical window must stay empty for a clean retry, not
+        get seeded with PO estimates."""
         if not start_date:
             start_date = date.today() - timedelta(days=VENDOR_SYNC_DEFAULT_DAYS)
         if not end_date:
@@ -989,6 +992,15 @@ class DataExtractionService:
                         _accumulate_daily(cursor_day, 0, Decimal("0"), 0, "EUR")
                     cursor_day += timedelta(days=1)
 
+        if not report_rows_seen and not allow_po_fallback:
+            await self.db.flush()
+            logger.info(
+                "Vendor sales window %s..%s yielded no report data for %s; "
+                "PO fallback disabled for backfill, window left untouched",
+                start_date, end_date, account.account_name,
+            )
+            return count
+
         if not report_rows_seen:
             self.vendor_sales_used_po_fallback = True
             logger.warning(
@@ -1143,7 +1155,8 @@ class DataExtractionService:
                 await asyncio.sleep(VENDOR_BACKFILL_WINDOW_PAUSE_SECONDS)
             for attempt in range(1, VENDOR_BACKFILL_MAX_WINDOW_ATTEMPTS + 1):
                 count = await self.sync_vendor_sales_data(
-                    account, organization, window_start, window_end
+                    account, organization, window_start, window_end,
+                    allow_po_fallback=False,
                 )
                 await self.db.commit()
                 # sync_vendor_sales_data swallows per-window report errors and
