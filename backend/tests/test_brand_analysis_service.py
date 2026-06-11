@@ -242,6 +242,34 @@ def test_pptx_section_manifest_tracks_data_presence():
     assert "SEO & CONTENT" in deck_text
 
 
+def test_pptx_renders_full_strategic_arc_when_data_supports_it():
+    """A data-complete deck must read like a strategy report, not a data export:
+    approach pillars, priority actions, roadmap, growth scenarios and
+    conclusions all render (the agency-reference back half)."""
+    metrics = _metrics()
+    narrative = build_fallback_narrative(metrics)
+    fingerprint = validate_pptx_bytes(build_brand_analysis_pptx(metrics, narrative))
+    deck_text = "\n".join(fingerprint["slide_texts"])
+
+    for marker in ("Our Approach", "Priority actions", "Operational Roadmap",
+                   "Growth Scenarios", "Conclusions"):
+        assert marker in deck_text, f"strategic slide missing: {marker}"
+    # Scenario cards show this brand's revenue base, not generic copy.
+    assert "Estimated revenue at 12 months" in deck_text
+    # Growth bands stay honestly framed in both bases.
+    assert "not a forecast" in deck_text
+
+    # Without a narrative the approach slide skips instead of rendering empty,
+    # and without scenario metrics the growth slide skips too.
+    bare_metrics = {k: v for k, v in metrics.items() if k != "growth_projection_scenarios"}
+    bare = validate_pptx_bytes(
+        build_brand_analysis_pptx(bare_metrics, {"overview": "x", "roadmap": [], "conclusions": {}})
+    )
+    bare_text = "\n".join(bare["slide_texts"])
+    assert "Our Approach" not in bare_text
+    assert "Growth Scenarios" not in bare_text
+
+
 def test_sparse_data_yields_fewer_slides_with_no_empty_placeholders():
     """The core dynamic-composition guarantee: a near-empty metrics dict
     produces strictly fewer slides than a full one, and never an empty/

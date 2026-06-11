@@ -2490,6 +2490,8 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
         # Projection
         "projection_title": "Growth Scenarios",
         "projection_subtitle": "Illustrative 12-month revenue ranges, not a forecast",
+        "projection_subtitle_derived": "12-month revenue ranges anchored to the brand's actual YoY trend",
+        "projection_revenue_at_12m": "Estimated revenue at 12 months",
         "current_situation": "Current Situation",
         "projection_active_asins": "active ASINs out of",
         "scenario_conservative": "CONSERVATIVE",
@@ -2498,6 +2500,7 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
         "projection_actions_title": "Priority actions for this brand",
         "projection_actions_subtitle": "Where to act first, based on this analysis",
         "projection_disclaimer": "Illustrative scenarios based on uniform growth assumptions, not a forecast. Adjust with brand-specific targets.",
+        "projection_disclaimer_derived": "Scenario bands derived from the brand's actual YoY trend and risk-adjusted for declining ASINs. Directional ranges, not a forecast.",
         # Conclusions
         "conclusions_title": "Conclusions",
         "conclusions_subtitle": "Summary and next steps",
@@ -2655,6 +2658,8 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
         # Projection
         "projection_title": "Scenari di crescita",
         "projection_subtitle": "Intervalli di fatturato illustrativi a 12 mesi, non una previsione",
+        "projection_subtitle_derived": "Intervalli di fatturato a 12 mesi ancorati al trend YoY effettivo del brand",
+        "projection_revenue_at_12m": "Fatturato stimato a 12 mesi",
         "current_situation": "Situazione attuale",
         "projection_active_asins": "ASIN attivi su",
         "scenario_conservative": "CONSERVATIVO",
@@ -2663,6 +2668,7 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
         "projection_actions_title": "Azioni prioritarie per questa marca",
         "projection_actions_subtitle": "Dove intervenire per primi, sulla base di questa analisi",
         "projection_disclaimer": "Scenari illustrativi basati su ipotesi di crescita uniforme, non una previsione. Da adattare con obiettivi specifici della marca.",
+        "projection_disclaimer_derived": "Fasce di scenario derivate dal trend YoY effettivo del brand, con correzione per gli ASIN in calo. Intervalli indicativi, non una previsione.",
         # Conclusions
         "conclusions_title": "Conclusioni",
         "conclusions_subtitle": "Sintesi e prossimi passi",

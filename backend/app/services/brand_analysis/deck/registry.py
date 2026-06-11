@@ -25,7 +25,9 @@ from app.services.brand_analysis.deck.blocks.performance import (
     TopPerformersBlock,
 )
 from app.services.brand_analysis.deck.blocks.strategy import (
+    ApproachBlock,
     ConclusionsBlock,
+    GrowthProjectionBlock,
     PriorityActionsBlock,
     RoadmapBlock,
 )
@@ -56,8 +58,10 @@ def default_blocks() -> list[Block]:
         ConcentrationRiskBlock(),
         MarketShareBlock(),
         SearchVisibilityBlock(),
+        ApproachBlock(),
         PriorityActionsBlock(),
         RoadmapBlock(),
+        GrowthProjectionBlock(),
         ConclusionsBlock(),
         MethodologyAppendixBlock(),
     ]
