@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 // Numbered editorial section header: "01 — TITLE ————————".
 export function SectionMark({
   index,
@@ -6,7 +8,7 @@ export function SectionMark({
 }: {
   index?: string
   title: string
-  hint?: string
+  hint?: ReactNode
 }) {
   return (
     <div className="flex items-baseline gap-4">

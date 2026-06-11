@@ -13,7 +13,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -31,7 +30,6 @@ import { useTranslation } from '@/i18n'
 import { useLanguageStore } from '@/store/languageStore'
 import AsinInput from '@/components/market-research/AsinInput'
 import CompetitorTable from '@/components/market-research/CompetitorTable'
-import RadarComparison from '@/components/market-research/RadarComparison'
 import AIInsights from '@/components/market-research/AIInsights'
 import MarketTracker, { type MarketTrackerState } from '@/components/market-research/MarketTracker'
 import MarketPositionSummary from '@/components/market-research/MarketPositionSummary'
@@ -159,9 +157,9 @@ export default function MarketResearch() {
   const [selectedProductAsin, setSelectedProductAsin] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [extraAsins, setExtraAsins] = useState<string[]>([])
-  const [selectedCompetitorAsins, setSelectedCompetitorAsins] = useState<string[]>([])
   const [historicalMarketProduct, setHistoricalMarketProduct] = useState<MarketSearchResult | null>(null)
   const [historicalMarketDialogOpen, setHistoricalMarketDialogOpen] = useState(false)
+  const [pollTimedOut, setPollTimedOut] = useState(false)
 
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -169,12 +167,10 @@ export default function MarketResearch() {
   const reportSectionRef = useRef<HTMLDivElement | null>(null)
   const priceDistChartRef = useRef<HTMLDivElement>(null)
   const bsrChartRef = useRef<HTMLDivElement>(null)
-  const radarChartRef = useRef<HTMLDivElement>(null)
 
   const pdfChartRefs = {
     price_distribution: priceDistChartRef,
     bsr_position: bsrChartRef,
-    radar_comparison: radarChartRef,
   }
 
   // ── Data queries ──
@@ -195,14 +191,22 @@ export default function MarketResearch() {
     queryFn: () => marketResearchApi.list(),
   })
 
+  // ~15 minutes at one poll every 3s. A job that is still "processing" after
+  // that is hung; polling forever would just hide it from the user.
+  const MAX_REPORT_POLLS = 300
+
   const selectedReportQuery = useQuery<MarketResearchReport>({
     queryKey: ['market-research', selectedReportId],
     queryFn: () => marketResearchApi.get(selectedReportId!),
     enabled: !!selectedReportId,
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      if (status === 'pending' || status === 'processing') return 3000
-      return false
+      if (status !== 'pending' && status !== 'processing') return false
+      if (query.state.dataUpdateCount > MAX_REPORT_POLLS) {
+        setPollTimedOut(true)
+        return false
+      }
+      return 3000
     },
   })
   const selectedReport = selectedReportQuery.data
@@ -233,6 +237,7 @@ export default function MarketResearch() {
     }) => marketResearchApi.generate(params),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['market-research'] })
+      setPollTimedOut(false)
       setSelectedReportId(data.id)
       toast({ title: t('marketResearch.generateSuccess') })
     },
@@ -291,6 +296,7 @@ export default function MarketResearch() {
   }
 
   const handleSelectReport = (reportId: string, reportTitle?: string | null) => {
+    setPollTimedOut(false)
     setSelectedReportId(reportId)
     if (reportTitle) {
       setActiveTab(isMarketSearchReport({ title: reportTitle }) ? 'market-search' : 'product-analysis')
@@ -335,12 +341,23 @@ export default function MarketResearch() {
   const historicalAvgBsr = historicalBsrs.length > 0
     ? historicalBsrs.reduce((sum, bsr) => sum + bsr, 0) / historicalBsrs.length
     : null
-  const selectedCompetitors = selectedReport?.competitor_data?.filter((competitor) =>
-    selectedCompetitorAsins.includes(competitor.asin)
-  ) || []
   const opportunityDimensions = comparisonMatrix?.dimensions.filter((dimension) =>
     comparisonMatrix.opportunities.includes(dimension.name)
   ) || []
+
+  // Honest data-quality counters for the completed report: how many
+  // competitors had fetch problems, and how many prices were flagged as
+  // placeholder values and therefore excluded from averages and charts.
+  const reportSnapshots = [
+    ...(selectedReport?.product_snapshot ? [selectedReport.product_snapshot] : []),
+    ...(selectedReport?.competitor_data || []),
+  ]
+  const competitorIssueCount = (selectedReport?.competitor_data || []).filter(
+    (competitor) => (competitor.fetch_errors?.length ?? 0) > 0,
+  ).length
+  const unreliablePriceCount = reportSnapshots.filter(
+    (snapshot) => snapshot.price_unreliable,
+  ).length
 
   // The AI narrative leans on price/BSR/reviews/rating. Only trust it when at least one
   // competitor actually carries a comparable metric — otherwise the analysis is baseless.
@@ -371,37 +388,6 @@ export default function MarketResearch() {
     if (!selectedReportId) return
     scrollToReport()
   }, [selectedReportId])
-
-  useEffect(() => {
-    if (!selectedReport?.id) {
-      setSelectedCompetitorAsins([])
-      return
-    }
-
-    const availableAsins = Array.from(
-      new Set(
-        (selectedReport.competitor_data || [])
-          .map((competitor) => competitor.asin)
-          .filter((asin): asin is string => Boolean(asin)),
-      ),
-    )
-
-    setSelectedCompetitorAsins((current) => {
-      if (current.length === 0) return availableAsins
-
-      const nextSelection = current.filter((asin) => availableAsins.includes(asin))
-      return nextSelection.length > 0 ? nextSelection : availableAsins
-    })
-  }, [selectedReport?.id, selectedReport?.competitor_data])
-
-  const toggleCompetitorSelection = (asin: string, checked: boolean | 'indeterminate') => {
-    setSelectedCompetitorAsins((current) => {
-      if (checked === true) {
-        return current.includes(asin) ? current : [...current, asin]
-      }
-      return current.filter((currentAsin) => currentAsin !== asin)
-    })
-  }
 
   return (
     <div className="space-y-6">
@@ -598,25 +584,48 @@ export default function MarketResearch() {
           ) : isProcessing ? (
             <Card>
               <CardContent className="py-8 space-y-4">
-                <div className="flex items-center gap-3">
-                  <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">
-                      {selectedReport?.progress_step || t(`marketResearch.status.${selectedReportStatus || 'processing'}`)}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {t(
-                        reportIsMarketSearch
-                          ? 'marketResearch.marketSearchProgress'
-                          : 'marketResearch.productResearchProgress'
-                      )}
-                    </p>
+                {pollTimedOut ? (
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <p className="text-sm font-medium">
+                        {t('marketResearch.pollTimeoutTitle')}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {t('marketResearch.pollTimeoutBody')}
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => selectedReportQuery.refetch()}
+                      >
+                        {t('marketResearch.pollTimeoutRetry')}
+                      </Button>
+                    </div>
                   </div>
-                  <span className="text-sm font-mono text-muted-foreground tabular-nums shrink-0">
-                    {selectedReport?.progress_pct || 0}%
-                  </span>
-                </div>
-                <Progress value={selectedReport?.progress_pct || 0} className="h-2" />
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium">
+                          {selectedReport?.progress_step || t(`marketResearch.status.${selectedReportStatus || 'processing'}`)}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {t(
+                            reportIsMarketSearch
+                              ? 'marketResearch.marketSearchProgress'
+                              : 'marketResearch.productResearchProgress'
+                          )}
+                        </p>
+                      </div>
+                      <span className="text-sm font-mono text-muted-foreground tabular-nums shrink-0">
+                        {selectedReport?.progress_pct || 0}%
+                      </span>
+                    </div>
+                    <Progress value={selectedReport?.progress_pct || 0} className="h-2" />
+                  </>
+                )}
               </CardContent>
             </Card>
           ) : selectedReport?.status === 'failed' ? (
@@ -704,6 +713,27 @@ export default function MarketResearch() {
                             : 'marketResearch.competitorsFound'
                         )}
                       </p>
+                      {(competitorIssueCount > 0 || unreliablePriceCount > 0) && (
+                        <div className="mt-2 space-y-1">
+                          {competitorIssueCount > 0 && (
+                            <p className="flex items-center gap-1.5 text-xs text-amber-600">
+                              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                              {t('marketResearch.dataQualityIncomplete', {
+                                count: competitorIssueCount,
+                                total: selectedReport.competitor_data?.length || 0,
+                              })}
+                            </p>
+                          )}
+                          {unreliablePriceCount > 0 && (
+                            <p className="flex items-center gap-1.5 text-xs text-amber-600">
+                              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                              {t('marketResearch.dataQualityUnreliablePrices', {
+                                count: unreliablePriceCount,
+                              })}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -794,96 +824,12 @@ export default function MarketResearch() {
                 </Card>
               )}
 
-              <div className={cn('grid gap-4 md:grid-cols-2', !competitiveMetricsAvailable && 'hidden')}>
-                {/* Radar Chart */}
-                {competitiveMetricsAvailable && selectedReport.product_snapshot && selectedReport.competitor_data && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>{t('marketResearch.radarTitle')}</CardTitle>
-                      <CardDescription>{t('marketResearch.radarDesc')}</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="rounded-lg border p-4 space-y-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium">
-                              {t('marketResearch.selectedCompetitors')}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {t('marketResearch.selectedCompetitorsHint', {
-                                selected: selectedCompetitors.length,
-                                total: selectedReport.competitor_data.length,
-                              })}
-                            </p>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedCompetitorAsins(
-                                selectedReport.competitor_data?.map((competitor) => competitor.asin) || [],
-                              )
-                            }}
-                          >
-                            {t('marketResearch.selectAllCompetitors')}
-                          </Button>
-                        </div>
-                        <div className="grid gap-2 md:grid-cols-2">
-                          {selectedReport.competitor_data.map((competitor) => (
-                            <label
-                              key={competitor.asin}
-                              className={cn(
-                                'flex items-start gap-3 rounded-lg border p-3 transition-colors cursor-pointer',
-                                selectedCompetitorAsins.includes(competitor.asin)
-                                  ? 'border-primary/40 bg-primary/5'
-                                  : 'hover:bg-muted/50',
-                              )}
-                            >
-                              <Checkbox
-                                checked={selectedCompetitorAsins.includes(competitor.asin)}
-                                onCheckedChange={(checked) =>
-                                  toggleCompetitorSelection(competitor.asin, checked)
-                                }
-                                className="mt-0.5"
-                              />
-                              <div className="min-w-0">
-                                <p className="font-mono text-xs">{competitor.asin}</p>
-                                <p
-                                  className="text-sm text-muted-foreground truncate"
-                                  title={competitor.title || competitor.asin}
-                                >
-                                  {competitor.title || competitor.asin}
-                                </p>
-                              </div>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div ref={radarChartRef}>
-                        {selectedCompetitors.length > 0 ? (
-                          <RadarComparison
-                            product={selectedReport.product_snapshot}
-                            competitors={selectedCompetitors}
-                          />
-                        ) : (
-                          <div className="flex min-h-[300px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-                            {t('marketResearch.noCompetitorsSelected')}
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {competitiveMetricsAvailable && selectedReport.product_snapshot && selectedReport.competitor_data && (
-                  <MarketPositionSummary
-                    product={selectedReport.product_snapshot}
-                    competitors={selectedReport.competitor_data}
-                  />
-                )}
-              </div>
+              {competitiveMetricsAvailable && selectedReport.product_snapshot && selectedReport.competitor_data && (
+                <MarketPositionSummary
+                  product={selectedReport.product_snapshot}
+                  competitors={selectedReport.competitor_data}
+                />
+              )}
 
               {selectedReport.product_snapshot && selectedReport.competitor_data?.length ? (
                 comparisonMatrixQuery.isLoading ? (
@@ -1105,10 +1051,15 @@ export default function MarketResearch() {
                     </Card>
                   ) : (
                     <Card>
-                      <CardContent className="py-6 text-center">
-                        <p className="text-sm text-muted-foreground">
-                          {t('marketResearch.noAiAnalysis')}
-                        </p>
+                      <CardContent className="py-6">
+                        <div className="flex items-start justify-center gap-2 text-center">
+                          <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                          <p className="text-sm text-muted-foreground">
+                            {selectedReport.ai_status === 'unavailable'
+                              ? t('marketResearch.aiUnavailable')
+                              : t('marketResearch.noAiAnalysis')}
+                          </p>
+                        </div>
                       </CardContent>
                     </Card>
                   )}

@@ -35,10 +35,12 @@ class MarketShareBlock(BaseBlock):
             (ctx.t("kpi_revenue_share_2025"), fmt.share(market.get("market_share_2025")), chip),
             (ctx.t("kpi_revenue_share_2024"), fmt.share(market.get("market_share_2024")), chip),
         ]
+        kpis = [k for k in kpis if k[1] != fmt.EMPTY]
         gap = 0.28
-        card_w = (DeckTheme.content_w() - gap * 2) / 3
+        card_w = min((DeckTheme.content_w() - gap * (max(len(kpis), 1) - 1)) / max(len(kpis), 1), 4.2)
         for idx, (label, value, q) in enumerate(kpis):
-            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.9, card_w, 1.0, label, value, chip=q)
+            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.6, card_w, 1.45,
+                     label, value, fill=DeckTheme.kpi_fill(idx), chip=q)
 
         competitors = (market.get("competitive_brand_distribution") or [])[:7]
         if competitors:
@@ -96,11 +98,12 @@ class SearchVisibilityBlock(BaseBlock):
             (ctx.t("kpi_search_purchase_share"), fmt.share(market.get("search_purchase_share")), chip),
             (ctx.t("kpi_competitor_top_terms"), competitor_kpi, chip),
         ]
+        kpis = [k for k in kpis if k[1] != fmt.EMPTY]
         gap = 0.28
-        card_w = (DeckTheme.content_w() - gap * 2) / 3
+        card_w = min((DeckTheme.content_w() - gap * (max(len(kpis), 1) - 1)) / max(len(kpis), 1), 4.2)
         for idx, (label, value, q) in enumerate(kpis):
-            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.9, card_w, 1.0,
-                     label, value, chip=q)
+            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.6, card_w, 1.45,
+                     label, value, fill=DeckTheme.kpi_fill(idx), chip=q)
 
         rows = []
         for term in (market.get("search_term_competitors") or [])[:8]:

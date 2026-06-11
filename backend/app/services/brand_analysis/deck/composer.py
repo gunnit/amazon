@@ -1,17 +1,17 @@
 """Compose a deck from the block registry.
 
 Walks the ordered blocks, renders only those whose ``is_available`` gate passes,
-inserts a section divider before the first available block of each section, and
-records every skipped block for the methodology appendix. The composer also
-produces a per-section manifest that ``validate_pptx_bytes`` asserts against — a
-data-driven contract that replaces the old fixed slide-count gate.
+and records every skipped block for the methodology appendix. Sections flow
+directly into each other without divider slides, matching the agency reference
+deck. The composer also produces a per-section manifest that
+``validate_pptx_bytes`` asserts against — a data-driven contract that replaces
+the old fixed slide-count gate.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from app.services.brand_analysis.deck.block import SECTION_TITLES, Block, Section
-from app.services.brand_analysis.deck.blocks.divider import SectionDivider
+from app.services.brand_analysis.deck.block import SECTION_TITLES, Block
 from app.services.brand_analysis.deck.context import DeckContext
 from app.services.brand_analysis.deck.primitives import DeckBuilder
 from app.services.brand_analysis.deck.registry import SECTION_ORDER, default_blocks
@@ -40,8 +40,7 @@ class DeckComposer:
         available, skipped, section_present = self._plan()
         available_ids = {b.id for b in available}
 
-        # Pre-seed agenda section titles so the AgendaBlock can list them even
-        # though it renders before its dividers do.
+        # Pre-seed section titles for the methodology appendix's coverage list.
         for idx, section in enumerate(SECTION_ORDER, start=1):
             if section_present.get(section.value):
                 en, it = SECTION_TITLES[section]
@@ -49,18 +48,11 @@ class DeckComposer:
 
         page = 1
         rendered_ids: list[str] = []
-        emitted_dividers: set[Section] = set()
         self.ctx.skipped_blocks = [
             (self._block_name(block), reason) for block, reason in skipped
         ]
 
         for block in available:
-            section = block.section
-            if section in SECTION_ORDER and section not in emitted_dividers:
-                divider = SectionDivider(section, SECTION_ORDER.index(section) + 1)
-                divider.render(self.ctx, deck, page)
-                emitted_dividers.add(section)
-                page += 1
             result = block.render(self.ctx, deck, page)
             if result.rendered:
                 rendered_ids.append(block.id)

@@ -54,7 +54,6 @@ except ImportError:  # pragma: no cover - keeps pure unit tests independent of S
 
 from app.models.market_research import MarketResearchReport
 from app.models.amazon_account import AmazonAccount
-from app.models.competitor import Competitor
 from app.schemas.market_research import MarketResearchCreate
 
 logger = logging.getLogger(__name__)
@@ -86,6 +85,65 @@ def _detect_sentinel_prices(values: list[float]) -> set[float]:
         if count >= _SENTINEL_PRICE_MIN_OCCURRENCES
         and count / len(positive) >= _SENTINEL_PRICE_MIN_SHARE
     }
+
+
+def _snapshot_price(snapshot: dict) -> Optional[float]:
+    try:
+        value = snapshot.get("price")
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _flag_sentinel_prices(snapshots: List[dict]) -> None:
+    """Mark snapshots whose price is non-positive or a repeated placeholder.
+
+    The price itself is kept (transparency for debugging) but flagged via
+    ``price_unreliable`` so the API, the UI and the PDF can hide it instead
+    of presenting a barcode-shaped number as a market price.
+    """
+    prices = [p for p in (_snapshot_price(s) for s in snapshots) if p is not None]
+    sentinels = _detect_sentinel_prices(prices)
+
+    for snapshot in snapshots:
+        price = _snapshot_price(snapshot)
+        if price is not None and (price <= 0 or price in sentinels):
+            snapshot["price_unreliable"] = True
+        else:
+            snapshot.pop("price_unreliable", None)
+
+
+def _backfill_missing_prices(client, snapshots: List[dict]) -> None:
+    """Fill missing snapshot prices with one batched Pricing API call.
+
+    Per-ASIN lookups regularly come back empty (throttling, no
+    CompetitivePrices entry); the batch endpoint resolves many of those in
+    a single round-trip. Vendors have no Pricing API access, so this is a
+    no-op for them.
+    """
+    if getattr(client, "is_vendor", False):
+        return
+
+    missing = [
+        str(s["asin"]).upper()
+        for s in snapshots
+        if s.get("asin") and _snapshot_price(s) is None
+    ]
+    if not missing:
+        return
+
+    try:
+        price_map = client.get_market_prices_for_asins(missing)
+    except Exception as exc:
+        logger.warning("Batched price backfill failed: %s", exc)
+        return
+
+    for snapshot in snapshots:
+        if _snapshot_price(snapshot) is not None:
+            continue
+        price = price_map.get(str(snapshot.get("asin", "")).upper())
+        if price is not None:
+            snapshot["price"] = float(price)
 
 
 class MarketResearchService:
@@ -177,21 +235,6 @@ class MarketResearchService:
         await self.db.delete(report)
         await self.db.flush()
         return True
-
-    async def suggest_competitors(
-        self, org_id: UUID, category: Optional[str] = None, marketplace: Optional[str] = None,
-    ) -> List[Competitor]:
-        """Suggest competitors from the existing competitors table."""
-        query = select(Competitor).where(
-            Competitor.organization_id == org_id,
-            Competitor.is_tracking == True,
-        )
-        if marketplace:
-            query = query.where(Competitor.marketplace == marketplace)
-        query = query.limit(20)
-
-        result = await self.db.execute(query)
-        return list(result.scalars().all())
 
     def get_comparison_matrix(self, report: MarketResearchReport) -> dict[str, Any]:
         """Build a dimension-by-dimension comparison matrix for a completed report.
@@ -683,18 +726,37 @@ def process_report_background(
                         time.sleep(0.5)
                     report.competitor_data = comp_data
 
-                # Step 4: AI analysis
+                # Consolidate snapshots: one batched pricing call fills any
+                # prices the per-ASIN lookups missed, then repeated
+                # placeholder prices are flagged before anything is
+                # persisted or fed to the AI.
+                product_snapshot = dict(report.product_snapshot or {})
+                comp_data = [dict(c) for c in (report.competitor_data or [])]
+                _backfill_missing_prices(client, [product_snapshot, *comp_data])
+                _flag_sentinel_prices([product_snapshot, *comp_data])
+                report.product_snapshot = product_snapshot
+                report.competitor_data = comp_data
+
+                # Step 4: AI analysis (best-effort: market data is already
+                # complete at this point, so an AI failure must not turn a
+                # valid report into status=failed).
                 if settings.ANTHROPIC_API_KEY:
                     await _set_progress("Generating AI insights...", 75)
                     from app.services.ai_analysis_service import AIAnalysisService
-                    ai_service = AIAnalysisService(settings.ANTHROPIC_API_KEY)
-                    analysis = ai_service.analyze(
-                        product_data=product_snapshot,
-                        competitor_data=comp_data,
-                        category=source_category,
-                        language=report.language,
-                    )
-                    report.ai_analysis = analysis
+                    try:
+                        ai_service = AIAnalysisService(settings.ANTHROPIC_API_KEY)
+                        analysis = ai_service.analyze(
+                            product_data=product_snapshot,
+                            competitor_data=comp_data,
+                            category=source_category,
+                            language=report.language,
+                        )
+                        report.ai_analysis = analysis
+                    except Exception:
+                        logger.exception(
+                            "AI analysis failed for report %s; completing without AI narrative",
+                            report_id,
+                        )
 
                 await _set_progress("Finalizing report...", 95)
                 report.status = "completed"
@@ -1131,40 +1193,53 @@ def _fetch_product_data(client, asin: str) -> dict:
         if image_count:
             snapshot["images_count"] = image_count
 
-    def _fetch_price():
-        if client.is_vendor:
-            logger.debug(
-                "Skipping pricing lookup for %s because Product Pricing API is seller-only",
-                asin,
-            )
-            return None, None
+    price = None
+    offers_meta = None
+    if client.is_vendor:
+        logger.debug(
+            "Skipping pricing lookup for %s because Product Pricing API is seller-only",
+            asin,
+        )
+    else:
+        def _fetch_competitive_price():
+            api = client._products_api()
+            response = api.get_competitive_pricing_for_asins([asin])
+            return client._extract_price_amount(response.payload)
 
-        api = client._products_api()
-        response = api.get_competitive_pricing_for_asins([asin])
-        price_value = client._extract_price_amount(response.payload)
+        def _fetch_offers():
+            api = client._products_api()
+            response = api.get_item_offers(asin=asin, item_condition="New")
+            return getattr(response, "payload", None)
 
-        offers_response = api.get_item_offers(asin=asin, item_condition="New")
-        offers_payload = getattr(offers_response, "payload", None)
-        sellers_count, buy_box_owner = _extract_offers_metadata(offers_payload)
-        offer_snapshot = client._extract_offer_snapshot(offers_payload)
-        if price_value is None:
-            price_value = client._extract_price_amount(offers_payload)
-        return price_value, {
-            "sellers_count": sellers_count,
-            "buy_box_owner": buy_box_owner,
-            "offer_snapshot": offer_snapshot,
-        }
+        price, pricing_error = _call_sp_api_with_single_retry(
+            _fetch_competitive_price,
+            asin=asin,
+            operation="pricing",
+        )
+        if pricing_error:
+            fetch_errors.append(f"pricing:{pricing_error}")
+            if pricing_error == "forbidden":
+                snapshot["pricing_unavailable_reason"] = "forbidden"
 
-    price_result, pricing_error = _call_sp_api_with_single_retry(
-        _fetch_price,
-        asin=asin,
-        operation="pricing",
-    )
-    price, offers_meta = (price_result if isinstance(price_result, tuple) else (price_result, None))
-    if pricing_error:
-        fetch_errors.append(f"pricing:{pricing_error}")
-        if pricing_error == "forbidden":
-            snapshot["pricing_unavailable_reason"] = "forbidden"
+        # Offers are fetched separately so a failure here (404, throttle)
+        # cannot discard a price the competitive-pricing call already found.
+        offers_payload, offers_error = _call_sp_api_with_single_retry(
+            _fetch_offers,
+            asin=asin,
+            operation="offers",
+        )
+        if offers_error:
+            fetch_errors.append(f"offers:{offers_error}")
+        elif offers_payload:
+            sellers_count, buy_box_owner = _extract_offers_metadata(offers_payload)
+            offers_meta = {
+                "sellers_count": sellers_count,
+                "buy_box_owner": buy_box_owner,
+                "offer_snapshot": client._extract_offer_snapshot(offers_payload),
+            }
+            if price is None:
+                price = client._extract_price_amount(offers_payload)
+
     if price is None and catalog:
         price = client._extract_catalog_price_amount(catalog)
     if price is not None:

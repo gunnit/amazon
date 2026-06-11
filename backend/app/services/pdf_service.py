@@ -67,6 +67,13 @@ def _fmt_price(value: Optional[float]) -> str:
     return f"\u20ac{value:,.2f}"
 
 
+def _row_price(snapshot: Dict[str, Any]) -> Optional[float]:
+    """Snapshot price for display, treating flagged sentinel prices as missing."""
+    if snapshot.get("price_unreliable"):
+        return None
+    return snapshot.get("price")
+
+
 def _usable_prices(values: List[Optional[float]]) -> List[float]:
     """Positive prices with repeated-sentinel placeholders removed.
 
@@ -107,35 +114,33 @@ def _fmt_pct_diff(product_val: Optional[float], avg_val: Optional[float]) -> tup
     return f"{sign}{diff:.1f}%", "positive" if diff > 0 else "negative"
 
 
-# ReportLab's standard PDF fonts (Helvetica et al.) encode glyphs via latin-1.
-# Amazon product/competitor text routinely contains characters outside that
-# range (narrow no-break space U+202F, thin space, smart quotes, …) which raise
-# UnicodeEncodeError at render time. Map the common ones to safe equivalents and
-# drop anything else that cannot be encoded.
-_LATIN1_REPLACEMENTS = {
+# ReportLab's standard PDF fonts (Helvetica et al.) encode glyphs via WinAnsi
+# (cp1252), which - unlike latin-1 - includes the euro sign, smart quotes and
+# dashes. Amazon product/competitor text still routinely contains characters
+# outside that range (narrow no-break space U+202F, thin space, zero-width
+# space, …) which raise UnicodeEncodeError at render time. Map the common ones
+# to safe equivalents and drop anything else that cannot be encoded.
+_WINANSI_REPLACEMENTS = {
     " ": " ",  # narrow no-break space
     " ": " ",  # no-break space
     " ": " ",  # figure space
     " ": " ",  # thin space
     " ": " ",  # hair space
     "​": "",   # zero-width space
-    "‘": "'", "’": "'",  # smart single quotes
-    "“": '"', "”": '"',  # smart double quotes
-    "–": "-", "—": "-",  # en/em dash
 }
 
 
-def _latin1_safe(value: Any) -> Any:
-    """Recursively make strings safe for ReportLab's latin-1 PDF fonts."""
+def _winansi_safe(value: Any) -> Any:
+    """Recursively make strings safe for ReportLab's WinAnsi (cp1252) PDF fonts."""
     if isinstance(value, str):
-        for bad, good in _LATIN1_REPLACEMENTS.items():
+        for bad, good in _WINANSI_REPLACEMENTS.items():
             if bad in value:
                 value = value.replace(bad, good)
-        return value.encode("latin-1", "replace").decode("latin-1")
+        return value.encode("cp1252", "replace").decode("cp1252")
     if isinstance(value, dict):
-        return {k: _latin1_safe(v) for k, v in value.items()}
+        return {k: _winansi_safe(v) for k, v in value.items()}
     if isinstance(value, list):
-        return [_latin1_safe(v) for v in value]
+        return [_winansi_safe(v) for v in value]
     return value
 
 
@@ -145,6 +150,16 @@ def _truncate(text: Optional[str], max_len: int = 60) -> str:
     if len(text) <= max_len:
         return text
     return text[: max_len - 1] + "\u2026"
+
+
+def _humanize_area(value: Optional[str]) -> str:
+    """AI sometimes returns machine slugs like 'pricing_strategy' as the area."""
+    if not value:
+        return "\u2014"
+    text = value.replace("_", " ").strip()
+    if text.islower():
+        text = text.title()
+    return text
 
 
 class MarketResearchPdfBuilder:
@@ -159,11 +174,11 @@ class MarketResearchPdfBuilder:
         self.report = report
         self.chart_images = chart_images or {}
         self.lang = language
-        self.product: dict = _latin1_safe(report.product_snapshot or {})
-        self.competitors: list[dict] = _latin1_safe(report.competitor_data or [])
-        self.ai: dict = _latin1_safe(report.ai_analysis or {})
+        self.product: dict = _winansi_safe(report.product_snapshot or {})
+        self.competitors: list[dict] = _winansi_safe(report.competitor_data or [])
+        self.ai: dict = _winansi_safe(report.ai_analysis or {})
         self.is_market_search = (report.title or "").startswith("Market Search:")
-        self.title = _latin1_safe(report.title or "")
+        self.title = _winansi_safe(report.title or "")
         self.search_query = self._extract_search_query(report.title)
         self._styles = self._build_styles()
 
@@ -180,7 +195,7 @@ class MarketResearchPdfBuilder:
         # Strip a trailing " (N products)" suffix when present.
         if query.endswith(")") and "(" in query:
             query = query[: query.rfind("(")].strip()
-        return _latin1_safe(query) or None
+        return _winansi_safe(query) or None
 
     def _t(self, key: str) -> str:
         return t(key, self.lang)
@@ -488,29 +503,36 @@ class MarketResearchPdfBuilder:
             ]))
             elements.append(KeepTogether([top_table, Spacer(1, SPACE_LG)]))
 
-        # Market Overview (4-metric grid)
+        # Market Overview (metric cards). A market of one product is not a
+        # market: without competitors the averages would just echo the product
+        # back at itself, so both sections are skipped entirely.
         all_products = [self.product] + self.competitors if self.product else self.competitors
-        if all_products:
+        if all_products and self.competitors:
             prices = _usable_prices([p.get("price") for p in all_products])
             bsrs = [p.get("bsr") for p in all_products if p.get("bsr") is not None]
             brands = set(p.get("brand") for p in all_products if p.get("brand"))
 
             avg_price = sum(prices) / len(prices) if prices else None
             avg_bsr = sum(bsrs) / len(bsrs) if bsrs else None
-            price_range = f"{_fmt_price(min(prices))} – {_fmt_price(max(prices))}" if prices else "—"
 
-            cards = [
-                self._metric_card(self._t("exec_total_products"), str(len(all_products))),
-                self._metric_card(
+            cards = [self._metric_card(self._t("exec_total_products"), str(len(all_products)))]
+            if prices:
+                price_range = (
+                    f"{_fmt_price(min(prices))} – {_fmt_price(max(prices))}"
+                    if min(prices) != max(prices)
+                    else ""
+                )
+                cards.append(self._metric_card(
                     self._t("exec_avg_price"),
                     _fmt_price(avg_price),
-                    f"{self._t('exec_price_range')}: {price_range}",
-                ),
-                self._metric_card(self._t("exec_avg_bsr"), _fmt_number(avg_bsr)),
-                self._metric_card(self._t("exec_unique_brands"), str(len(brands))),
-            ]
+                    f"{self._t('exec_price_range')}: {price_range}" if price_range else "",
+                ))
+            if bsrs:
+                cards.append(self._metric_card(self._t("exec_avg_bsr"), _fmt_number(avg_bsr)))
+            if brands:
+                cards.append(self._metric_card(self._t("exec_unique_brands"), str(len(brands))))
 
-            card_table = Table([cards], colWidths=[CARD_COL_W] * 4)
+            card_table = Table([cards], colWidths=[CARD_COL_W] * len(cards))
             card_table.setStyle(TableStyle([
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 3),
@@ -522,27 +544,32 @@ class MarketResearchPdfBuilder:
                 Spacer(1, SPACE_LG),
             ]))
 
-            # Market Position (product vs averages)
-            if self.product and (prices or bsrs):
-                position_data = []
+            # Market Position (product vs averages). Only metrics where both
+            # the product value and a competitor-derived average exist.
+            if self.product:
+                comp_reviews = [
+                    p.get("review_count") for p in self.competitors
+                    if p.get("review_count") is not None
+                ]
+                comp_ratings = [
+                    p.get("rating") for p in self.competitors
+                    if p.get("rating") is not None
+                ]
+                avg_reviews = sum(comp_reviews) / len(comp_reviews) if comp_reviews else None
+                avg_rating = sum(comp_ratings) / len(comp_ratings) if comp_ratings else None
 
                 metrics = [
-                    ("exec_price", self.product.get("price"), avg_price, True),  # lower is better
+                    ("exec_price", _row_price(self.product), avg_price, True),  # lower is better
                     ("exec_bsr", self.product.get("bsr"), avg_bsr, True),
-                    ("exec_reviews", self.product.get("review_count"),
-                     sum(p.get("review_count", 0) for p in self.competitors if p.get("review_count")) / max(len([p for p in self.competitors if p.get("review_count")]), 1) if self.competitors else None,
-                     False),  # higher is better
-                    ("exec_rating", self.product.get("rating"),
-                     sum(p.get("rating", 0) for p in self.competitors if p.get("rating")) / max(len([p for p in self.competitors if p.get("rating")]), 1) if self.competitors else None,
-                     False),
+                    ("exec_reviews", self.product.get("review_count"), avg_reviews, False),
+                    ("exec_rating", self.product.get("rating"), avg_rating, False),
                 ]
 
                 position_cards = []
                 for label_key, prod_val, avg_val, lower_is_better in metrics:
-                    diff_text, tone = _fmt_pct_diff(
-                        float(prod_val) if prod_val is not None else None,
-                        float(avg_val) if avg_val is not None else None,
-                    )
+                    if prod_val is None or avg_val is None:
+                        continue
+                    diff_text, tone = _fmt_pct_diff(float(prod_val), float(avg_val))
                     # Invert tone for "lower is better" metrics
                     if lower_is_better and tone == "positive":
                         tone = "negative"
@@ -552,7 +579,7 @@ class MarketResearchPdfBuilder:
                     if label_key == "exec_price":
                         val_str = _fmt_price(prod_val)
                     elif label_key == "exec_rating":
-                        val_str = _fmt_number(prod_val, 1) if prod_val else "—"
+                        val_str = _fmt_number(prod_val, 1)
                     else:
                         val_str = _fmt_number(prod_val)
 
@@ -567,16 +594,17 @@ class MarketResearchPdfBuilder:
                         self._metric_card(self._t(label_key), val_str, sub)
                     )
 
-                pos_table = Table([position_cards], colWidths=[CARD_COL_W] * 4)
-                pos_table.setStyle(TableStyle([
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 3),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-                ]))
-                elements.append(KeepTogether([
-                    Paragraph(self._t("exec_market_position"), s["h2"]),
-                    pos_table,
-                ]))
+                if position_cards:
+                    pos_table = Table([position_cards], colWidths=[CARD_COL_W] * len(position_cards))
+                    pos_table.setStyle(TableStyle([
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                    ]))
+                    elements.append(KeepTogether([
+                        Paragraph(self._t("exec_market_position"), s["h2"]),
+                        pos_table,
+                    ]))
 
         elements.append(PageBreak())
         return elements
@@ -598,17 +626,19 @@ class MarketResearchPdfBuilder:
             return None
 
     def _charts_page(self) -> list:
-        """Page 3: Charts (Market Tracker 360 only)."""
-        elements = []
+        """Charts page (Market Tracker 360 only). Empty when no charts were
+        captured — e.g. server-side generation without the frontend — so the
+        page is skipped instead of printing a placeholder."""
         s = self._styles
-        elements.append(Paragraph(self._t("charts_title"), s["h1"]))
 
-        has_charts = False
-
-        # Price Distribution
         price_img = self._decode_chart_image("price_distribution", max_width=14 * cm, max_height=9 * cm)
+        bsr_img = self._decode_chart_image("bsr_position", max_width=14 * cm, max_height=9 * cm)
+        if not price_img and not bsr_img:
+            return []
+
+        elements = [Paragraph(self._t("charts_title"), s["h1"])]
+
         if price_img:
-            has_charts = True
             elements.append(KeepTogether([
                 Paragraph(self._t("charts_price_dist"), s["h2"]),
                 price_img,
@@ -616,24 +646,18 @@ class MarketResearchPdfBuilder:
                 Spacer(1, SPACE_MD),
             ]))
 
-        # BSR Position
-        bsr_img = self._decode_chart_image("bsr_position", max_width=14 * cm, max_height=9 * cm)
         if bsr_img:
-            has_charts = True
             elements.append(KeepTogether([
                 Paragraph(self._t("charts_bsr_position"), s["h2"]),
                 bsr_img,
                 Paragraph(self._t("charts_bsr_caption"), s["caption"]),
             ]))
 
-        if not has_charts:
-            elements.append(Paragraph("No chart data available.", s["body_muted"]))
-
         elements.append(PageBreak())
         return elements
 
     def _comparison_page(self) -> list:
-        """Page 4: Competitive Comparison Table + Radar."""
+        """Page 4: Competitive Comparison Table."""
         elements = []
         s = self._styles
         elements.append(Paragraph(self._t("comp_title"), s["h1"]))
@@ -643,48 +667,53 @@ class MarketResearchPdfBuilder:
         ))
         elements.append(Spacer(1, SPACE_SM))
 
-        # Build table
-        headers = [
-            self._t("comp_asin"),
-            self._t("comp_product"),
-            self._t("comp_price"),
-            self._t("comp_bsr"),
-            self._t("comp_reviews"),
-            self._t("comp_rating"),
+        all_products = ([self.product] if self.product else []) + self.competitors
+
+        # Metric columns are only included when at least one row has a value;
+        # a column of dashes tells the reader nothing. Widths are sized to the
+        # widest content (10-char ASIN, "Valutazione" header, €X,XXX.XX) and
+        # the product title absorbs whatever the dropped columns free up.
+        metric_cols = [
+            ("comp_price", 1.8 * cm,
+             lambda p: _row_price(p), lambda p: _fmt_price(_row_price(p))),
+            ("comp_bsr", 1.6 * cm,
+             lambda p: p.get("bsr"), lambda p: _fmt_number(p.get("bsr"))),
+            ("comp_reviews", 2.0 * cm,
+             lambda p: p.get("review_count"), lambda p: _fmt_number(p.get("review_count"))),
+            ("comp_rating", 2.0 * cm,
+             lambda p: p.get("rating"), lambda p: _fmt_number(p.get("rating"), 1)),
         ]
-        header_row = [Paragraph(h, s["table_header"]) for h in headers]
+        included = [
+            (key, width, fmt) for key, width, getter, fmt in metric_cols
+            if any(getter(p) is not None for p in all_products)
+        ]
+        omitted = [key for key, _, getter, _ in metric_cols
+                   if not any(getter(p) is not None for p in all_products)]
 
-        col_widths = [2.4 * cm, 7.0 * cm, 2.0 * cm, 2.0 * cm, 1.8 * cm, 1.8 * cm]
+        asin_w = 2.6 * cm
+        product_w = CONTENT_W - asin_w - sum(width for _, width, _ in included)
+        col_widths = [asin_w, product_w] + [width for _, width, _ in included]
+        # Logical column -> actual table index, for the color-coding pass.
+        col_index = {key: i + 2 for i, (key, _, _) in enumerate(included)}
 
-        rows = [header_row]
+        headers = [self._t("comp_asin"), self._t("comp_product")] + [
+            self._t(key) for key, _, _ in included
+        ]
+        rows = [[Paragraph(h, s["table_header"]) for h in headers]]
+
+        def _product_row(p: Dict[str, Any], style_key: str) -> list:
+            sty = s[style_key]
+            return [
+                Paragraph(p.get("asin", "—"), sty),
+                Paragraph(_truncate(p.get("title"), 70), sty),
+            ] + [Paragraph(fmt(p), sty) for _, _, fmt in included]
 
         # Source product first
         if self.product:
-            product_label = f"{self.product.get('asin', '—')}"
-            rows.append([
-                Paragraph(f"<b>{product_label}</b>", s["table_cell_bold"]),
-                Paragraph(_truncate(self.product.get("title"), 70), s["table_cell_bold"]),
-                Paragraph(_fmt_price(self.product.get("price")), s["table_cell_bold"]),
-                Paragraph(_fmt_number(self.product.get("bsr")), s["table_cell_bold"]),
-                Paragraph(_fmt_number(self.product.get("review_count")), s["table_cell_bold"]),
-                Paragraph(_fmt_number(self.product.get("rating"), 1), s["table_cell_bold"]),
-            ])
-
-        # Competitors
-        source_price = self.product.get("price") if self.product else None
-        source_bsr = self.product.get("bsr") if self.product else None
-        source_reviews = self.product.get("review_count") if self.product else None
-        source_rating = self.product.get("rating") if self.product else None
+            rows.append(_product_row(self.product, "table_cell_bold"))
 
         for comp in self.competitors:
-            rows.append([
-                Paragraph(comp.get("asin", "—"), s["table_cell"]),
-                Paragraph(_truncate(comp.get("title"), 70), s["table_cell"]),
-                Paragraph(_fmt_price(comp.get("price")), s["table_cell"]),
-                Paragraph(_fmt_number(comp.get("bsr")), s["table_cell"]),
-                Paragraph(_fmt_number(comp.get("review_count")), s["table_cell"]),
-                Paragraph(_fmt_number(comp.get("rating"), 1), s["table_cell"]),
-            ])
+            rows.append(_product_row(comp, "table_cell"))
 
         table = Table(rows, colWidths=col_widths, repeatRows=1)
 
@@ -695,13 +724,8 @@ class MarketResearchPdfBuilder:
             ("TEXTCOLOR", (0, 0), (-1, 0), BG_WHITE),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, 0), 8),
-            # Source product row highlight
-            ("BACKGROUND", (0, 1), (-1, 1), ACCENT_LIGHT),
             # Grid
             ("GRID", (0, 0), (-1, -1), 0.3, DIVIDER),
-            ("ROWBACKGROUNDS", (0, 2), (-1, -1), [BG_WHITE, TABLE_ALT_ROW]),
-            # Alignment
-            ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             # Padding
             ("TOPPADDING", (0, 0), (-1, -1), 5),
@@ -709,50 +733,56 @@ class MarketResearchPdfBuilder:
             ("LEFTPADDING", (0, 0), (-1, -1), 4),
             ("RIGHTPADDING", (0, 0), (-1, -1), 4),
         ]
+        if self.product:
+            # Source product row highlight; alternating stripes from row 2 on.
+            style_cmds.append(("BACKGROUND", (0, 1), (-1, 1), ACCENT_LIGHT))
+            style_cmds.append(("ROWBACKGROUNDS", (0, 2), (-1, -1), [BG_WHITE, TABLE_ALT_ROW]))
+        else:
+            style_cmds.append(("ROWBACKGROUNDS", (0, 1), (-1, -1), [BG_WHITE, TABLE_ALT_ROW]))
+        if included:
+            style_cmds.append(("ALIGN", (2, 0), (-1, -1), "RIGHT"))
 
         # Color-code competitor cells (green=better, red=worse vs source)
-        for row_idx, comp in enumerate(self.competitors, start=2):
-            # Price: lower is better
-            cp = comp.get("price")
-            if cp is not None and source_price is not None:
-                if cp < source_price * 0.97:
-                    style_cmds.append(("TEXTCOLOR", (2, row_idx), (2, row_idx), POSITIVE))
-                elif cp > source_price * 1.03:
-                    style_cmds.append(("TEXTCOLOR", (2, row_idx), (2, row_idx), NEGATIVE))
-            # BSR: lower is better
+        source_price = _row_price(self.product) if self.product else None
+        source_bsr = self.product.get("bsr") if self.product else None
+        source_reviews = self.product.get("review_count") if self.product else None
+        source_rating = self.product.get("rating") if self.product else None
+
+        def _tone(col_key: str, row_idx: int, comp_val, source_val, lower_is_better: bool, eps: float):
+            col = col_index.get(col_key)
+            if col is None or comp_val is None or source_val is None:
+                return
+            better = comp_val < source_val - eps if lower_is_better else comp_val > source_val + eps
+            worse = comp_val > source_val + eps if lower_is_better else comp_val < source_val - eps
+            if better:
+                style_cmds.append(("TEXTCOLOR", (col, row_idx), (col, row_idx), POSITIVE))
+            elif worse:
+                style_cmds.append(("TEXTCOLOR", (col, row_idx), (col, row_idx), NEGATIVE))
+
+        start_row = 2 if self.product else 1
+        for row_idx, comp in enumerate(self.competitors, start=start_row):
+            cp = _row_price(comp)
+            _tone("comp_price", row_idx, cp, source_price,
+                  True, source_price * 0.03 if source_price else 0)
             cb = comp.get("bsr")
-            if cb is not None and source_bsr is not None:
-                if cb < source_bsr * 0.97:
-                    style_cmds.append(("TEXTCOLOR", (3, row_idx), (3, row_idx), POSITIVE))
-                elif cb > source_bsr * 1.03:
-                    style_cmds.append(("TEXTCOLOR", (3, row_idx), (3, row_idx), NEGATIVE))
-            # Reviews: higher is better
+            _tone("comp_bsr", row_idx, cb, source_bsr,
+                  True, source_bsr * 0.03 if source_bsr else 0)
             cr = comp.get("review_count")
-            if cr is not None and source_reviews is not None:
-                if cr > source_reviews * 1.03:
-                    style_cmds.append(("TEXTCOLOR", (4, row_idx), (4, row_idx), POSITIVE))
-                elif cr < source_reviews * 0.97:
-                    style_cmds.append(("TEXTCOLOR", (4, row_idx), (4, row_idx), NEGATIVE))
-            # Rating: higher is better
+            _tone("comp_reviews", row_idx, cr, source_reviews,
+                  False, source_reviews * 0.03 if source_reviews else 0)
             crt = comp.get("rating")
-            if crt is not None and source_rating is not None:
-                if crt > source_rating + 0.1:
-                    style_cmds.append(("TEXTCOLOR", (5, row_idx), (5, row_idx), POSITIVE))
-                elif crt < source_rating - 0.1:
-                    style_cmds.append(("TEXTCOLOR", (5, row_idx), (5, row_idx), NEGATIVE))
+            _tone("comp_rating", row_idx, crt, source_rating, False, 0.1)
 
         table.setStyle(TableStyle(style_cmds))
         elements.append(table)
-        elements.append(Spacer(1, SPACE_LG))
 
-        # Radar chart
-        radar_img = self._decode_chart_image("radar_comparison", max_width=10 * cm, max_height=8 * cm)
-        if radar_img:
-            elements.append(KeepTogether([
-                Paragraph(self._t("charts_radar"), s["h2"]),
-                radar_img,
-                Paragraph(self._t("charts_radar_caption"), s["caption"]),
-            ]))
+        if omitted:
+            omitted_labels = ", ".join(self._t(key) for key in omitted)
+            elements.append(Spacer(1, SPACE_SM))
+            elements.append(Paragraph(
+                f"{self._t('comp_no_data_note')} {omitted_labels}",
+                s["caption"],
+            ))
 
         elements.append(PageBreak())
         return elements
@@ -814,12 +844,12 @@ class MarketResearchPdfBuilder:
 
                 rec_rows.append([
                     Paragraph(priority_label, s[badge_style_key]),
-                    Paragraph(rec.get("area", "—"), s["table_cell_bold"]),
+                    Paragraph(_humanize_area(rec.get("area")), s["table_cell_bold"]),
                     Paragraph(rec.get("action", "—"), s["table_cell"]),
                     Paragraph(rec.get("expected_impact", "—"), s["table_cell"]),
                 ])
 
-            rec_col_widths = [1.8 * cm, 2.8 * cm, 6.2 * cm, 6.2 * cm]
+            rec_col_widths = [1.8 * cm, 3.2 * cm, 6.0 * cm, 6.0 * cm]
             rec_table = Table(rec_rows, colWidths=rec_col_widths, repeatRows=1)
 
             rec_style_cmds: list = [
@@ -909,12 +939,12 @@ class MarketResearchPdfBuilder:
         # Executive summary
         story.extend(self._executive_summary())
 
-        # Charts page (Market Tracker 360 only)
+        # Charts page (Market Tracker 360 only; empty when no charts captured)
         if self.is_market_search:
             story.extend(self._charts_page())
 
-        # Comparison page
-        if self.product or self.competitors:
+        # Comparison page — pointless without competitors to compare against
+        if self.competitors:
             story.extend(self._comparison_page())
 
         # AI Analysis page

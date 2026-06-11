@@ -13,7 +13,6 @@ from app.services.brand_analysis.deck.blocks.channel import (
     OperationalGapBlock,
 )
 from app.services.brand_analysis.deck.blocks.front_matter import (
-    AgendaBlock,
     CoverBlock,
     ExecSummaryBlock,
 )
@@ -31,7 +30,7 @@ from app.services.brand_analysis.deck.blocks.strategy import (
     RoadmapBlock,
 )
 
-# Order in which sections introduce their dividers and number their agenda entries.
+# Section order for the manifest contract and the methodology coverage list.
 SECTION_ORDER = (
     Section.PERFORMANCE,
     Section.CATALOG,
@@ -45,7 +44,6 @@ def default_blocks() -> list[Block]:
     return [
         CoverBlock(),
         ExecSummaryBlock(),
-        AgendaBlock(),
         RevenueYoYBlock(),
         CatalogHealthBlock(),
         ActiveInactiveBlock(),

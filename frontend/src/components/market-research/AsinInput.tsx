@@ -42,7 +42,7 @@ export default function AsinInput({ asins, onChange, max = 5 }: AsinInputProps) 
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="e.g. B0B8R12XK1"
+          placeholder={t('marketResearch.asinPlaceholder')}
           className="flex-1"
           disabled={asins.length >= max}
         />

@@ -1,6 +1,6 @@
 import { useTranslation } from '@/i18n'
 import { Badge } from '@/components/ui/badge'
-import { formatEur } from '@/lib/market-research'
+import { formatEur, isUsablePrice } from '@/lib/market-research'
 import type { ProductSnapshot, CompetitorSnapshot } from '@/types'
 
 interface CompetitorTableProps {
@@ -51,6 +51,16 @@ export default function CompetitorTable({ product, competitors }: CompetitorTabl
     })),
   ]
 
+  // Same sentinel guard as the market search table: a price flagged by the
+  // backend (or detected client-side across the rows) is not a real market
+  // price and must not be rendered or compared as one.
+  const pricedRows = rows.map(({ data }) => ({ asin: data.asin, price: data.price ?? null }))
+  const usablePriceOf = (data: ProductSnapshot | CompetitorSnapshot): number | null => {
+    if (data.price == null || data.price_unreliable) return null
+    return isUsablePrice(data.price, pricedRows) ? data.price : null
+  }
+  const productPrice = usablePriceOf(product)
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -83,8 +93,17 @@ export default function CompetitorTable({ product, competitors }: CompetitorTabl
               <td className="py-2 px-3 max-w-[200px] truncate" title={data.title || ''}>
                 {data.title || '—'}
               </td>
-              <td className={`py-2 px-3 text-right ${isSource ? '' : cellClass(compare(product.price, data.price, true))}`}>
-                {formatEur(data.price)}
+              <td className={`py-2 px-3 text-right ${isSource ? '' : cellClass(compare(productPrice, usablePriceOf(data), true))}`}>
+                {data.price != null && usablePriceOf(data) == null ? (
+                  <span
+                    className="text-xs text-muted-foreground"
+                    title={t('marketResearch.priceUnreliableHint')}
+                  >
+                    {t('marketResearch.priceUnreliable')}
+                  </span>
+                ) : (
+                  formatEur(usablePriceOf(data))
+                )}
               </td>
               <td className={`py-2 px-3 text-right ${isSource ? '' : cellClass(compare(product.bsr, data.bsr, true))}`}>
                 {formatValue(data.bsr)}

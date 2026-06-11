@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { User, Bell, Shield, Database, Loader2, CheckCircle2, Globe, AlertTriangle, Trash2, Store, Key } from 'lucide-react'
+import { Loader2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select,
@@ -20,8 +20,14 @@ import { authApi, exportsApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
 import { GoogleSheetsIntegration } from '@/components/settings/GoogleSheetsIntegration'
 import { cn } from '@/lib/utils'
+import { eyebrow, fieldInput, ghostButton, inkButton, tabTrigger } from '@/lib/editorial'
+import { SectionMark } from '@/components/shared/SectionMark'
 import type { Language } from '@/store/languageStore'
 import type { ApiKeysResponse } from '@/types'
+
+// Destructive actions keep the destructive variant but pick up the page's
+// mono-caps button voice.
+const dangerButton = 'rounded-sm font-mono text-xs uppercase tracking-[0.14em]'
 
 function maskArn(arn: string): string {
   // arn:aws:iam::905355900769:role/API -> arn:aws:iam::•••••••••769:role/API
@@ -295,509 +301,531 @@ export default function Settings() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">{t('settings.title')}</h1>
-        <p className="text-muted-foreground">
-          {t('settings.subtitle')}
-        </p>
-      </div>
+    <div className="space-y-10 pb-4">
+      {/* ─── Masthead ────────────────────────────────────────────────── */}
+      <header className="ba-rise">
+        <div aria-hidden="true" className="border-t-[3px] border-foreground" />
+        <div aria-hidden="true" className="mt-[3px] border-t border-foreground/30" />
+        <div className="pt-6">
+          <h1 className="text-3xl font-bold tracking-tight">{t('settings.title')}</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            {t('settings.subtitle')}
+          </p>
+        </div>
+      </header>
 
       <Tabs
         value={activeTab}
         onValueChange={(value) => setSearchParams(value === 'profile' ? {} : { tab: value }, { replace: true })}
-        className="space-y-4"
+        className="ba-rise ba-rise-2"
       >
-        <TabsList className="h-auto flex-wrap justify-start">
-          <TabsTrigger value="accounts" className="gap-2">
-            <Store className="h-4 w-4" /> {t('settings.tabAccounts')}
+        <TabsList className="h-auto w-full flex-wrap justify-start gap-x-7 gap-y-1 rounded-none border-b border-foreground/15 bg-transparent p-0 text-muted-foreground">
+          <TabsTrigger value="accounts" className={tabTrigger}>
+            {t('settings.tabAccounts')}
           </TabsTrigger>
-          <TabsTrigger value="profile" className="gap-2">
-            <User className="h-4 w-4" /> {t('settings.tabProfile')}
+          <TabsTrigger value="profile" className={tabTrigger}>
+            {t('settings.tabProfile')}
           </TabsTrigger>
-          <TabsTrigger value="amazon-api" className="gap-2">
-            <Key className="h-4 w-4" /> {t('settings.tabAmazonApi')}
+          <TabsTrigger value="amazon-api" className={tabTrigger}>
+            {t('settings.tabAmazonApi')}
           </TabsTrigger>
-          <TabsTrigger value="notifications" className="gap-2">
-            <Bell className="h-4 w-4" /> {t('settings.tabNotifications')}
+          <TabsTrigger value="notifications" className={tabTrigger}>
+            {t('settings.tabNotifications')}
           </TabsTrigger>
-          <TabsTrigger value="integrations" className="gap-2">
-            <Globe className="h-4 w-4" /> {t('settings.tabIntegrations')}
+          <TabsTrigger value="integrations" className={tabTrigger}>
+            {t('settings.tabIntegrations')}
           </TabsTrigger>
-          <TabsTrigger value="security" className="gap-2">
-            <Shield className="h-4 w-4" /> {t('settings.tabSecurity')}
+          <TabsTrigger value="security" className={tabTrigger}>
+            {t('settings.tabSecurity')}
           </TabsTrigger>
-          <TabsTrigger value="data" className="gap-2">
-            <Database className="h-4 w-4" /> {t('settings.tabData')}
+          <TabsTrigger value="data" className={tabTrigger}>
+            {t('settings.tabData')}
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="accounts" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('accounts.title')}</CardTitle>
-              <CardDescription>{t('settings.accountsMovedDesc')}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button asChild>
-                <Link to="/accounts">
-                  <Store className="mr-2 h-4 w-4" />
-                  {t('settings.openAccounts')}
-                </Link>
-              </Button>
-            </CardContent>
-          </Card>
+        <TabsContent value="accounts" className="mt-8">
+          <SettingsSection title={t('accounts.title')} hint={t('settings.accountsMovedDesc')}>
+            <Button asChild variant="outline" className={ghostButton}>
+              <Link to="/accounts">{t('settings.openAccounts')}</Link>
+            </Button>
+          </SettingsSection>
         </TabsContent>
 
-        <TabsContent value="profile" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('settings.profileTitle')}</CardTitle>
-              <CardDescription>
-                {t('settings.profileDesc')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="fullName">{t('settings.fullName')}</Label>
-                <Input
-                  id="fullName"
-                  value={profile.fullName}
-                  onChange={(e) =>
-                    setProfile({ ...profile, fullName: e.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">{t('common.email')}</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={profile.email}
-                  onChange={(e) =>
-                    setProfile({ ...profile, email: e.target.value })
-                  }
-                />
-              </div>
-              <Button onClick={handleSaveProfile} disabled={isSaving}>
-                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {t('settings.saveChanges')}
-              </Button>
-            </CardContent>
-          </Card>
+        <TabsContent value="profile" className="mt-8 space-y-10">
+          <SettingsSection title={t('settings.profileTitle')} hint={t('settings.profileDesc')}>
+            <div>
+              <Label htmlFor="fullName" className={eyebrow}>
+                {t('settings.fullName')}
+              </Label>
+              <Input
+                id="fullName"
+                value={profile.fullName}
+                onChange={(e) => setProfile({ ...profile, fullName: e.target.value })}
+                className={cn(fieldInput, 'mt-1')}
+              />
+            </div>
+            <div>
+              <Label htmlFor="email" className={eyebrow}>
+                {t('common.email')}
+              </Label>
+              <Input
+                id="email"
+                type="email"
+                value={profile.email}
+                onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+                className={cn(fieldInput, 'mt-1')}
+              />
+            </div>
+            <Button onClick={handleSaveProfile} disabled={isSaving} className={inkButton}>
+              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t('settings.saveChanges')}
+            </Button>
+          </SettingsSection>
 
           {/* Organization */}
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('settings.organization')}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="orgName">{t('settings.organization')}</Label>
-                <Input
-                  id="orgName"
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                />
-              </div>
-              <Button onClick={handleSaveOrganization} disabled={isSaving}>
-                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {t('settings.saveChanges')}
-              </Button>
-            </CardContent>
-          </Card>
+          <SettingsSection title={t('settings.organization')}>
+            <div>
+              <Label htmlFor="orgName" className={eyebrow}>
+                {t('settings.organization')}
+              </Label>
+              <Input
+                id="orgName"
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+                className={cn(fieldInput, 'mt-1')}
+              />
+            </div>
+            <Button onClick={handleSaveOrganization} disabled={isSaving} className={inkButton}>
+              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t('settings.saveChanges')}
+            </Button>
+          </SettingsSection>
 
           {/* Language */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Globe className="h-5 w-5" />
-                {t('settings.language')}
-              </CardTitle>
-              <CardDescription>{t('settings.languageDesc')}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                <Label>{t('settings.languageLabel')}</Label>
-                <Select value={language} onValueChange={(v) => setLanguage(v as Language)}>
-                  <SelectTrigger className="w-[200px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="it">Italiano</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardContent>
-          </Card>
+          <SettingsSection title={t('settings.language')} hint={t('settings.languageDesc')}>
+            <div>
+              <Label className={eyebrow}>{t('settings.languageLabel')}</Label>
+              <Select value={language} onValueChange={(v) => setLanguage(v as Language)}>
+                <SelectTrigger className={cn(fieldInput, 'mt-1 w-[200px]')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="en">English</SelectItem>
+                  <SelectItem value="it">Italiano</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </SettingsSection>
         </TabsContent>
 
-        <TabsContent value="amazon-api">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('settings.apiTitle')}</CardTitle>
-              <CardDescription>
-                {t('settings.apiDesc')}{' '}
-                <a
-                  href="https://sellercentral.amazon.com/apps/authorize/consent"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline text-primary"
-                >
-                  {t('settings.apiDescLink')}
-                </a>.
-              </CardDescription>
-            </CardHeader>
-            <form onSubmit={handleSaveApiKeys}>
-              <CardContent className="space-y-5">
-                {/* Current status */}
-                {(() => {
-                  if (!savedApiKeys) return null
-                  const fields = [
-                    { label: t('settings.clientId'), set: !!savedApiKeys.sp_api_client_id, value: savedApiKeys.sp_api_client_id },
-                    { label: t('settings.clientSecret'), set: savedApiKeys.has_client_secret },
-                    { label: t('settings.awsAccessKey'), set: !!savedApiKeys.sp_api_aws_access_key, value: savedApiKeys.sp_api_aws_access_key },
-                    { label: t('settings.awsSecretKey'), set: savedApiKeys.has_aws_secret_key },
-                    { label: t('settings.roleArn'), set: !!savedApiKeys.sp_api_role_arn, value: savedApiKeys.sp_api_role_arn ? maskArn(savedApiKeys.sp_api_role_arn) : undefined },
-                    { label: t('accounts.adsClientId'), set: !!savedApiKeys.advertising_client_id, value: savedApiKeys.advertising_client_id },
-                    { label: t('accounts.adsClientSecret'), set: savedApiKeys.has_advertising_client_secret },
-                  ]
-                  const setCount = fields.filter(f => f.set).length
-                  const allSet = setCount === fields.length
-                  const noneSet = setCount === 0
+        <TabsContent value="amazon-api" className="mt-8">
+          <form onSubmit={handleSaveApiKeys}>
+            <SettingsSection
+              wide
+              title={t('settings.apiTitle')}
+              hint={
+                <>
+                  {t('settings.apiDesc')}{' '}
+                  <a
+                    href="https://sellercentral.amazon.com/apps/authorize/consent"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline decoration-dotted underline-offset-4 text-foreground"
+                  >
+                    {t('settings.apiDescLink')}
+                  </a>
+                  .
+                </>
+              }
+            >
+              {/* Current status — credential manifest */}
+              {(() => {
+                if (!savedApiKeys) return null
+                const fields = [
+                  { label: t('settings.clientId'), set: !!savedApiKeys.sp_api_client_id, value: savedApiKeys.sp_api_client_id },
+                  { label: t('settings.clientSecret'), set: savedApiKeys.has_client_secret },
+                  { label: t('settings.awsAccessKey'), set: !!savedApiKeys.sp_api_aws_access_key, value: savedApiKeys.sp_api_aws_access_key },
+                  { label: t('settings.awsSecretKey'), set: savedApiKeys.has_aws_secret_key },
+                  { label: t('settings.roleArn'), set: !!savedApiKeys.sp_api_role_arn, value: savedApiKeys.sp_api_role_arn ? maskArn(savedApiKeys.sp_api_role_arn) : undefined },
+                  { label: t('accounts.adsClientId'), set: !!savedApiKeys.advertising_client_id, value: savedApiKeys.advertising_client_id },
+                  { label: t('accounts.adsClientSecret'), set: savedApiKeys.has_advertising_client_secret },
+                ]
+                const setCount = fields.filter(f => f.set).length
+                const allSet = setCount === fields.length
+                const noneSet = setCount === 0
 
-                  if (noneSet) {
-                    return (
-                      <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                        <AlertTriangle className="h-4 w-4 shrink-0" />
-                        {t('settings.noApiKeys')}
-                      </div>
-                    )
-                  }
-
+                if (noneSet) {
                   return (
-                    <div className="rounded-md border bg-muted/30 p-4 space-y-2">
-                      <p className="text-sm font-medium flex items-center gap-2">
-                        {allSet ? (
-                          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                        ) : (
-                          <AlertTriangle className="h-4 w-4 text-amber-500" />
-                        )}
-                        {allSet ? t('settings.allApiKeysSet') : t('settings.partialApiKeys')}
-                      </p>
-                      <div className="grid gap-1 text-xs text-muted-foreground">
-                        {fields.map((f) => (
-                          <p key={f.label} className="flex items-center gap-1.5">
-                            <span className={f.set ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
-                              {f.set ? t('settings.keySet') : t('settings.keyMissing')}
-                            </span>
-                            <span>{f.label}</span>
-                            {f.value && <span className="font-mono ml-1">{f.value}</span>}
-                          </p>
-                        ))}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {t('settings.apiKeepCurrent')}
-                      </p>
+                    <div className="border-l-2 border-amber-500 py-1 pl-4 text-sm leading-6 text-amber-700 dark:text-amber-400">
+                      {t('settings.noApiKeys')}
                     </div>
                   )
-                })()}
+                }
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="clientId">{t('settings.clientId')}</Label>
-                    <Input
-                      id="clientId"
-                      value={apiKeys.sp_api_client_id}
-                      onChange={(e) => setApiKeys({ ...apiKeys, sp_api_client_id: e.target.value })}
-                      placeholder={savedApiKeys?.sp_api_client_id || 'amzn1.application-oa2-client.xxx'}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="clientSecret">{t('settings.clientSecret')}</Label>
-                    <Input
-                      id="clientSecret"
-                      type="password"
-                      value={apiKeys.sp_api_client_secret}
-                      onChange={(e) => setApiKeys({ ...apiKeys, sp_api_client_secret: e.target.value })}
-                      placeholder={savedApiKeys?.has_client_secret ? '••••••••' : 'Your client secret'}
-                    />
-                  </div>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="awsAccessKey">{t('settings.awsAccessKey')}</Label>
-                    <Input
-                      id="awsAccessKey"
-                      value={apiKeys.sp_api_aws_access_key}
-                      onChange={(e) => setApiKeys({ ...apiKeys, sp_api_aws_access_key: e.target.value })}
-                      placeholder={savedApiKeys?.sp_api_aws_access_key || 'AKIA...'}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="awsSecretKey">{t('settings.awsSecretKey')}</Label>
-                    <Input
-                      id="awsSecretKey"
-                      type="password"
-                      value={apiKeys.sp_api_aws_secret_key}
-                      onChange={(e) => setApiKeys({ ...apiKeys, sp_api_aws_secret_key: e.target.value })}
-                      placeholder={savedApiKeys?.has_aws_secret_key ? '••••••••' : 'Your AWS secret key'}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="roleArn">{t('settings.roleArn')}</Label>
-                  <Input
-                    id="roleArn"
-                    value={apiKeys.sp_api_role_arn}
-                    onChange={(e) => setApiKeys({ ...apiKeys, sp_api_role_arn: e.target.value })}
-                    placeholder={savedApiKeys?.sp_api_role_arn ? maskArn(savedApiKeys.sp_api_role_arn) : 'arn:aws:iam::123456789:role/sp-api'}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t('settings.roleArnHelp')}
-                  </p>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="advertisingClientId">{t('accounts.adsClientId')}</Label>
-                    <Input
-                      id="advertisingClientId"
-                      value={apiKeys.advertising_client_id}
-                      onChange={(e) => setApiKeys({ ...apiKeys, advertising_client_id: e.target.value })}
-                      placeholder={savedApiKeys?.advertising_client_id || 'amzn1.application-oa2-client.xxx'}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="advertisingClientSecret">{t('accounts.adsClientSecret')}</Label>
-                    <Input
-                      id="advertisingClientSecret"
-                      type="password"
-                      value={apiKeys.advertising_client_secret}
-                      onChange={(e) => setApiKeys({ ...apiKeys, advertising_client_secret: e.target.value })}
-                      placeholder={savedApiKeys?.has_advertising_client_secret ? '••••••••' : 'Your Ads client secret'}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <Button type="submit" disabled={apiKeysMutation.isPending}>
-                    {apiKeysMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    {t('settings.saveApiKeys')}
-                  </Button>
-                  {savedApiKeys && (
-                    savedApiKeys.sp_api_client_id ||
-                    savedApiKeys.has_client_secret ||
-                    savedApiKeys.advertising_client_id ||
-                    savedApiKeys.has_advertising_client_secret
-                  ) && (
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      onClick={handleDeleteApiKeys}
-                      disabled={deleteApiKeysMutation.isPending}
+                return (
+                  <div className="rounded-sm border border-foreground/15 p-4">
+                    <p
+                      className={cn(
+                        'font-mono text-[10px] font-semibold uppercase tracking-[0.18em]',
+                        allSet
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : 'text-amber-700 dark:text-amber-400',
+                      )}
                     >
-                      {deleteApiKeysMutation.isPending
-                        ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        : <Trash2 className="mr-2 h-4 w-4" />}
-                      {t('settings.removeApiKeys')}
-                    </Button>
-                  )}
+                      {allSet ? t('settings.allApiKeysSet') : t('settings.partialApiKeys')}
+                    </p>
+                    <div className="mt-2 divide-y divide-foreground/10">
+                      {fields.map((f) => (
+                        <div key={f.label} className="flex items-baseline gap-2.5 py-2">
+                          <span className="shrink-0 text-xs font-medium">{f.label}</span>
+                          {f.value ? (
+                            <span className="truncate font-mono text-[11px] text-muted-foreground">
+                              {f.value}
+                            </span>
+                          ) : null}
+                          <span
+                            aria-hidden="true"
+                            className="flex-1 self-center border-b border-dotted border-foreground/30"
+                          />
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              'h-1.5 w-1.5 shrink-0 self-center rounded-full',
+                              f.set ? 'bg-emerald-500' : 'bg-amber-500',
+                            )}
+                          />
+                          <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                            {f.set ? t('settings.keySet') : t('settings.keyMissing')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                      {t('settings.apiKeepCurrent')}
+                    </p>
+                  </div>
+                )
+              })()}
+
+              <div className="grid gap-x-8 gap-y-5 md:grid-cols-2">
+                <div>
+                  <Label htmlFor="clientId" className={eyebrow}>
+                    {t('settings.clientId')}
+                  </Label>
+                  <Input
+                    id="clientId"
+                    value={apiKeys.sp_api_client_id}
+                    onChange={(e) => setApiKeys({ ...apiKeys, sp_api_client_id: e.target.value })}
+                    placeholder={savedApiKeys?.sp_api_client_id || 'amzn1.application-oa2-client.xxx'}
+                    className={cn(fieldInput, 'mt-1')}
+                  />
                 </div>
-              </CardContent>
-            </form>
-          </Card>
+                <div>
+                  <Label htmlFor="clientSecret" className={eyebrow}>
+                    {t('settings.clientSecret')}
+                  </Label>
+                  <Input
+                    id="clientSecret"
+                    type="password"
+                    value={apiKeys.sp_api_client_secret}
+                    onChange={(e) => setApiKeys({ ...apiKeys, sp_api_client_secret: e.target.value })}
+                    placeholder={savedApiKeys?.has_client_secret ? '••••••••' : 'Your client secret'}
+                    className={cn(fieldInput, 'mt-1')}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="awsAccessKey" className={eyebrow}>
+                    {t('settings.awsAccessKey')}
+                  </Label>
+                  <Input
+                    id="awsAccessKey"
+                    value={apiKeys.sp_api_aws_access_key}
+                    onChange={(e) => setApiKeys({ ...apiKeys, sp_api_aws_access_key: e.target.value })}
+                    placeholder={savedApiKeys?.sp_api_aws_access_key || 'AKIA...'}
+                    className={cn(fieldInput, 'mt-1')}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="awsSecretKey" className={eyebrow}>
+                    {t('settings.awsSecretKey')}
+                  </Label>
+                  <Input
+                    id="awsSecretKey"
+                    type="password"
+                    value={apiKeys.sp_api_aws_secret_key}
+                    onChange={(e) => setApiKeys({ ...apiKeys, sp_api_aws_secret_key: e.target.value })}
+                    placeholder={savedApiKeys?.has_aws_secret_key ? '••••••••' : 'Your AWS secret key'}
+                    className={cn(fieldInput, 'mt-1')}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="roleArn" className={eyebrow}>
+                  {t('settings.roleArn')}
+                </Label>
+                <Input
+                  id="roleArn"
+                  value={apiKeys.sp_api_role_arn}
+                  onChange={(e) => setApiKeys({ ...apiKeys, sp_api_role_arn: e.target.value })}
+                  placeholder={savedApiKeys?.sp_api_role_arn ? maskArn(savedApiKeys.sp_api_role_arn) : 'arn:aws:iam::123456789:role/sp-api'}
+                  className={cn(fieldInput, 'mt-1')}
+                />
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  {t('settings.roleArnHelp')}
+                </p>
+              </div>
+
+              <div className="grid gap-x-8 gap-y-5 md:grid-cols-2">
+                <div>
+                  <Label htmlFor="advertisingClientId" className={eyebrow}>
+                    {t('accounts.adsClientId')}
+                  </Label>
+                  <Input
+                    id="advertisingClientId"
+                    value={apiKeys.advertising_client_id}
+                    onChange={(e) => setApiKeys({ ...apiKeys, advertising_client_id: e.target.value })}
+                    placeholder={savedApiKeys?.advertising_client_id || 'amzn1.application-oa2-client.xxx'}
+                    className={cn(fieldInput, 'mt-1')}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="advertisingClientSecret" className={eyebrow}>
+                    {t('accounts.adsClientSecret')}
+                  </Label>
+                  <Input
+                    id="advertisingClientSecret"
+                    type="password"
+                    value={apiKeys.advertising_client_secret}
+                    onChange={(e) => setApiKeys({ ...apiKeys, advertising_client_secret: e.target.value })}
+                    placeholder={savedApiKeys?.has_advertising_client_secret ? '••••••••' : 'Your Ads client secret'}
+                    className={cn(fieldInput, 'mt-1')}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-3 border-t border-foreground/10 pt-5">
+                <Button type="submit" disabled={apiKeysMutation.isPending} className={inkButton}>
+                  {apiKeysMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {t('settings.saveApiKeys')}
+                </Button>
+                {savedApiKeys && (
+                  savedApiKeys.sp_api_client_id ||
+                  savedApiKeys.has_client_secret ||
+                  savedApiKeys.advertising_client_id ||
+                  savedApiKeys.has_advertising_client_secret
+                ) && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className={dangerButton}
+                    onClick={handleDeleteApiKeys}
+                    disabled={deleteApiKeysMutation.isPending}
+                  >
+                    {deleteApiKeysMutation.isPending
+                      ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      : <Trash2 className="mr-2 h-4 w-4" />}
+                    {t('settings.removeApiKeys')}
+                  </Button>
+                )}
+              </div>
+            </SettingsSection>
+          </form>
         </TabsContent>
 
-        <TabsContent value="notifications">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('settings.notifTitle')}</CardTitle>
-              <CardDescription>
-                {t('settings.notifDesc')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {emailStatus && (
-                <div
+        <TabsContent value="notifications" className="mt-8">
+          <SettingsSection title={t('settings.notifTitle')} hint={t('settings.notifDesc')}>
+            {emailStatus && (
+              <div
+                className={cn(
+                  'border-l-2 py-1 pl-4',
+                  emailStatus.status === 'configured' ? 'border-emerald-500' : 'border-amber-500',
+                )}
+              >
+                <p
                   className={cn(
-                    'flex items-start gap-2 rounded-md border p-3 text-sm',
+                    'text-sm font-medium',
                     emailStatus.status === 'configured'
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                      : 'border-amber-200 bg-amber-50 text-amber-800',
+                      ? 'text-emerald-700 dark:text-emerald-400'
+                      : 'text-amber-700 dark:text-amber-400',
                   )}
                 >
-                  {emailStatus.status === 'configured' ? (
-                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                  ) : (
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  )}
-                  <div>
-                    <p className="font-medium">
-                      {emailStatus.status === 'configured'
-                        ? t('settings.emailDeliveryConfigured')
-                        : t('settings.emailDeliveryMissing')}
-                    </p>
-                    {emailStatus.detail && (
-                      <p className="mt-0.5 text-xs opacity-90">{emailStatus.detail}</p>
-                    )}
-                  </div>
-                </div>
-              )}
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">{t('settings.dailyDigest')}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {t('settings.dailyDigestDesc')}
-                  </p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={notifications.dailyDigest}
-                  onChange={(e) =>
-                    setNotifications({
-                      ...notifications,
-                      dailyDigest: e.target.checked,
-                    })
-                  }
-                  className="h-4 w-4"
-                />
+                  {emailStatus.status === 'configured'
+                    ? t('settings.emailDeliveryConfigured')
+                    : t('settings.emailDeliveryMissing')}
+                </p>
+                {emailStatus.detail && (
+                  <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{emailStatus.detail}</p>
+                )}
               </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">{t('settings.alertEmails')}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {t('settings.alertEmailsDesc')}
-                  </p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={notifications.alertEmails}
-                  onChange={(e) =>
-                    setNotifications({
-                      ...notifications,
-                      alertEmails: e.target.checked,
-                    })
-                  }
-                  className="h-4 w-4"
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">{t('settings.syncNotifications')}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {t('settings.syncNotificationsDesc')}
-                  </p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={notifications.syncNotifications}
-                  onChange={(e) =>
-                    setNotifications({
-                      ...notifications,
-                      syncNotifications: e.target.checked,
-                    })
-                  }
-                  className="h-4 w-4"
-                />
-              </div>
-              <Button onClick={handleSaveNotifications} disabled={isSaving}>
-                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {t('settings.savePreferences')}
-              </Button>
-            </CardContent>
-          </Card>
+            )}
+            <div>
+              <ToggleRow
+                title={t('settings.dailyDigest')}
+                desc={t('settings.dailyDigestDesc')}
+                checked={notifications.dailyDigest}
+                onCheckedChange={(checked) =>
+                  setNotifications({ ...notifications, dailyDigest: checked })
+                }
+              />
+              <ToggleRow
+                title={t('settings.alertEmails')}
+                desc={t('settings.alertEmailsDesc')}
+                checked={notifications.alertEmails}
+                onCheckedChange={(checked) =>
+                  setNotifications({ ...notifications, alertEmails: checked })
+                }
+              />
+              <ToggleRow
+                title={t('settings.syncNotifications')}
+                desc={t('settings.syncNotificationsDesc')}
+                checked={notifications.syncNotifications}
+                onCheckedChange={(checked) =>
+                  setNotifications({ ...notifications, syncNotifications: checked })
+                }
+              />
+            </div>
+            <Button onClick={handleSaveNotifications} disabled={isSaving} className={inkButton}>
+              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t('settings.savePreferences')}
+            </Button>
+          </SettingsSection>
         </TabsContent>
 
-        <TabsContent value="integrations" className="space-y-4">
+        <TabsContent value="integrations" className="mt-8 space-y-4">
           <GoogleSheetsIntegration />
         </TabsContent>
 
-        <TabsContent value="security">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('settings.securityTitle')}</CardTitle>
-              <CardDescription>
-                {t('settings.securityDesc')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="currentPassword">{t('settings.currentPassword')}</Label>
-                <Input
-                  id="currentPassword"
-                  type="password"
-                  value={passwords.currentPassword}
-                  onChange={(e) => setPasswords({ ...passwords, currentPassword: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="newPassword">{t('settings.newPassword')}</Label>
-                <Input
-                  id="newPassword"
-                  type="password"
-                  value={passwords.newPassword}
-                  onChange={(e) => setPasswords({ ...passwords, newPassword: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="confirmPassword">{t('settings.confirmNewPassword')}</Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  value={passwords.confirmPassword}
-                  onChange={(e) => setPasswords({ ...passwords, confirmPassword: e.target.value })}
-                />
-              </div>
-              <Button onClick={handleChangePassword} disabled={isSaving}>
-                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {t('settings.changePassword')}
-              </Button>
-            </CardContent>
-          </Card>
+        <TabsContent value="security" className="mt-8">
+          <SettingsSection title={t('settings.securityTitle')} hint={t('settings.securityDesc')}>
+            <div>
+              <Label htmlFor="currentPassword" className={eyebrow}>
+                {t('settings.currentPassword')}
+              </Label>
+              <Input
+                id="currentPassword"
+                type="password"
+                value={passwords.currentPassword}
+                onChange={(e) => setPasswords({ ...passwords, currentPassword: e.target.value })}
+                className={cn(fieldInput, 'mt-1')}
+              />
+            </div>
+            <div>
+              <Label htmlFor="newPassword" className={eyebrow}>
+                {t('settings.newPassword')}
+              </Label>
+              <Input
+                id="newPassword"
+                type="password"
+                value={passwords.newPassword}
+                onChange={(e) => setPasswords({ ...passwords, newPassword: e.target.value })}
+                className={cn(fieldInput, 'mt-1')}
+              />
+            </div>
+            <div>
+              <Label htmlFor="confirmPassword" className={eyebrow}>
+                {t('settings.confirmNewPassword')}
+              </Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                value={passwords.confirmPassword}
+                onChange={(e) => setPasswords({ ...passwords, confirmPassword: e.target.value })}
+                className={cn(fieldInput, 'mt-1')}
+              />
+            </div>
+            <Button onClick={handleChangePassword} disabled={isSaving} className={inkButton}>
+              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t('settings.changePassword')}
+            </Button>
+          </SettingsSection>
         </TabsContent>
 
-        <TabsContent value="data">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('settings.dataTitle')}</CardTitle>
-              <CardDescription>
-                {t('settings.dataDesc')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <h3 className="font-medium">{t('settings.dataRetention')}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {t('settings.dataRetentionDesc')}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <h3 className="font-medium">{t('settings.exportAll')}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {t('settings.exportAllDesc')}
-                </p>
-                <Button variant="outline" onClick={handleExportData} disabled={isSaving}>
-                  {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {t('settings.requestExport')}
-                </Button>
-              </div>
-              <div className="space-y-2 pt-4 border-t">
-                <h3 className="font-medium text-destructive">{t('settings.dangerZone')}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {t('settings.dangerZoneDesc')}
-                </p>
-                <Button variant="destructive" onClick={handleDeleteAccount} disabled={isSaving}>
-                  {t('settings.deleteAccount')}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+        <TabsContent value="data" className="mt-8">
+          <SettingsSection title={t('settings.dataTitle')} hint={t('settings.dataDesc')}>
+            <div>
+              <p className="text-sm font-medium">{t('settings.dataRetention')}</p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                {t('settings.dataRetentionDesc')}
+              </p>
+            </div>
+            <div className="border-t border-foreground/10 pt-5">
+              <p className="text-sm font-medium">{t('settings.exportAll')}</p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                {t('settings.exportAllDesc')}
+              </p>
+              <Button
+                variant="outline"
+                className={cn(ghostButton, 'mt-3')}
+                onClick={handleExportData}
+                disabled={isSaving}
+              >
+                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {t('settings.requestExport')}
+              </Button>
+            </div>
+            <div className="border-l-2 border-rose-500 pl-4 pt-1">
+              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-700 dark:text-rose-400">
+                {t('settings.dangerZone')}
+              </p>
+              <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                {t('settings.dangerZoneDesc')}
+              </p>
+              <Button
+                variant="destructive"
+                className={cn(dangerButton, 'mt-3')}
+                onClick={handleDeleteAccount}
+                disabled={isSaving}
+              >
+                {t('settings.deleteAccount')}
+              </Button>
+            </div>
+          </SettingsSection>
         </TabsContent>
       </Tabs>
+    </div>
+  )
+}
+
+/* ─── small inline pieces ────────────────────────────────────────── */
+
+function SettingsSection({
+  title,
+  hint,
+  wide,
+  children,
+}: {
+  title: string
+  hint?: ReactNode
+  wide?: boolean
+  children: ReactNode
+}) {
+  return (
+    <section>
+      <SectionMark title={title} hint={hint} />
+      <div className={cn('mt-6 space-y-5', wide ? 'max-w-3xl' : 'max-w-2xl')}>{children}</div>
+    </section>
+  )
+}
+
+function ToggleRow({
+  title,
+  desc,
+  checked,
+  onCheckedChange,
+}: {
+  title: string
+  desc: string
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-6 border-b border-foreground/10 py-3.5">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{desc}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={title} />
     </div>
   )
 }

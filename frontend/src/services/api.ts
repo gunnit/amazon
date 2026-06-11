@@ -13,7 +13,7 @@ import type {
   ScheduledReport, ScheduledReportRun,
   GoogleSheetsConnection, GoogleSheetsSync, GoogleSheetsSyncRun,
   ApiKeysUpdate, ApiKeysResponse,
-  MarketResearchReport, MarketResearchListItem, ComparisonMatrixResponse, MarketSearchResponse, CompetitorSuggestion,
+  MarketResearchReport, MarketResearchListItem, ComparisonMatrixResponse, MarketSearchResponse,
   BrandAnalysisJob, BrandAnalysisListItem, BrandPulseResponse,
   BrandIntelligenceReport, BrandIntelligenceReportListItem,
   BrandIntelligenceGenerateResponse, BrandIntelligenceSchedule,
@@ -1041,14 +1041,6 @@ export const marketResearchApi = {
 
   delete: async (id: string): Promise<void> => {
     await api.delete(`/market-research/${id}`)
-  },
-
-  suggestCompetitors: async (params: {
-    category?: string
-    marketplace?: string
-  }): Promise<CompetitorSuggestion[]> => {
-    const response = await api.get('/market-research/competitors/suggest', { params })
-    return response.data
   },
 
   marketSearch: async (params: {

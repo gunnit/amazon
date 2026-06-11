@@ -2496,6 +2496,7 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
         "scenario_realistic": "REALISTIC",
         "scenario_optimistic": "OPTIMISTIC",
         "projection_actions_title": "Priority actions for this brand",
+        "projection_actions_subtitle": "Where to act first, based on this analysis",
         "projection_disclaimer": "Illustrative scenarios based on uniform growth assumptions, not a forecast. Adjust with brand-specific targets.",
         # Conclusions
         "conclusions_title": "Conclusions",
@@ -2660,6 +2661,7 @@ PPTX_STATIC_STRINGS: dict[str, dict[str, str]] = {
         "scenario_realistic": "REALISTICO",
         "scenario_optimistic": "OTTIMISTICO",
         "projection_actions_title": "Azioni prioritarie per questa marca",
+        "projection_actions_subtitle": "Dove intervenire per primi, sulla base di questa analisi",
         "projection_disclaimer": "Scenari illustrativi basati su ipotesi di crescita uniforme, non una previsione. Da adattare con obiettivi specifici della marca.",
         # Conclusions
         "conclusions_title": "Conclusioni",

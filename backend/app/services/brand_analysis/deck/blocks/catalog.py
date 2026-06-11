@@ -33,10 +33,12 @@ class ContentAuditBlock(BaseBlock):
             (ctx.t("kpi_missing_description"), fmt.integer(content.get("asins_missing_description"))),
             (ctx.t("kpi_short_titles"), fmt.integer(content.get("short_title_count"))),
         ]
-        gap = 0.24
-        card_w = (DeckTheme.content_w() - gap * 3) / 4
+        kpis = [k for k in kpis if k[1] != fmt.EMPTY]
+        gap = 0.28
+        card_w = min((DeckTheme.content_w() - gap * (max(len(kpis), 1) - 1)) / max(len(kpis), 1), 4.2)
         for idx, (label, value) in enumerate(kpis):
-            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.9, card_w, 1.0, label, value)
+            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.6, card_w, 1.45,
+                     label, value, fill=DeckTheme.kpi_fill(idx))
 
         gaps = [
             (content.get("asins_missing_bullets"), ctx.t("kpi_missing_bullets")),
@@ -72,10 +74,12 @@ class ReviewImageBlock(BaseBlock):
             (ctx.t("kpi_asins_few_reviews"), fmt.integer(weaknesses.get("asins_with_fewer_than_15_reviews"))),
             (ctx.t("kpi_rating_below_4"), fmt.integer(weaknesses.get("asins_with_rating_below_4"))),
         ]
+        kpis = [k for k in kpis if k[1] != fmt.EMPTY]
         gap = 0.28
-        card_w = (DeckTheme.content_w() - gap * 2) / 3
+        card_w = min((DeckTheme.content_w() - gap * (max(len(kpis), 1) - 1)) / max(len(kpis), 1), 4.2)
         for idx, (label, value) in enumerate(kpis):
-            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.9, card_w, 1.0, label, value)
+            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.6, card_w, 1.45,
+                     label, value, fill=DeckTheme.kpi_fill(idx))
 
         rows = [
             [fmt.truncate(item.get("product_name") or item.get("asin"), 40),
@@ -86,7 +90,7 @@ class ReviewImageBlock(BaseBlock):
         if rows:
             deck.table(slide, DeckTheme.MARGIN, 3.3,
                        [ctx.t("table_product"), ctx.t("table_reviews"), ctx.t("table_rating"), ctx.t("table_issue")],
-                       rows, [4.5, 1.2, 1.2, 4.0])
+                       rows, [5.2, 1.5, 1.5, 4.41])
         return BlockResult(rendered=True)
 
 

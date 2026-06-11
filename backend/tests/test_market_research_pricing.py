@@ -7,7 +7,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.core.amazon.sp_api_client import SPAPIClient
-from app.services.market_research_service import _fetch_product_data
+from app.services.market_research_service import (
+    _fetch_product_data,
+    _flag_sentinel_prices,
+)
 
 
 def _make_client() -> SPAPIClient:
@@ -245,6 +248,9 @@ def test_fetch_product_data_uses_catalog_price_when_pricing_is_empty():
         def _extract_price_amount(self, _payload):
             return None
 
+        def _extract_offer_snapshot(self, _payload):
+            return {}
+
         def _extract_catalog_price_amount(self, _payload):
             return Decimal("31.20")
 
@@ -340,3 +346,71 @@ def test_market_search_endpoint_helper_matches_implementation():
     # The fix is to NOT skip items without a price. Make sure no `continue`
     # statement is gated on missing price inside the helper any more.
     assert "Skipping market search result without price" not in source
+
+
+def test_fetch_product_data_keeps_competitive_price_when_offers_fail():
+    """A failing item-offers lookup must not discard the price the
+    competitive-pricing call already found (regression: the two calls used to
+    share one error boundary, so an offers 404 nulled the price)."""
+
+    class FakeProductsApi:
+        def get_competitive_pricing_for_asins(self, _asins):
+            return SimpleNamespace(payload={"products": ["has-price"]})
+
+        def get_item_offers(self, **_kwargs):
+            raise RuntimeError("offers lookup blew up")
+
+    class FakeClient:
+        is_vendor = False
+        marketplace = SimpleNamespace(marketplace_id="ATVPDKIKX0DER")
+
+        def _catalog_api(self):
+            raise RuntimeError("catalog unavailable")
+
+        def _products_api(self):
+            return FakeProductsApi()
+
+        def _extract_price_amount(self, payload):
+            if payload == {"products": ["has-price"]}:
+                return Decimal("9.99")
+            return None
+
+        def _extract_offer_snapshot(self, _payload):
+            return {}
+
+        def _extract_catalog_price_amount(self, _payload):
+            return None
+
+    snapshot = _fetch_product_data(FakeClient(), "B0TEST1234")
+
+    assert snapshot["price"] == 9.99
+    assert any(err.startswith("offers:") for err in snapshot["fetch_errors"])
+
+
+def test_flag_sentinel_prices_marks_repeated_placeholder():
+    snapshots = [
+        {"asin": "B0A", "price": 6954.0},
+        {"asin": "B0B", "price": 6954.0},
+        {"asin": "B0C", "price": 6954.0},
+        {"asin": "B0D", "price": 19.99},
+        {"asin": "B0E", "price": None},
+    ]
+
+    _flag_sentinel_prices(snapshots)
+
+    assert snapshots[0]["price_unreliable"] is True
+    assert snapshots[1]["price_unreliable"] is True
+    assert snapshots[2]["price_unreliable"] is True
+    assert "price_unreliable" not in snapshots[3]
+    assert "price_unreliable" not in snapshots[4]
+
+
+def test_flag_sentinel_prices_clears_stale_flag():
+    snapshots = [
+        {"asin": "B0A", "price": 12.5, "price_unreliable": True},
+        {"asin": "B0B", "price": 30.0},
+    ]
+
+    _flag_sentinel_prices(snapshots)
+
+    assert "price_unreliable" not in snapshots[0]

@@ -12,7 +12,7 @@ def _insight_strip(ctx, deck, slide, block_id: str, fallback: str, y: float = 6.
     text = insight.get("insight") or fallback
     rec = insight.get("recommendation")
     deck.rect(slide, DeckTheme.MARGIN, y, DeckTheme.content_w(), 0.5, DeckTheme.SURFACE,
-              line=DeckTheme.HAIRLINE, radius=True)
+              line=DeckTheme.HAIRLINE)
     line = text if not rec else f"{text}   ·   {ctx.t('recommendation')}: {rec}"
     deck.text(slide, DeckTheme.MARGIN + 0.18, y + 0.13, DeckTheme.content_w() - 0.36, 0.3,
               fmt.truncate(line, 200), size=10, color=DeckTheme.SUBTLE_INK)
@@ -35,9 +35,9 @@ class RevenueYoYBlock(BaseBlock):
         png = charts.waterfall("2024", rev24, "2025", rev25,
                                value_fmt=lambda v: fmt.currency(v))
         deck.picture(slide, png, DeckTheme.MARGIN, 1.85, 7.4, 3.6)
-        deck.kpi(slide, 8.6, 2.1, 3.4, 1.0, ctx.t("kpi_yoy"),
+        deck.kpi(slide, 9.57, 2.0, 3.4, 1.45, ctx.t("kpi_yoy"),
                  fmt.percent_signed(ctx.m("yoy_percent")), chip=ctx.quality("yoy_percent"))
-        deck.kpi(slide, 8.6, 3.3, 3.4, 1.0, ctx.t("kpi_revenue_2025"),
+        deck.kpi(slide, 9.57, 3.65, 3.4, 1.45, ctx.t("kpi_revenue_2025"),
                  fmt.currency(rev25), chip=ctx.quality("total_revenue_2025"))
         fallback = (f"Revenue moved {fmt.currency(rev24)} → {fmt.currency(rev25)} "
                     f"({fmt.percent_signed(ctx.m('yoy_percent'))}).")
@@ -63,19 +63,23 @@ class CatalogHealthBlock(BaseBlock):
             (ctx.t("kpi_inactive_2025"), fmt.integer(ctx.m("inactive_asins_2025"))),
             (ctx.t("kpi_new_yoy"), fmt.integer(ctx.m("new_asins_yoy"))),
         ]
+        kpis = [k for k in kpis if k[1] != fmt.EMPTY]
+        if not kpis:
+            kpis = []
         gap = 0.24
-        card_w = (DeckTheme.content_w() - gap * 3) / 4
+        card_w = min((DeckTheme.content_w() - gap * (max(len(kpis), 1) - 1)) / max(len(kpis), 1), 4.2)
         for idx, (label, value) in enumerate(kpis):
-            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.9, card_w, 1.0, label, value)
+            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.6, card_w, 1.45,
+                     label, value, fill=DeckTheme.kpi_fill(idx))
 
         completeness = ctx.metrics.get("data_completeness") or {}
         missing = completeness.get("missing_optional_fields_2025") or []
         limitations = (ctx.metrics.get("limitations") or {}).get("items") or []
         none_bullet = ctx.t("value_none")
-        deck.callout(slide, DeckTheme.MARGIN, 3.25, 5.9, 3.0, ctx.t("missing_optional_fields_2025"),
-                     [str(item) for item in missing[:6]] or [none_bullet])
-        deck.callout(slide, DeckTheme.MARGIN + 6.2, 3.25, 5.9, 3.0, ctx.t("source_limitations"),
-                     [str(item.get("area")) for item in limitations[:6]] or [none_bullet],
+        deck.callout(slide, DeckTheme.MARGIN, 3.35, 6.15, 3.0, ctx.t("missing_optional_fields_2025"),
+                     [str(item).replace("_", " ") for item in missing[:6]] or [none_bullet])
+        deck.callout(slide, DeckTheme.MARGIN + 6.45, 3.35, 6.15, 3.0, ctx.t("source_limitations"),
+                     [str(item.get("area")).replace("_", " ") for item in limitations[:6]] or [none_bullet],
                      accent=DeckTheme.MUTED)
         return BlockResult(rendered=True)
 
@@ -103,11 +107,11 @@ class ActiveInactiveBlock(BaseBlock):
             center=fmt.share(ctx.m("percentage_inactive_asins")),
         )
         deck.picture(slide, png, DeckTheme.MARGIN, 1.9, 4.0, 3.6)
-        deck.kpi(slide, 5.4, 2.1, 3.2, 1.0, ctx.t("kpi_active"), fmt.integer(active),
+        deck.kpi(slide, 6.17, 2.0, 3.3, 1.45, ctx.t("kpi_active"), fmt.integer(active),
                  accent=DeckTheme.POSITIVE)
-        deck.kpi(slide, 8.8, 2.1, 3.2, 1.0, ctx.t("kpi_inactive"), fmt.integer(inactive),
+        deck.kpi(slide, 9.67, 2.0, 3.3, 1.45, ctx.t("kpi_inactive"), fmt.integer(inactive),
                  accent=DeckTheme.NEGATIVE)
-        deck.kpi(slide, 5.4, 3.3, 6.6, 1.0, ctx.t("kpi_pct_inactive"),
+        deck.kpi(slide, 6.17, 3.65, 6.8, 1.45, ctx.t("kpi_pct_inactive"),
                  fmt.share(ctx.m("percentage_inactive_asins")))
         fallback = (f"{fmt.integer(inactive)} of {fmt.integer(total)} ASINs are inactive "
                     f"({fmt.share(ctx.m('percentage_inactive_asins'))}) — {ctx.t('latent_value')}.")

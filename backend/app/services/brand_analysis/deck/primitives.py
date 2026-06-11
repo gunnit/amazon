@@ -12,6 +12,7 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 from app.services.brand_analysis.deck.theme import RGB, DeckTheme
@@ -34,28 +35,48 @@ class DeckBuilder:
     def blank_slide(self):
         return self.prs.slides.add_slide(self.prs.slide_layouts[6])
 
+    def footer_strip(self, slide) -> None:
+        """Seven-segment colour strip along the bottom edge (reference chrome)."""
+        x = 0.0
+        for color, frac in DeckTheme.FOOTER_STRIP:
+            w = DeckTheme.SLIDE_W * frac
+            self.rect(slide, x, DeckTheme.SLIDE_H - DeckTheme.STRIP_H, w, DeckTheme.STRIP_H, color)
+            x += w
+
     def chrome(self, slide, page: int) -> None:
-        """Top hairline brand band + page number. Replaces the rainbow footer."""
-        self.rect(slide, 0, 0, DeckTheme.SLIDE_W, DeckTheme.HEADER_H, DeckTheme.BRAND_PRIMARY)
-        self.text(slide, DeckTheme.MARGIN, 0.11, 4.0, 0.24, self.brand,
-                  size=9, bold=True, color=DeckTheme.WHITE)
-        self.text(slide, DeckTheme.SLIDE_W - 1.1, 0.11, 0.4, 0.24, str(page),
-                  size=9, bold=True, color=DeckTheme.WHITE, align="right")
-        self.rect(slide, 0, DeckTheme.FOOTER_Y + 0.18, DeckTheme.SLIDE_W, 0.012, DeckTheme.HAIRLINE)
+        """Reference chrome: red bar + brand eyebrow top-left, page number
+        bottom-right, colour strip along the bottom edge."""
+        self.rect(slide, DeckTheme.MARGIN, 0, 3.47, 0.15, DeckTheme.BRAND_PRIMARY)
+        self.text(slide, DeckTheme.MARGIN, 0.21, 5.0, 0.27, self.brand.upper(),
+                  size=DeckTheme.TYPE["eyebrow"], bold=True, color=DeckTheme.INK)
+        self.text(slide, DeckTheme.SLIDE_W - 1.0, DeckTheme.SLIDE_H - 0.44, 0.65, 0.25,
+                  str(page), size=10, color=DeckTheme.MUTED, align="right")
+        self.footer_strip(slide)
 
     def heading(self, slide, title: str, subtitle: str = "") -> None:
-        self.text(slide, DeckTheme.MARGIN, 0.74, DeckTheme.content_w(), 0.46, title,
-                  size=DeckTheme.TYPE["h2"], bold=True, color=DeckTheme.INK)
+        self.text(slide, DeckTheme.MARGIN, 0.50, DeckTheme.content_w(), 0.62, title,
+                  size=DeckTheme.TYPE["h1"], bold=True, color=DeckTheme.INK)
         if subtitle:
-            self.text(slide, DeckTheme.MARGIN, 1.22, DeckTheme.content_w(), 0.26, subtitle,
-                      size=10, color=DeckTheme.MUTED)
-        self.rect(slide, DeckTheme.MARGIN, 1.56, 0.62, 0.045, DeckTheme.BRAND_PRIMARY)
+            self.text(slide, DeckTheme.MARGIN, 1.16, DeckTheme.content_w(), 0.28, subtitle,
+                      size=DeckTheme.TYPE["subtitle"], color=DeckTheme.SUBTLE_INK)
 
     # Drawing primitives ------------------------------------------------------
+    @staticmethod
+    def _flat(shape):
+        """Kill theme-inherited effects. The empty <a:effectLst/> from
+        ``shadow.inherit = False`` is not enough: the shape's <p:style> carries
+        an effectRef that LibreOffice still renders as a drop shadow."""
+        shape.shadow.inherit = False
+        sp = shape._element
+        style = sp.find(qn("p:style"))
+        if style is not None:
+            sp.remove(style)
+        return shape
+
     def rect(self, slide, x, y, w, h, fill: RGB, *, line: Optional[RGB] = None, radius: bool = False):
         shape_type = MSO_SHAPE.ROUNDED_RECTANGLE if radius else MSO_SHAPE.RECTANGLE
         shape = slide.shapes.add_shape(shape_type, Inches(x), Inches(y), Inches(w), Inches(h))
-        shape.shadow.inherit = False
+        self._flat(shape)
         shape.fill.solid()
         shape.fill.fore_color.rgb = RGBColor(*fill)
         if line is None:
@@ -63,6 +84,14 @@ class DeckBuilder:
         else:
             shape.line.color.rgb = RGBColor(*line)
             shape.line.width = Pt(0.75)
+        return shape
+
+    def oval(self, slide, x, y, w, h, fill: RGB):
+        shape = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(x), Inches(y), Inches(w), Inches(h))
+        self._flat(shape)
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = RGBColor(*fill)
+        shape.line.fill.background()
         return shape
 
     def text(self, slide, x, y, w, h, value, *, size, bold=False,
@@ -102,33 +131,45 @@ class DeckBuilder:
         return box
 
     def kpi(self, slide, x, y, w, h, label: str, value: str, *,
-            accent: Optional[RGB] = None, chip: str = "") -> None:
-        self.rect(slide, x, y, w, h, DeckTheme.CARD, line=DeckTheme.HAIRLINE, radius=True)
-        self.rect(slide, x, y, 0.06, h, accent or DeckTheme.BRAND_PRIMARY)
+            accent: Optional[RGB] = None, fill: Optional[RGB] = None,
+            chip: str = "") -> None:
+        """Reference-style KPI tile: solid colour block, big centred value,
+        small centred label below. ``accent``/``fill`` set the block colour;
+        light fills get ink text, saturated fills get white."""
+        block_fill = fill or accent or DeckTheme.SURFACE
+        is_light = sum(block_fill) > 540
+        text_color = DeckTheme.INK if is_light else DeckTheme.WHITE
+        label_color = DeckTheme.SUBTLE_INK if is_light else DeckTheme.WHITE
+        line = DeckTheme.HAIRLINE if is_light else None
+        self.rect(slide, x, y, w, h, block_fill, line=line)
+        value_size = DeckTheme.TYPE["kpi_value"] if h >= 1.35 else DeckTheme.TYPE["kpi_value_small"]
         label_text = f"{label}  ·  {chip}" if chip else label
-        self.text(slide, x + 0.18, y + 0.12, w - 0.3, 0.2, label_text,
-                  size=DeckTheme.TYPE["kpi_label"], bold=True, color=DeckTheme.MUTED)
-        self.text(slide, x + 0.18, y + 0.36, w - 0.3, h - 0.42, value,
-                  size=DeckTheme.TYPE["kpi_value"], bold=True, color=DeckTheme.INK)
+        value_h = h * 0.62
+        self.text(slide, x + 0.1, y + 0.06, w - 0.2, value_h, value,
+                  size=value_size, bold=True, color=text_color,
+                  align="center", anchor="middle")
+        self.text(slide, x + 0.1, y + value_h + 0.1, w - 0.2, h - value_h - 0.16,
+                  label_text, size=DeckTheme.TYPE["kpi_label"], color=label_color,
+                  align="center")
 
     def callout(self, slide, x, y, w, h, title: str, body, *,
                 accent: Optional[RGB] = None) -> None:
         """A titled body card. ``body`` may be a string or a list of bullets."""
-        self.rect(slide, x, y, w, h, DeckTheme.SURFACE, line=DeckTheme.HAIRLINE, radius=True)
-        self.rect(slide, x, y, w, 0.05, accent or DeckTheme.BRAND_PRIMARY)
-        self.text(slide, x + 0.2, y + 0.14, w - 0.4, 0.26, title,
-                  size=DeckTheme.TYPE["body"], bold=True, color=DeckTheme.INK)
+        self.rect(slide, x, y + 0.07, w, h - 0.07, DeckTheme.SURFACE, line=DeckTheme.HAIRLINE)
+        self.rect(slide, x, y, w, 0.07, accent or DeckTheme.BRAND_PRIMARY)
+        self.text(slide, x + 0.25, y + 0.22, w - 0.5, 0.3, title,
+                  size=DeckTheme.TYPE["body"] + 1, bold=True, color=DeckTheme.INK)
         if isinstance(body, (list, tuple)):
-            self.bullets(slide, x + 0.2, y + 0.48, w - 0.4, h - 0.6,
+            self.bullets(slide, x + 0.25, y + 0.62, w - 0.5, h - 0.76,
                          [b for b in body if str(b).strip()], size=DeckTheme.TYPE["bullet"])
         elif body:
-            self.text(slide, x + 0.2, y + 0.48, w - 0.4, h - 0.6, body,
+            self.text(slide, x + 0.25, y + 0.62, w - 0.5, h - 0.76, body,
                       size=DeckTheme.TYPE["bullet"], color=DeckTheme.SUBTLE_INK)
 
     def table(self, slide, x, y, headers, rows, widths, *,
               accent_columns=None, max_rows: int = 12) -> None:
         rows = rows[:max_rows]
-        row_h = 0.34
+        row_h = 0.38
         total_w = sum(widths)
         table_shape = slide.shapes.add_table(
             len(rows) + 1, len(headers), Inches(x), Inches(y),
@@ -143,7 +184,7 @@ class DeckBuilder:
             cell = table.cell(0, col)
             cell.text = str(header)
             cell.fill.solid()
-            cell.fill.fore_color.rgb = RGBColor(*DeckTheme.INK)
+            cell.fill.fore_color.rgb = RGBColor(*DeckTheme.TABLE_HEADER)
             self._cell_font(cell, bold=True, size=DeckTheme.TYPE["table_header"],
                             color=DeckTheme.WHITE)
         for r, row in enumerate(rows, start=1):
@@ -156,7 +197,8 @@ class DeckBuilder:
                 color = None
                 if accent_columns and c in accent_columns:
                     color = _signed_color(value)
-                self._cell_font(cell, size=DeckTheme.TYPE["table_cell"], color=color)
+                self._cell_font(cell, size=DeckTheme.TYPE["table_cell"],
+                                bold=(c == 0), color=color)
 
     def picture(self, slide, png: bytes, x, y, w, h) -> None:
         slide.shapes.add_picture(io.BytesIO(png), Inches(x), Inches(y), Inches(w), Inches(h))

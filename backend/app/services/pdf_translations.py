@@ -60,6 +60,7 @@ PDF_TRANSLATIONS: dict[str, dict[str, str]] = {
         "comp_your_product": "YOUR PRODUCT",
         "comp_competitors_analyzed": "competitors analyzed",
         "comp_reference_product": "Reference Product",
+        "comp_no_data_note": "Not shown (no data available for this report):",
 
         # AI Analysis
         "ai_title": "AI-Powered Analysis",
@@ -134,6 +135,7 @@ PDF_TRANSLATIONS: dict[str, dict[str, str]] = {
         "comp_your_product": "IL TUO PRODOTTO",
         "comp_competitors_analyzed": "competitor analizzati",
         "comp_reference_product": "Prodotto di Riferimento",
+        "comp_no_data_note": "Non mostrato (dati non disponibili per questo report):",
 
         # AI Analysis
         "ai_title": "Analisi Basata su AI",

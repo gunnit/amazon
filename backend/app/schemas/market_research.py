@@ -31,6 +31,9 @@ class ProductSnapshot(BaseModel):
     review_count: Optional[int] = None
     rating: Optional[float] = None
     fetch_errors: Optional[List[str]] = None
+    # True when the price is a repeated placeholder/sentinel detected at
+    # persist time; the UI must not present it as a real market price.
+    price_unreliable: Optional[bool] = None
 
 
 class CompetitorSnapshot(ProductSnapshot):
@@ -71,6 +74,9 @@ class MarketResearchResponse(BaseModel):
     product_snapshot: Optional[ProductSnapshot] = None
     competitor_data: Optional[List[CompetitorSnapshot]] = None
     ai_analysis: Optional[AIAnalysis] = None
+    # "ok" | "unavailable" (AI call failed) | "unconfigured" (no API key);
+    # None while the report is not completed.
+    ai_status: Optional[Literal["ok", "unavailable", "unconfigured"]] = None
     created_at: str
     completed_at: Optional[str] = None
     last_refreshed_at: Optional[str] = None

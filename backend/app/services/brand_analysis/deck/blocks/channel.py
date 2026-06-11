@@ -24,29 +24,33 @@ class OperationalGapBlock(BaseBlock):
         deck.chrome(slide, page)
         deck.heading(slide, ctx.t("operational_gap_title"), ctx.t("operational_gap_subtitle"))
         decline = ctx.m("subcategory_with_largest_decline") or {}
-        decline_label = (f"{decline.get('subcategory', '—')} "
-                         f"{fmt.percent_signed(decline.get('yoy_percent'))}").strip() if decline else fmt.EMPTY
+        decline_label = (f"{decline.get('subcategory')} "
+                         f"{fmt.percent_signed(decline.get('yoy_percent'))}").strip() \
+            if decline.get("subcategory") else fmt.EMPTY
         kpis = [
             (ctx.t("kpi_pct_inactive_asins"), fmt.share(ctx.m("percentage_inactive_asins"))),
             (ctx.t("kpi_pct_declining_asins"), fmt.share(ctx.m("percentage_declining_asins_among_active"))),
             (ctx.t("kpi_asins_multi_seller"), fmt.integer(ctx.m("asins_with_more_than_1_seller"))),
             (ctx.t("kpi_largest_subcat_decline"), decline_label),
         ]
+        kpis = [k for k in kpis if k[1] != fmt.EMPTY]
         gap = 0.24
-        card_w = (DeckTheme.content_w() - gap * 3) / 4
+        card_w = min((DeckTheme.content_w() - gap * (max(len(kpis), 1) - 1)) / max(len(kpis), 1), 4.2)
         for idx, (label, value) in enumerate(kpis):
-            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.9, card_w, 1.1, label, value)
+            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.6, card_w, 1.45,
+                     label, value, fill=DeckTheme.kpi_fill(idx))
 
-        deck.text(slide, DeckTheme.MARGIN, 3.4, DeckTheme.content_w(), 0.3,
+        deck.text(slide, DeckTheme.MARGIN, 3.3, DeckTheme.content_w(), 0.3,
                   ctx.t("revenue_concentration"), size=13, bold=True, color=DeckTheme.BRAND_PRIMARY)
-        conc = [
+        conc_all = [
             (ctx.t("kpi_top_5_asins"), fmt.share(ctx.m("top_5_revenue_share"))),
             (ctx.t("kpi_top_10_asins"), fmt.share(ctx.m("top_10_revenue_share"))),
             (ctx.t("kpi_avg_rev_per_active_asin"), fmt.currency(ctx.m("average_revenue_per_active_asin"))),
         ]
+        conc = [k for k in conc_all if k[1] != fmt.EMPTY]
         conc_w = (DeckTheme.content_w() - gap * 2) / 3
         for idx, (label, value) in enumerate(conc):
-            deck.kpi(slide, DeckTheme.MARGIN + idx * (conc_w + gap), 3.8, conc_w, 1.0, label, value)
+            deck.kpi(slide, DeckTheme.MARGIN + idx * (conc_w + gap), 3.7, conc_w, 1.45, label, value)
         return BlockResult(rendered=True)
 
 
@@ -74,10 +78,12 @@ class ChannelGapBlock(BaseBlock):
             (ctx.t("kpi_avg_offers"), fmt.number(summary.get("average_offer_count"), 1)),
             (ctx.t("kpi_missing_buy_box"), fmt.integer(summary.get("asins_missing_buy_box_owner"))),
         ]
+        kpis = [k for k in kpis if k[1] != fmt.EMPTY]
         gap = 0.28
-        card_w = (DeckTheme.content_w() - gap * 2) / 3
+        card_w = min((DeckTheme.content_w() - gap * (max(len(kpis), 1) - 1)) / max(len(kpis), 1), 4.2)
         for idx, (label, value) in enumerate(kpis):
-            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.9, card_w, 1.0, label, value)
+            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.6, card_w, 1.45,
+                     label, value, fill=DeckTheme.kpi_fill(idx))
 
         rows = [
             [fmt.truncate(item.get("reseller"), 38), fmt.integer(item.get("asin_count")),
@@ -94,7 +100,7 @@ class ChannelGapBlock(BaseBlock):
             deck.table(slide, DeckTheme.MARGIN, 3.3,
                        [ctx.t("table_reseller_buy_box"), ctx.t("table_asins"),
                         ctx.t("table_revenue"), ctx.t("table_pct_impact")],
-                       rows, [5.2, 1.6, 2.4, 1.6])
+                       rows, [6.21, 1.8, 2.8, 1.8])
         return BlockResult(rendered=True)
 
 
@@ -115,10 +121,12 @@ class ConcentrationRiskBlock(BaseBlock):
             (ctx.t("kpi_top_10_revenue_share"), fmt.share(ctx.m("top_10_revenue_share"))),
             (ctx.t("kpi_avg_rev_per_active_asin"), fmt.currency(ctx.m("average_revenue_per_active_asin"))),
         ]
+        kpis = [k for k in kpis if k[1] != fmt.EMPTY]
         gap = 0.28
-        card_w = (DeckTheme.content_w() - gap * 2) / 3
+        card_w = min((DeckTheme.content_w() - gap * (max(len(kpis), 1) - 1)) / max(len(kpis), 1), 4.2)
         for idx, (label, value) in enumerate(kpis):
-            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.9, card_w, 1.0, label, value)
+            deck.kpi(slide, DeckTheme.MARGIN + idx * (card_w + gap), 1.6, card_w, 1.45,
+                     label, value, fill=DeckTheme.kpi_fill(idx))
 
         rows = [
             [fmt.truncate(item.get("product_name") or item.get("asin"), 46),
@@ -127,5 +135,5 @@ class ConcentrationRiskBlock(BaseBlock):
         ]
         deck.table(slide, DeckTheme.MARGIN, 3.3,
                    [ctx.t("table_product"), ctx.t("table_revenue"), ctx.t("table_yoy")],
-                   rows, [6.6, 2.4, 1.8], accent_columns=[2])
+                   rows, [8.01, 2.8, 1.8], accent_columns=[2])
         return BlockResult(rendered=True)

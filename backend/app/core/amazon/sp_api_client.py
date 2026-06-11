@@ -1463,6 +1463,17 @@ class SPAPIClient:
             if price_context:
                 add_candidate(node)
 
+        if isinstance(payload, dict):
+            attributes = payload.get("attributes")
+            if isinstance(attributes, dict):
+                # Prefer the explicit list price (MSRP) over whatever other
+                # price-shaped attribute the generic walk happens to hit
+                # first — attribute order in the payload is not meaningful.
+                for key in ("list_price", "listPrice"):
+                    walk(attributes.get(key), price_context=True)
+                    if candidates:
+                        return candidates[0]
+
         walk(payload)
         return candidates[0] if candidates else None
 

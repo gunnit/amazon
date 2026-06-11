@@ -2,7 +2,7 @@
 from datetime import datetime
 import logging
 import time
-from typing import List, Optional
+from typing import List
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select as sa_select
@@ -21,7 +21,13 @@ from app.schemas.market_research import (
     AIAnalysis,
     AIRecommendation,
 )
-from app.services.market_research_service import MarketResearchService, process_report_background
+from app.services.market_research_service import (
+    MarketResearchService,
+    process_report_background,
+    _backfill_missing_prices,
+    _detect_sentinel_prices,
+    _flag_sentinel_prices,
+)
 from app.config import settings
 from workers.tasks.market_research import process_market_research
 
@@ -42,6 +48,17 @@ def _report_to_response(report) -> MarketResearchResponse:
     competitor_data = None
     if report.competitor_data:
         competitor_data = [CompetitorSnapshot(**c) for c in report.competitor_data]
+
+    # Distinguish "AI narrative is off because no key is configured" from
+    # "the AI call failed for this report" so the UI can be honest about it.
+    ai_status = None
+    if report.status == "completed":
+        if report.ai_analysis:
+            ai_status = "ok"
+        elif settings.ANTHROPIC_API_KEY:
+            ai_status = "unavailable"
+        else:
+            ai_status = "unconfigured"
 
     ai_analysis = None
     if report.ai_analysis:
@@ -71,6 +88,7 @@ def _report_to_response(report) -> MarketResearchResponse:
         product_snapshot=product_snapshot,
         competitor_data=competitor_data,
         ai_analysis=ai_analysis,
+        ai_status=ai_status,
         created_at=report.created_at.isoformat() if report.created_at else "",
         completed_at=report.completed_at.isoformat() if report.completed_at else None,
         last_refreshed_at=(
@@ -281,6 +299,16 @@ async def refresh_report(
         if index < total_competitors - 1:
             time.sleep(1.0)
 
+    # Re-run the batched price backfill and sentinel detection over the
+    # refreshed dataset: a placeholder price that appears for the first time
+    # during a refresh must be flagged exactly like at generation time.
+    product_snapshot = dict(report.product_snapshot or {})
+    all_snapshots = ([product_snapshot] if product_snapshot else []) + refreshed_competitors
+    _backfill_missing_prices(client, all_snapshots)
+    _flag_sentinel_prices(all_snapshots)
+    if product_snapshot:
+        report.product_snapshot = product_snapshot
+
     report.competitor_data = refreshed_competitors
     report.last_refreshed_at = datetime.utcnow()
     await db.commit()
@@ -475,6 +503,20 @@ async def market_search(
             detail=f"Search failed: {str(e)[:200]}",
         )
 
+    # Null out repeated placeholder prices server-side so every client gets
+    # honest data, not just the web UI (which re-applies the same guard).
+    sentinel_values = _detect_sentinel_prices(
+        [float(r["price"]) for r in results if r.get("price") is not None]
+    )
+    for r in results:
+        price = r.get("price")
+        if price is not None and (float(price) <= 0 or float(price) in sentinel_values):
+            r["price"] = None
+            missing = list(r.get("missing_data") or [])
+            if "price" not in missing:
+                missing.append("price")
+            r["missing_data"] = missing
+
     search_results = [
         MarketSearchResult(
             asin=r.get("asin", ""),
@@ -496,32 +538,3 @@ async def market_search(
         query=data.query,
         search_type=data.search_type,
     )
-
-
-@router.get("/competitors/suggest")
-async def suggest_competitors(
-    current_user: CurrentUser,
-    organization: CurrentOrganization,
-    db: DbSession,
-    category: Optional[str] = None,
-    marketplace: Optional[str] = None,
-):
-    """Suggest competitors from the tracked competitors table."""
-    service = MarketResearchService(db)
-    competitors = await service.suggest_competitors(
-        organization.id, category, marketplace,
-    )
-
-    return [
-        {
-            "asin": c.asin,
-            "title": c.title,
-            "brand": c.brand,
-            "marketplace": c.marketplace,
-            "current_price": float(c.current_price) if c.current_price else None,
-            "current_bsr": c.current_bsr,
-            "review_count": c.review_count,
-            "rating": float(c.rating) if c.rating else None,
-        }
-        for c in competitors
-    ]

@@ -16,15 +16,15 @@ class PriorityActionsBlock(BaseBlock):
         slide = deck.blank_slide()
         deck.chrome(slide, page)
         deck.heading(slide, ctx.t("projection_actions_title"),
-                     ctx.t("operational_gap_subtitle"))
+                     ctx.t("projection_actions_subtitle"))
         actions = ctx.priority_actions()[:6]
         y = 1.95
         row_h = 0.78
         for idx, action in enumerate(actions):
             accent = DeckTheme.accent(idx)
             deck.rect(slide, DeckTheme.MARGIN, y, DeckTheme.content_w(), 0.66,
-                      DeckTheme.SURFACE, line=DeckTheme.HAIRLINE, radius=True)
-            deck.rect(slide, DeckTheme.MARGIN, y, 0.5, 0.66, accent, radius=True)
+                      DeckTheme.SURFACE, line=DeckTheme.HAIRLINE)
+            deck.rect(slide, DeckTheme.MARGIN, y, 0.5, 0.66, accent)
             deck.text(slide, DeckTheme.MARGIN, y + 0.18, 0.5, 0.3, str(idx + 1),
                       size=14, bold=True, color=DeckTheme.WHITE, align="center")
             deck.text(slide, DeckTheme.MARGIN + 0.7, y + 0.17, DeckTheme.content_w() - 0.9, 0.34,
@@ -50,7 +50,7 @@ class RoadmapBlock(BaseBlock):
         y = 2.0
         for idx, phase in enumerate(roadmap):
             accent = DeckTheme.accent(idx)
-            deck.rect(slide, DeckTheme.MARGIN, y, 0.72, 0.72, accent, radius=True)
+            deck.oval(slide, DeckTheme.MARGIN, y, 0.72, 0.72, accent)
             deck.text(slide, DeckTheme.MARGIN, y + 0.22, 0.72, 0.3,
                       phase.get("phase", f"{idx + 1:02d}"), size=14, bold=True,
                       color=DeckTheme.WHITE, align="center")
@@ -70,8 +70,8 @@ class ConclusionsBlock(BaseBlock):
     _GROUPS = (
         ("conclusions_current_situation", "current_situation", DeckTheme.BRAND_PRIMARY),
         ("conclusions_strengths", "strengths", DeckTheme.POSITIVE),
-        ("conclusions_plan", "plan", DeckTheme.NAVY),
-        ("conclusions_urgency", "urgency", (234, 88, 12)),
+        ("conclusions_plan", "plan", DeckTheme.STEEL_BLUE),
+        ("conclusions_urgency", "urgency", DeckTheme.ORANGE),
     )
 
     def _conclusions(self, ctx) -> dict:
@@ -93,7 +93,8 @@ class ConclusionsBlock(BaseBlock):
             (DeckTheme.MARGIN, 1.9 + row_h + 0.2), (DeckTheme.MARGIN + col_w + 0.3, 1.9 + row_h + 0.2),
         ]
         for (title_key, data_key, accent), (x, y) in zip(self._GROUPS, positions):
-            bullets = [b for b in (conclusions.get(data_key) or []) if str(b).strip()][:4]
+            bullets = [b for b in (conclusions.get(data_key) or [])
+                       if str(b).strip() and not str(b).strip().endswith(("N/A", ": —"))][:4]
             if not bullets:
                 continue
             deck.callout(slide, x, y, col_w, row_h, ctx.t(title_key), bullets, accent=accent)

@@ -822,6 +822,8 @@ export interface ProductSnapshot {
   bsr: number | null
   review_count: number | null
   rating: number | null
+  fetch_errors?: string[] | null
+  price_unreliable?: boolean | null
 }
 
 export interface CompetitorSnapshot extends ProductSnapshot {}
@@ -856,6 +858,7 @@ export interface MarketResearchReport {
   product_snapshot: ProductSnapshot | null
   competitor_data: CompetitorSnapshot[] | null
   ai_analysis: AIAnalysis | null
+  ai_status: 'ok' | 'unavailable' | 'unconfigured' | null
   created_at: string
   completed_at: string | null
 }
@@ -910,17 +913,6 @@ export interface MarketSearchResponse {
   search_type: string
   error?: string
   error_code?: string
-}
-
-export interface CompetitorSuggestion {
-  asin: string
-  title: string | null
-  brand: string | null
-  marketplace: string
-  current_price: number | null
-  current_bsr: number | null
-  review_count: number | null
-  rating: number | null
 }
 
 // Brand Analysis Automation types
