@@ -112,6 +112,12 @@ class DataExtractionService:
         # Populated by sync_vendor_sales_data when the PO fallback path is used.
         # sync_account reads it to add a non-fatal warning to the account.
         self.vendor_sales_used_po_fallback: bool = False
+        # Populated by the backfill methods: windows in the requested range that
+        # had to be skipped (throttled past retries, failed report, no data).
+        # The runner uses it to mark a backfill as partial instead of success.
+        self.backfill_windows_skipped: int = 0
+        # Reset per sync_vendor_sales_data call; counts months left untouched.
+        self.vendor_sales_months_skipped: int = 0
 
     async def _load_organization(self, account: AmazonAccount):
         """Load the organization for an account."""
@@ -712,6 +718,7 @@ class DataExtractionService:
         # Reset the fallback flag on every run so a successful report sync clears
         # the previous warning state.
         self.vendor_sales_used_po_fallback = False
+        self.vendor_sales_months_skipped = 0
 
         # Accumulate daily totals for DAILY_TOTAL_ASIN sentinel records.
         # Keys are dates; values are dicts with running totals.
@@ -771,6 +778,7 @@ class DataExtractionService:
                     "Vendor sales report unavailable for %s %s..%s, leaving existing rows untouched: %s",
                     account.account_name, month_start, month_end, exc,
                 )
+                self.vendor_sales_months_skipped += 1
                 continue
 
             sales_by_asin = report.get("salesByAsin", []) or []
@@ -781,6 +789,7 @@ class DataExtractionService:
                     "Vendor sales report returned no salesByAsin for %s %s..%s, leaving existing rows untouched",
                     account.account_name, month_start, month_end,
                 )
+                self.vendor_sales_months_skipped += 1
                 continue
 
             # Also fetch the SOURCING view for shipped (sell-through) metrics,
@@ -1089,6 +1098,7 @@ class DataExtractionService:
         untouched."""
         months = _settled_month_windows(start_date, end_date)
         total = 0
+        self.backfill_windows_skipped = 0
         for index, (month_start, month_end) in enumerate(months):
             if index > 0:
                 # Pause between months so a long historical backfill does not
@@ -1098,6 +1108,7 @@ class DataExtractionService:
                 account, organization, month_start, month_end
             )
             await self.db.commit()
+            self.backfill_windows_skipped += self.vendor_sales_months_skipped
             total += count
             logger.info(
                 "Backfilled vendor sales for %s %s..%s: %d records",
@@ -1123,6 +1134,7 @@ class DataExtractionService:
         backfill. The default daily sync window is left untouched."""
         windows = _month_windows(start_date, end_date)
         total = 0
+        self.backfill_windows_skipped = 0
         for index, (window_start, window_end) in enumerate(windows):
             if index > 0:
                 # Pause between windows so a long backfill does not hammer the
@@ -1164,6 +1176,7 @@ class DataExtractionService:
                         attempt,
                         exc,
                     )
+                    self.backfill_windows_skipped += 1
                     break
                 else:
                     await self.db.commit()

@@ -1,5 +1,5 @@
 """Amazon account schemas."""
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional, List
 from uuid import UUID
 from pydantic import BaseModel, Field
@@ -129,6 +129,14 @@ class AccountStatusResponse(BaseModel):
     last_sync_heartbeat_at: Optional[datetime] = None
     sync_error_code: Optional[str] = None
     sync_error_kind: Optional[str] = None
+    last_backfill_status: Optional[str] = None
+    last_backfill_started_at: Optional[datetime] = None
+    last_backfill_completed_at: Optional[datetime] = None
+    last_backfill_records: Optional[int] = None
+    last_backfill_windows_skipped: Optional[int] = None
+    last_backfill_error: Optional[str] = None
+    last_backfill_range_start: Optional[date] = None
+    last_backfill_range_end: Optional[date] = None
     total_sales_30d: float = 0
     total_units_30d: int = 0
     active_asins: int = 0

@@ -139,6 +139,62 @@ def refresh_recent_seller_sales():
 
 
 @celery_app.task
+def recover_stuck_backfills():
+    """Mark backfills stuck in `running` after a process restart as errored."""
+    from app.services.extraction_runner import run_backfill_recovery_sweep
+
+    return run_backfill_recovery_sweep()
+
+
+@celery_app.task
+def repair_sales_gaps():
+    """Re-pull sales dates missing from the warehouse for seller accounts."""
+    from app.services.extraction_runner import run_sales_gap_repair_all
+
+    return run_sales_gap_repair_all()
+
+
+@celery_app.task
+def refresh_recent_orders():
+    """Hourly incremental Orders API pull for the "today" metrics."""
+    from app.services.extraction_runner import run_recent_orders_sync_all
+
+    return run_recent_orders_sync_all()
+
+
+@celery_app.task
+def sync_asin_economics():
+    """Daily per-ASIN economics pull from the Data Kiosk."""
+    from app.services.extraction_runner import run_asin_economics_sync_all
+
+    return run_asin_economics_sync_all()
+
+
+@celery_app.task
+def snapshot_market_data():
+    """Daily fee-estimate + price/Buy Box snapshots."""
+    from app.services.extraction_runner import run_market_snapshot_all
+
+    return run_market_snapshot_all()
+
+
+@celery_app.task
+def sync_brand_search_terms():
+    """Weekly Brand Analytics search-terms ingestion."""
+    from app.services.extraction_runner import run_brand_search_terms_sync_all
+
+    return run_brand_search_terms_sync_all()
+
+
+@celery_app.task
+def snapshot_listing_quality():
+    """Weekly listing-quality score snapshots."""
+    from app.services.extraction_runner import run_listing_quality_snapshot_all
+
+    return run_listing_quality_snapshot_all()
+
+
+@celery_app.task
 def sync_sales_data(account_id: str, start_date: str = None, end_date: str = None):
     """Sync sales data for an account."""
     from app.services.data_extraction import DataExtractionService

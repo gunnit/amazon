@@ -53,6 +53,7 @@ import { useToast } from '@/components/ui/use-toast'
 import type {
   AmazonAccount,
   DashboardKPIs,
+  TodayMetrics,
   TrendData,
   AccountSummary,
   ComparisonResponse,
@@ -400,6 +401,17 @@ export default function Dashboard() {
     enabled: queriesEnabled,
   })
 
+  // Near-real-time "today so far" (orders warehouse, hourly refresh). Sellers
+  // only — vendors have no consumer orders — so it hides for vendor-only scope.
+  const { data: today } = useQuery<TodayMetrics>({
+    queryKey: ['dashboard-today', effectiveAccountIds],
+    queryFn: () => analyticsApi.getToday({
+      account_ids: effectiveAccountIds.length > 0 ? effectiveAccountIds : undefined,
+    }),
+    enabled: queriesEnabled && hasSeller,
+    refetchInterval: 5 * 60 * 1000,
+  })
+
   const { data: trends, isLoading: trendsLoading } = useQuery<TrendData[]>({
     queryKey: ['dashboard-trends', dateRange, effectiveAccountIds],
     queryFn: () => analyticsApi.getTrends({
@@ -711,6 +723,49 @@ export default function Dashboard() {
             <p className="mt-0.5 text-muted-foreground">{t('dashboard.vendorDataNote')}</p>
           </div>
         </div>
+      )}
+
+      {/* Today so far (near-real-time, orders-based, sellers only) */}
+      {today && (today.orders > 0 || today.yesterday_orders > 0) && (
+        <Card>
+          <CardContent className="flex flex-wrap items-center gap-x-8 gap-y-3 py-4">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              <span className="text-sm font-medium text-foreground">{t('dashboard.todayTitle')}</span>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">{t('dashboard.todayRevenue')}</p>
+              <p className="text-lg font-semibold">{formatCurrency(today.revenue, today.currency || currency)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">{t('dashboard.todayOrders')}</p>
+              <p className="text-lg font-semibold">{formatNumber(today.orders)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">{t('dashboard.todayUnits')}</p>
+              <p className="text-lg font-semibold">{formatNumber(today.units)}</p>
+            </div>
+            {today.yesterday_revenue > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground">{t('dashboard.todayVsYesterday')}</p>
+                <p
+                  className={cn(
+                    'text-lg font-semibold',
+                    today.revenue >= today.yesterday_revenue ? 'text-emerald-600' : 'text-red-600'
+                  )}
+                >
+                  {formatPercent(
+                    ((today.revenue - today.yesterday_revenue) / today.yesterday_revenue) * 100
+                  )}
+                </p>
+              </div>
+            )}
+            <p className="ml-auto text-xs text-muted-foreground">{t('dashboard.todayHint')}</p>
+          </CardContent>
+        </Card>
       )}
 
       {/* KPI Cards */}

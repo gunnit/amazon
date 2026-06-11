@@ -1,8 +1,8 @@
 """Amazon Account model."""
 from __future__ import annotations
 import uuid
-from datetime import datetime
-from sqlalchemy import String, Boolean, ForeignKey, DateTime, Text, Enum
+from datetime import date, datetime
+from sqlalchemy import String, Boolean, ForeignKey, DateTime, Date, Integer, Text, Enum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 import enum
@@ -21,6 +21,19 @@ class SyncStatus(str, enum.Enum):
     PENDING = "pending"
     SYNCING = "syncing"
     SUCCESS = "success"
+    ERROR = "error"
+
+
+class BackfillStatus(str, enum.Enum):
+    """Historical backfill status.
+
+    PARTIAL means the backfill finished but at least one monthly window was
+    skipped (throttled past retries, or Amazon had no report for it), so the
+    stored history may have gaps inside the requested range.
+    """
+    RUNNING = "running"
+    SUCCESS = "success"
+    PARTIAL = "partial"
     ERROR = "error"
 
 
@@ -59,6 +72,17 @@ class AmazonAccount(Base):
     last_sync_heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     sync_error_code: Mapped[str] = mapped_column(String(100), nullable=True)
     sync_error_kind: Mapped[str] = mapped_column(String(20), nullable=True)
+
+    # Historical backfill tracking (separate from the daily sync fields so a
+    # failed backfill never masks a healthy sync, and vice versa)
+    last_backfill_status: Mapped[str] = mapped_column(String(20), nullable=True)
+    last_backfill_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_backfill_completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_backfill_records: Mapped[int] = mapped_column(Integer, nullable=True)
+    last_backfill_windows_skipped: Mapped[int] = mapped_column(Integer, nullable=True)
+    last_backfill_error: Mapped[str] = mapped_column(Text, nullable=True)
+    last_backfill_range_start: Mapped[date] = mapped_column(Date, nullable=True)
+    last_backfill_range_end: Mapped[date] = mapped_column(Date, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

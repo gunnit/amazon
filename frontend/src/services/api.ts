@@ -2,7 +2,7 @@ import axios from 'axios'
 import type {
   User, AuthTokens, Organization,
   AmazonAccount, AccountSummary, AdvertisingProfile, AdvertisingProfilesRequest,
-  DashboardKPIs, TrendData, SalesAggregated, ComparisonResponse,
+  DashboardKPIs, TrendData, SalesAggregated, ComparisonResponse, TodayMetrics,
   AdsVsOrganicResponse, AdvertisingInsights,
   HourlyOrdersData, ProductTrendsResponse, ProductTrendInsightsResponse, ReturnsAnalyticsResponse, TopPerformersResponse,
   PaginatedProductPerformance, PerProductSortKey,
@@ -470,6 +470,13 @@ export const analyticsApi = {
     account_ids?: string[]
   }): Promise<TrendData[]> => {
     const response = await api.get('/analytics/trends', { params })
+    return response.data
+  },
+
+  getToday: async (params: {
+    account_ids?: string[]
+  }): Promise<TodayMetrics> => {
+    const response = await api.get('/analytics/today', { params })
     return response.data
   },
 

@@ -148,3 +148,24 @@ class CatalogChangeLogEntry(BaseModel):
     sp_api_status: CatalogChangeStatus
     sp_api_error: Optional[str] = None
     created_at: datetime
+
+
+class ListingQualityItem(BaseModel):
+    """One product's listing-quality score with its component breakdown."""
+    asin: str
+    sku: Optional[str] = None
+    title: Optional[str] = None
+    score: int
+    components: dict[str, Any]
+    issues: List[str] = Field(default_factory=list)
+
+
+class ListingQualityResponse(BaseModel):
+    """Ranked listing-quality fix list (worst scores first)."""
+    account_id: UUID
+    product_count: int
+    average_score: Optional[float] = None
+    good_count: int = 0   # score >= 80
+    fair_count: int = 0   # 50..79
+    poor_count: int = 0   # < 50
+    products: List[ListingQualityItem]

@@ -21,6 +21,8 @@ from app.schemas.catalog import (
     BulkResult,
     CatalogChangeLogEntry,
     ImportResult,
+    ListingQualityItem,
+    ListingQualityResponse,
     PriceUpdateResult,
 )
 from app.schemas.report import ProductResponse
@@ -509,3 +511,32 @@ async def delete_product_image(
         return await service.delete_image(account_id, asin, key)
     except CatalogOperationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.get("/listing-quality", response_model=ListingQualityResponse)
+async def get_listing_quality(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: UUID = Query(...),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """Listing-quality fix list for one account, worst scores first.
+
+    Scores are computed live from warehouse data (no Amazon API calls);
+    weekly snapshots in listing_quality_snapshots provide the trend."""
+    await _verify_account_in_org(db, organization.id, account_id)
+
+    from app.services.listing_quality_service import ListingQualityService
+
+    scored = await ListingQualityService(db).compute_for_account(account_id)
+    scores = [entry["score"] for entry in scored]
+    return ListingQualityResponse(
+        account_id=account_id,
+        product_count=len(scored),
+        average_score=round(sum(scores) / len(scores), 1) if scores else None,
+        good_count=sum(1 for s in scores if s >= 80),
+        fair_count=sum(1 for s in scores if 50 <= s < 80),
+        poor_count=sum(1 for s in scores if s < 50),
+        products=[ListingQualityItem(**entry) for entry in scored[:limit]],
+    )

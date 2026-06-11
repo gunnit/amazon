@@ -123,6 +123,14 @@ def _account_to_status_response(account: AmazonAccount) -> AccountStatusResponse
         last_sync_heartbeat_at=account.last_sync_heartbeat_at,
         sync_error_code=account.sync_error_code,
         sync_error_kind=account.sync_error_kind,
+        last_backfill_status=account.last_backfill_status,
+        last_backfill_started_at=account.last_backfill_started_at,
+        last_backfill_completed_at=account.last_backfill_completed_at,
+        last_backfill_records=account.last_backfill_records,
+        last_backfill_windows_skipped=account.last_backfill_windows_skipped,
+        last_backfill_error=account.last_backfill_error,
+        last_backfill_range_start=account.last_backfill_range_start,
+        last_backfill_range_end=account.last_backfill_range_end,
     )
 
 
@@ -703,6 +711,45 @@ async def trigger_backfill(
     initial_sync_in_thread(account_id, backfill_months=months)
 
     return _account_to_status_response(account)
+
+
+@router.post("/backfill-all", response_model=List[AccountStatusResponse])
+async def trigger_backfill_all(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    months: int = Query(default=24, ge=1, le=24),
+):
+    """Re-sync + backfill every active connected account in the organization.
+
+    Brings accounts connected before auto-backfill existed up to the maximum
+    Amazon history. Accounts are processed sequentially in the background to
+    respect Reports API quotas; poll /accounts/summary for per-account
+    last_backfill_* status."""
+    result = await db.execute(
+        select(AmazonAccount).where(
+            AmazonAccount.organization_id == organization.id,
+            AmazonAccount.is_active.is_(True),
+        )
+    )
+    accounts = [
+        a for a in result.scalars().all()
+        if a.sp_api_refresh_token_encrypted or a.advertising_refresh_token_encrypted
+    ]
+    if not accounts:
+        return []
+
+    for account in accounts:
+        account.sync_status = SyncStatus.SYNCING
+        account.sync_error_message = None
+        account.sync_error_code = None
+        account.sync_error_kind = None
+    await db.commit()
+
+    from app.services.extraction_runner import initial_sync_accounts_in_thread
+    initial_sync_accounts_in_thread([a.id for a in accounts], backfill_months=months)
+
+    return [_account_to_status_response(a) for a in accounts]
 
 
 @router.get("/{account_id}/status", response_model=AccountStatusResponse)

@@ -403,3 +403,46 @@ class ProductTrendInsightsResponse(BaseModel):
     insights: ProductTrendInsights
     generated_with_ai: bool
     ai_available: bool
+
+
+class TodayMetricsResponse(BaseModel):
+    """Near-real-time "today so far" metrics from the orders warehouse.
+
+    Sourced from the Orders API (minutes of latency), not the Sales & Traffic
+    report (~24h latency). Vendor accounts are excluded — purchase orders are
+    not consumer sales. Yesterday values cover the same time-of-day window for
+    a like-for-like comparison.
+    """
+    as_of: str
+    revenue: float = 0
+    units: int = 0
+    orders: int = 0
+    currency: Optional[str] = None
+    last_order_at: Optional[str] = None
+    yesterday_revenue: float = 0
+    yesterday_units: int = 0
+    yesterday_orders: int = 0
+
+
+class ProfitabilityTotals(BaseModel):
+    revenue: float = 0
+    units: int = 0
+    fees: float = 0
+    ads_spend: float = 0
+    net_proceeds: float = 0
+    margin_pct: Optional[float] = None
+
+
+class ProfitabilityProduct(ProfitabilityTotals):
+    asin: str
+    title: Optional[str] = None
+
+
+class ProfitabilityResponse(BaseModel):
+    """Per-ASIN margin from the Data Kiosk economics dataset."""
+    start_date: date
+    end_date: date
+    currency: Optional[str] = None
+    has_data: bool = False
+    totals: ProfitabilityTotals
+    products: List[ProfitabilityProduct]

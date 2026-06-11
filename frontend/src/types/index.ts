@@ -285,6 +285,18 @@ export interface DashboardKPIs {
   currency: string
 }
 
+export interface TodayMetrics {
+  as_of: string
+  revenue: number
+  units: number
+  orders: number
+  currency: string | null
+  last_order_at: string | null
+  yesterday_revenue: number
+  yesterday_units: number
+  yesterday_orders: number
+}
+
 export interface TrendDataPoint {
   date: string
   value: number

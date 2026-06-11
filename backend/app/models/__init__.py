@@ -27,6 +27,10 @@ from app.models.brand_intelligence import (
 from app.models.google_sheets import GoogleSheetsConnection, GoogleSheetsSync, GoogleSheetsSyncRun
 from app.models.strategic_recommendation import StrategicRecommendation
 from app.models.catalog_change_log import CatalogChangeLog
+from app.models.economics import AsinEconomics
+from app.models.market_snapshot import FeeEstimate, PriceSnapshot
+from app.models.brand_search_term import BrandSearchTerm
+from app.models.listing_quality import ListingQualitySnapshot
 
 __all__ = [
     "User",
@@ -63,4 +67,9 @@ __all__ = [
     "GoogleSheetsSyncRun",
     "StrategicRecommendation",
     "CatalogChangeLog",
+    "AsinEconomics",
+    "FeeEstimate",
+    "PriceSnapshot",
+    "BrandSearchTerm",
+    "ListingQualitySnapshot",
 ]

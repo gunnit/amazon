@@ -72,6 +72,42 @@ celery_app.conf.beat_schedule = {
         "task": "workers.tasks.extraction.refresh_recent_seller_sales",
         "schedule": crontab(hour="0,6,12,18", minute=15),
     },
+    # Recover backfills interrupted by a process restart every hour
+    "backfill-recovery-sweep": {
+        "task": "workers.tasks.extraction.recover_stuck_backfills",
+        "schedule": crontab(minute=20),
+    },
+    # Re-pull missing sales dates daily at 4:30 AM
+    "sales-gap-repair": {
+        "task": "workers.tasks.extraction.repair_sales_gaps",
+        "schedule": crontab(hour=4, minute=30),
+    },
+    # Hourly incremental orders pull for near-real-time "today" metrics
+    "recent-orders-refresh": {
+        "task": "workers.tasks.extraction.refresh_recent_orders",
+        "schedule": crontab(minute=45),
+    },
+    # Per-ASIN economics from the Data Kiosk daily at 5:30 AM
+    "asin-economics-sync": {
+        "task": "workers.tasks.extraction.sync_asin_economics",
+        "schedule": crontab(hour=5, minute=30),
+    },
+    # Fee estimates + price/Buy Box snapshots daily at 6:30 AM
+    "market-snapshot": {
+        "task": "workers.tasks.extraction.snapshot_market_data",
+        "schedule": crontab(hour=6, minute=30),
+    },
+    # Brand Analytics search terms weekly on Wednesday at 7 AM (the Sun-Sat
+    # reporting week publishes a few days after it closes)
+    "brand-search-terms-sync": {
+        "task": "workers.tasks.extraction.sync_brand_search_terms",
+        "schedule": crontab(hour=7, minute=0, day_of_week=3),
+    },
+    # Listing-quality snapshots weekly on Sunday at 7:30 AM
+    "listing-quality-snapshot": {
+        "task": "workers.tasks.extraction.snapshot_listing_quality",
+        "schedule": crontab(hour=7, minute=30, day_of_week=0),
+    },
     # Generate forecasts weekly on Sunday at 3 AM
     "weekly-forecasts": {
         "task": "workers.tasks.forecasting.generate_all_forecasts",

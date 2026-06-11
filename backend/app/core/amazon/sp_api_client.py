@@ -555,6 +555,80 @@ class SPAPIClient:
         )
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def _data_kiosk_create_query(self, query: str) -> Dict[str, Any]:
+        return self._data_kiosk_api().create_query(query=query).payload
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def _data_kiosk_get_query(self, query_id: str) -> Dict[str, Any]:
+        return self._data_kiosk_api().get_query(query_id).payload
+
+    def _data_kiosk_document_text(self, document_id: str) -> str:
+        response = self._data_kiosk_api().get_document(document_id, download=True)
+        content = (response.payload or {}).get("document") or b""
+        if isinstance(content, bytes):
+            return content.decode("utf-8", errors="replace")
+        return str(content)
+
+    def run_data_kiosk_query(self, query: str) -> List[Dict[str, Any]]:
+        """Submit a Data Kiosk GraphQL query, poll until done, return JSONL rows.
+
+        Mirrors request_and_download_report: same poll settings, same error
+        taxonomy. A DONE query without a data document means an empty result
+        set (e.g. no sales in the window) and returns []."""
+        create_payload = self._data_kiosk_create_query(query)
+        query_id = create_payload.get("queryId")
+        if not query_id:
+            raise AmazonAPIError(
+                "No queryId returned when creating Data Kiosk query",
+                error_code="DATA_KIOSK_CREATE_FAILED",
+            )
+
+        poll_interval = settings.SP_API_REPORT_POLL_INTERVAL_SECONDS
+        max_attempts = settings.SP_API_REPORT_POLL_MAX_ATTEMPTS
+        for attempt in range(max_attempts):
+            time.sleep(poll_interval)
+            status_payload = self._data_kiosk_get_query(query_id)
+            status = status_payload.get("processingStatus")
+            logger.debug(
+                f"Data Kiosk query {query_id} status: {status} "
+                f"(attempt {attempt + 1}/{max_attempts})"
+            )
+
+            if status == "DONE":
+                document_id = status_payload.get("dataDocumentId")
+                if not document_id:
+                    return []
+                text = self._data_kiosk_document_text(document_id)
+                rows: List[Dict[str, Any]] = []
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        logger.warning("Skipping malformed Data Kiosk JSONL line")
+                return rows
+
+            if status in ("FATAL", "CANCELLED"):
+                detail = ""
+                error_document_id = status_payload.get("errorDocumentId")
+                if error_document_id:
+                    try:
+                        detail = " " + self._data_kiosk_document_text(error_document_id)[:500]
+                    except Exception:
+                        pass
+                raise AmazonAPIError(
+                    f"Data Kiosk query {query_id} ended with status {status}.{detail}",
+                    error_code=f"DATA_KIOSK_{status}",
+                )
+
+        raise AmazonAPIError(
+            f"Data Kiosk query {query_id} timed out after {max_attempts * poll_interval}s",
+            error_code="DATA_KIOSK_TIMEOUT",
+        )
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_sales_report(self, start_date: date, end_date: date) -> Dict[str, List[Dict]]:
         """Get sales and traffic report data (by date and by ASIN)."""
         report_data = self.request_and_download_report(

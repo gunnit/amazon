@@ -36,8 +36,15 @@ async def lifespan(app: FastAPI):
             from apscheduler.triggers.cron import CronTrigger
             from apscheduler.triggers.interval import IntervalTrigger
             from app.services.extraction_runner import (
+                run_asin_economics_sync_all,
+                run_backfill_recovery_sweep,
+                run_brand_search_terms_sync_all,
                 run_daily_sync_all,
+                run_listing_quality_snapshot_all,
+                run_market_snapshot_all,
+                run_recent_orders_sync_all,
                 run_recent_seller_sales_sync_all,
+                run_sales_gap_repair_all,
             )
             from app.services.scheduled_report_service import run_scheduled_report_scan
 
@@ -74,6 +81,73 @@ async def lifespan(app: FastAPI):
                 max_instances=1,
                 coalesce=True,
                 misfire_grace_time=600,
+            )
+            # Backfills interrupted by a process restart stay `running` forever
+            # without this sweep.
+            scheduler.add_job(
+                run_backfill_recovery_sweep,
+                IntervalTrigger(hours=1),
+                id="backfill-recovery-sweep",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=600,
+            )
+            # Re-pull sales dates missing from the warehouse (a failed window
+            # older than the 30-day rolling refresh never heals otherwise).
+            scheduler.add_job(
+                run_sales_gap_repair_all,
+                CronTrigger(hour=4, minute=30),
+                id="sales-gap-repair",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            # Near-real-time orders for the "today" dashboard metrics. Orders
+            # API quota, independent of the report-based syncs.
+            scheduler.add_job(
+                run_recent_orders_sync_all,
+                CronTrigger(minute=45),
+                id="recent-orders-refresh",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=900,
+            )
+            # Per-ASIN profitability from the Data Kiosk economics dataset.
+            scheduler.add_job(
+                run_asin_economics_sync_all,
+                CronTrigger(hour=5, minute=30),
+                id="asin-economics-sync",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            # Fee estimates + price/Buy Box snapshots (Pricing/Fees quotas).
+            scheduler.add_job(
+                run_market_snapshot_all,
+                CronTrigger(hour=6, minute=30),
+                id="market-snapshot",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            # Weekly Brand Analytics search terms (published a few days after
+            # the Sun-Sat reporting week closes; Wednesday is safely after).
+            scheduler.add_job(
+                run_brand_search_terms_sync_all,
+                CronTrigger(day_of_week="wed", hour=7, minute=0),
+                id="brand-search-terms-sync",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            # Weekly listing-quality snapshots for trend lines (DB only).
+            scheduler.add_job(
+                run_listing_quality_snapshot_all,
+                CronTrigger(day_of_week="sun", hour=7, minute=30),
+                id="listing-quality-snapshot",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
             )
             scheduler.start()
             logger.info(

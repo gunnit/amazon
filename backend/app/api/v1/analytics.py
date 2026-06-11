@@ -22,6 +22,7 @@ from app.services.analytics_service import AnalyticsService
 from app.services.ai_analysis_service import ProductTrendInsightsAnalysisService
 from app.services.product_trends_service import ProductTrendsService, build_rule_based_insights
 from app.services.sales_metrics import display_revenue_expr, display_units_expr
+from app.models.economics import AsinEconomics
 from app.schemas.analytics import (
     DashboardKPIs, MetricValue, TrendData, TrendDataPoint,
     ComparisonDailyPoint, ComparisonMetric, ComparisonPeriod, ComparisonResponse,
@@ -31,6 +32,8 @@ from app.schemas.analytics import (
     ReturnAsinMetric, ReturnReasonBreakdown, ReturnsAnalyticsResponse, ReturnsSummary,
     ReturnsTrendPoint,
     AdsVsOrganicResponse,
+    ProfitabilityProduct, ProfitabilityResponse, ProfitabilityTotals,
+    TodayMetricsResponse,
 )
 
 router = APIRouter()
@@ -1902,3 +1905,177 @@ async def get_data_health(
         "archive_enabled": settings.DATA_ARCHIVE_ENABLED,
         "tables": table_stats,
     }
+
+
+def _seller_account_ids_subquery(organization_id: UUID, account_ids: Optional[List[UUID]]):
+    """Active seller accounts of the org, optionally narrowed to a selection."""
+    from app.models.amazon_account import AccountType
+
+    stmt = select(AmazonAccount.id).where(
+        AmazonAccount.organization_id == organization_id,
+        AmazonAccount.is_active == True,  # noqa: E712
+        AmazonAccount.account_type != AccountType.VENDOR,
+    )
+    if account_ids:
+        stmt = stmt.where(AmazonAccount.id.in_(account_ids))
+    return stmt
+
+
+@router.get("/today", response_model=TodayMetricsResponse)
+async def get_today_metrics(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_ids: Optional[List[UUID]] = Query(default=None),
+):
+    """Near-real-time "today so far" sales from the orders warehouse.
+
+    Orders land here via the hourly incremental refresh (plus the daily sync),
+    so figures lag minutes-to-an-hour — unlike the Sales & Traffic report's
+    ~24h. Yesterday covers the same time-of-day window for comparison."""
+    await _validate_account_ids(db, organization.id, account_ids)
+    accounts_subq = _seller_account_ids_subquery(organization.id, account_ids)
+
+    now = datetime.utcnow()
+    today_start = datetime.combine(date.today(), dt_time.min)
+    yesterday_start = today_start - timedelta(days=1)
+    yesterday_same_time = now - timedelta(days=1)
+
+    async def _window(start: datetime, end: Optional[datetime]) -> dict:
+        conditions = [
+            Order.account_id.in_(accounts_subq),
+            Order.purchase_date >= start,
+            Order.order_status != "Canceled",
+        ]
+        if end is not None:
+            conditions.append(Order.purchase_date < end)
+        row = (
+            await db.execute(
+                select(
+                    func.coalesce(func.sum(Order.order_total), 0),
+                    func.coalesce(func.sum(Order.number_of_items), 0),
+                    func.count(Order.id),
+                    func.max(Order.purchase_date),
+                    func.max(Order.currency),
+                ).where(and_(*conditions))
+            )
+        ).one()
+        return {
+            "revenue": float(row[0] or 0),
+            "units": int(row[1] or 0),
+            "orders": int(row[2] or 0),
+            "last_order_at": row[3],
+            "currency": row[4],
+        }
+
+    today = await _window(today_start, None)
+    yesterday = await _window(yesterday_start, yesterday_same_time)
+
+    return TodayMetricsResponse(
+        as_of=now.isoformat() + "Z",
+        revenue=today["revenue"],
+        units=today["units"],
+        orders=today["orders"],
+        currency=today["currency"] or yesterday["currency"],
+        last_order_at=today["last_order_at"].isoformat() if today["last_order_at"] else None,
+        yesterday_revenue=yesterday["revenue"],
+        yesterday_units=yesterday["units"],
+        yesterday_orders=yesterday["orders"],
+    )
+
+
+@router.get("/profitability", response_model=ProfitabilityResponse)
+async def get_profitability(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Per-ASIN profitability from the Data Kiosk economics dataset.
+
+    Fees, ad spend and net proceeds are Amazon-computed. Empty until the daily
+    asin-economics sync has run for the selected accounts."""
+    await _validate_account_ids(db, organization.id, account_ids)
+    accounts_subq = _seller_account_ids_subquery(organization.id, account_ids)
+
+    # Economics data lags ~2 days; default to the last 30 published days.
+    if end_date is None:
+        end_date = date.today() - timedelta(days=2)
+    if start_date is None:
+        start_date = end_date - timedelta(days=29)
+
+    base_conditions = and_(
+        AsinEconomics.account_id.in_(accounts_subq),
+        AsinEconomics.date >= start_date,
+        AsinEconomics.date <= end_date,
+    )
+
+    sums = (
+        func.coalesce(func.sum(AsinEconomics.ordered_product_sales), 0).label("revenue"),
+        func.coalesce(func.sum(AsinEconomics.units_ordered), 0).label("units"),
+        func.coalesce(func.sum(AsinEconomics.total_fees), 0).label("fees"),
+        func.coalesce(func.sum(AsinEconomics.ads_spend), 0).label("ads_spend"),
+        func.coalesce(func.sum(AsinEconomics.net_proceeds_total), 0).label("net_proceeds"),
+        func.max(AsinEconomics.currency).label("currency"),
+    )
+
+    def _margin(net: float, revenue: float) -> Optional[float]:
+        return round(net / revenue * 100, 2) if revenue else None
+
+    totals_row = (await db.execute(select(*sums).where(base_conditions))).one()
+    totals = ProfitabilityTotals(
+        revenue=float(totals_row.revenue),
+        units=int(totals_row.units),
+        fees=float(totals_row.fees),
+        ads_spend=float(totals_row.ads_spend),
+        net_proceeds=float(totals_row.net_proceeds),
+        margin_pct=_margin(float(totals_row.net_proceeds), float(totals_row.revenue)),
+    )
+
+    product_rows = (
+        await db.execute(
+            select(AsinEconomics.asin, *sums)
+            .where(base_conditions)
+            .group_by(AsinEconomics.asin)
+            .order_by(func.coalesce(func.sum(AsinEconomics.ordered_product_sales), 0).desc())
+            .limit(limit)
+        )
+    ).all()
+
+    titles: dict[str, Optional[str]] = {}
+    if product_rows:
+        title_rows = (
+            await db.execute(
+                select(Product.asin, Product.title).where(
+                    Product.account_id.in_(accounts_subq),
+                    Product.asin.in_([row.asin for row in product_rows]),
+                )
+            )
+        ).all()
+        titles = {row[0]: row[1] for row in title_rows}
+
+    products = [
+        ProfitabilityProduct(
+            asin=row.asin,
+            title=titles.get(row.asin),
+            revenue=float(row.revenue),
+            units=int(row.units),
+            fees=float(row.fees),
+            ads_spend=float(row.ads_spend),
+            net_proceeds=float(row.net_proceeds),
+            margin_pct=_margin(float(row.net_proceeds), float(row.revenue)),
+        )
+        for row in product_rows
+    ]
+
+    return ProfitabilityResponse(
+        start_date=start_date,
+        end_date=end_date,
+        currency=totals_row.currency,
+        has_data=bool(product_rows),
+        totals=totals,
+        products=products,
+    )
