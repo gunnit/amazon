@@ -1128,6 +1128,11 @@ class DataExtractionService:
         re-running clears and repopulates each window's rows rather than
         double-counting. A window that still fails after a throttle cooldown is
         skipped so one bad window does not abort the whole backfill."""
+        # Clamp to settled data before windowing so the trailing window never
+        # covers only unsettled days (which would misfire the PO fallback).
+        end_date = min(end_date, date.today() - timedelta(days=VENDOR_REPORT_LAG_DAYS))
+        if start_date > end_date:
+            return 0
         windows = _day_windows(start_date, end_date)
         total = 0
         self.backfill_windows_skipped = 0
