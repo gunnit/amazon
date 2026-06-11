@@ -1755,18 +1755,20 @@ class SPAPIClient:
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_vendor_sales_report(
-        self, start_date: date, end_date: date, distributor_view: str = "MANUFACTURING"
+        self,
+        start_date: date,
+        end_date: date,
+        distributor_view: str = "MANUFACTURING",
+        report_period: str = "DAY",
     ) -> Dict[str, Any]:
         """Get vendor sales data via the Reports API.
 
-        Uses GET_VENDOR_SALES_REPORT (the live, non-deprecated report). The report
-        is requested with reportPeriod=MONTH because Amazon only generates vendor
-        retail sales at calendar-month granularity for this program; the window
-        passed in MUST be aligned to whole calendar months (first day .. last day)
-        or Amazon returns FATAL ("prohibited date range ... does not align with
-        the requirements for the specified reportPeriod"). Data also settles with
-        a few days of lag, so the most recent (incomplete) month should be
-        excluded by the caller.
+        Uses GET_VENDOR_SALES_REPORT (the live, non-deprecated report). Each
+        reportPeriod has a maximum window length enforced by Amazon: DAY allows
+        at most 15 days per request (verified live 2026-06-11; longer windows
+        return FATAL), MONTH requires whole-calendar-month alignment. Data also
+        settles with a few days of lag, so the caller must exclude the most
+        recent unsettled days.
 
         distributorView selects MANUFACTURING (ordered / sell-in, the default) or
         SOURCING (shipped / sell-through, matches Vendor Central "Ricavi spediti")."""
@@ -1775,7 +1777,7 @@ class SPAPIClient:
             start_date=start_date,
             end_date=end_date,
             report_options={
-                "reportPeriod": "MONTH",
+                "reportPeriod": report_period,
                 "sellingProgram": "RETAIL",
                 "distributorView": distributor_view,
             },

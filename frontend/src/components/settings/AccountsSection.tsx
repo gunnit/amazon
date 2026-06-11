@@ -8,6 +8,7 @@ import {
   Clock,
   Edit,
   Eye,
+  History,
   KeyRound,
   Link2,
   Loader2,
@@ -59,6 +60,7 @@ import type {
   AdvertisingProfile,
   AmazonAccount,
   ApiKeysResponse,
+  BackfillStatus,
   SyncStatus,
 } from '@/types'
 
@@ -119,6 +121,38 @@ function StatusBadge({ status }: { status: SyncStatus }) {
     >
       <Icon className={cn('h-3 w-3', status === 'syncing' && 'animate-spin')} />
       {config.label}
+    </Badge>
+  )
+}
+
+function BackfillBadge({ account }: { account: AmazonAccount }) {
+  const { t } = useTranslation()
+  const status = account.last_backfill_status as BackfillStatus | null | undefined
+  if (!status) {
+    return (
+      <Badge variant="outline" className="gap-1 whitespace-nowrap text-muted-foreground">
+        {t('accounts.backfill.never')}
+      </Badge>
+    )
+  }
+  const config: Record<BackfillStatus, { label: string; icon: typeof Check; className?: string; variant?: 'destructive' | 'outline' | 'secondary' }> = {
+    running: { label: t('accounts.backfill.running'), icon: Loader2, className: 'bg-blue-500 text-white', variant: 'secondary' },
+    success: { label: t('accounts.backfill.success'), icon: Check, className: 'bg-emerald-500 text-white', variant: 'secondary' },
+    partial: { label: t('accounts.backfill.partial'), icon: AlertTriangle, variant: 'outline', className: 'border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400' },
+    error: { label: t('accounts.backfill.error'), icon: AlertCircle, variant: 'destructive' },
+  }
+  const { label, icon: Icon, className, variant } = config[status]
+  const tooltipParts = [
+    account.last_backfill_range_start && account.last_backfill_range_end
+      ? `${account.last_backfill_range_start} → ${account.last_backfill_range_end}`
+      : null,
+    account.last_backfill_records != null ? `${account.last_backfill_records} rec` : null,
+    account.last_backfill_error || null,
+  ].filter(Boolean)
+  return (
+    <Badge variant={variant} className={cn('gap-1 whitespace-nowrap', className)} title={tooltipParts.join(' · ') || undefined}>
+      <Icon className={cn('h-3 w-3', status === 'running' && 'animate-spin')} />
+      {label}
     </Badge>
   )
 }
@@ -493,7 +527,9 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
     // While any account is syncing/backfilling, poll so its status badge
     // resolves from "Syncing" to "Synced" on its own, without a manual refresh.
     refetchInterval: (query) =>
-      (query.state.data ?? []).some((a) => a.sync_status === 'syncing') ? 8000 : false,
+      (query.state.data ?? []).some(
+        (a) => a.sync_status === 'syncing' || a.last_backfill_status === 'running',
+      ) ? 8000 : false,
   })
 
   const { data: summary } = useQuery<AccountSummary>({
@@ -508,6 +544,15 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
       toast({ title: t('accounts.syncStarted') })
     },
     onError: () => toast({ variant: 'destructive', title: t('accounts.syncFailed') }),
+  })
+
+  const backfillMutation = useMutation({
+    mutationFn: (id: string) => accountsApi.triggerBackfill(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      toast({ title: t('accounts.backfill.started'), description: t('accounts.backfill.startedDesc') })
+    },
+    onError: () => toast({ variant: 'destructive', title: t('accounts.backfill.failed') }),
   })
 
   const deleteMutation = useMutation({
@@ -667,6 +712,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                   <TableHead>{t('accounts.advertisingProfile')}</TableHead>
                   <TableHead>{t('accounts.lastSync')}</TableHead>
                   <TableHead>{t('accounts.syncStatus')}</TableHead>
+                  <TableHead>{t('accounts.backfill.column')}</TableHead>
                   <TableHead className="text-right">{t('accounts.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -713,12 +759,25 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                     <TableCell className="font-mono text-xs">{account.advertising_profile_id || '-'}</TableCell>
                     <TableCell>{account.last_sync_at ? formatDate(account.last_sync_at) : t('common.never')}</TableCell>
                     <TableCell><StatusBadge status={account.sync_status} /></TableCell>
+                    <TableCell><BackfillBadge account={account} /></TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
                         <Button variant="ghost" size="icon" onClick={() => openDialog('manual', account)} aria-label={t('common.edit')}><Edit className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openDialog('sp', account)} aria-label={t('accounts.reconnectSp')}><KeyRound className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openDialog('ads', account)} aria-label={t('accounts.reconnectAds')}><Megaphone className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => syncMutation.mutate(account.id)} disabled={syncMutation.isPending || account.sync_status === 'syncing'} aria-label={t('accounts.sync')}><RefreshCw className="h-4 w-4" /></Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            if (window.confirm(t('accounts.backfill.confirm'))) backfillMutation.mutate(account.id)
+                          }}
+                          disabled={!account.has_refresh_token || backfillMutation.isPending || account.sync_status === 'syncing' || account.last_backfill_status === 'running'}
+                          aria-label={t('accounts.backfill.action')}
+                          title={t('accounts.backfill.action')}
+                        >
+                          <History className="h-4 w-4" />
+                        </Button>
                         <Button variant="ghost" size="icon" onClick={() => setDetailsAccount(account)} aria-label={t('accounts.viewDetails')}><Eye className="h-4 w-4" /></Button>
                         <Button
                           variant="ghost"
@@ -758,6 +817,23 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.advertisingProfile')}</span><span className="font-mono">{detailsAccount.advertising_profile_id || '-'}</span></div>
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.lastSync')}</span><span>{detailsAccount.last_sync_at ? formatDate(detailsAccount.last_sync_at) : t('common.never')}</span></div>
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.syncStatus')}</span><StatusBadge status={detailsAccount.sync_status} /></div>
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.backfill.column')}</span><BackfillBadge account={detailsAccount} /></div>
+                {detailsAccount.last_backfill_range_start && detailsAccount.last_backfill_range_end && (
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">{t('accounts.backfill.range')}</span>
+                    <span>
+                      {formatDate(detailsAccount.last_backfill_range_start)} → {formatDate(detailsAccount.last_backfill_range_end)}
+                      {detailsAccount.last_backfill_records != null && ` (${detailsAccount.last_backfill_records} ${t('accounts.backfill.records')})`}
+                    </span>
+                  </div>
+                )}
+                {detailsAccount.last_backfill_error && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>{t('accounts.backfill.error')}</AlertTitle>
+                    <AlertDescription>{detailsAccount.last_backfill_error}</AlertDescription>
+                  </Alert>
+                )}
                 {detailsAccount.sync_error_message && (
                   <Alert variant={detailsAccount.sync_error_kind === 'warning' ? 'warning' : 'destructive'}>
                     {detailsAccount.sync_error_kind === 'warning' ? <AlertTriangle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
@@ -769,6 +845,16 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
               <DialogFooter>
                 <Button variant="outline" onClick={() => openDialog('sp', detailsAccount)}>{t('accounts.reconnectSp')}</Button>
                 <Button variant="outline" onClick={() => openDialog('ads', detailsAccount)}>{t('accounts.reconnectAds')}</Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (window.confirm(t('accounts.backfill.confirm'))) backfillMutation.mutate(detailsAccount.id)
+                  }}
+                  disabled={!detailsAccount.has_refresh_token || backfillMutation.isPending || detailsAccount.sync_status === 'syncing' || detailsAccount.last_backfill_status === 'running'}
+                >
+                  <History className="mr-2 h-4 w-4" />
+                  {t('accounts.backfill.action')}
+                </Button>
                 <Button onClick={() => syncMutation.mutate(detailsAccount.id)}>{t('accounts.sync')}</Button>
               </DialogFooter>
             </>

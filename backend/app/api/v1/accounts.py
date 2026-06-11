@@ -520,7 +520,9 @@ async def update_account(
         account.marketplace_country = account_in.marketplace_country
     if account_in.is_active is not None:
         account.is_active = account_in.is_active
+    token_newly_connected = False
     if account_in.refresh_token is not None:
+        token_newly_connected = not account.sp_api_refresh_token_encrypted
         account.sp_api_refresh_token_encrypted = encrypt_value(account_in.refresh_token)
     if account_in.advertising_profile_id is not None:
         account.advertising_profile_id = account_in.advertising_profile_id
@@ -533,6 +535,19 @@ async def update_account(
 
     await db.flush()
     await db.refresh(account)
+
+    # An account created without SP-API credentials skips the initial
+    # sync/backfill at creation time. When the refresh token is connected later
+    # (e.g. the client completes the Login-with-Amazon authorization afterwards)
+    # kick off the same full sync + historical backfill so the account
+    # auto-populates without a manual trigger. Only fires if no backfill has
+    # ever run, so editing other fields never restarts one.
+    if token_newly_connected and account.last_backfill_status is None:
+        account.sync_status = SyncStatus.SYNCING
+        await db.commit()
+        await db.refresh(account)
+        from app.services.extraction_runner import initial_sync_in_thread
+        initial_sync_in_thread(account.id)
 
     return _account_to_response(account, organization)
 

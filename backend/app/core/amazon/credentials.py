@@ -48,38 +48,32 @@ def _get_org_advertising_setting(organization, key: str) -> str | None:
 def resolve_credentials(account, organization=None) -> dict:
     """Resolve SP-API credentials for an account.
 
-    Priority:
-    1. Per-account encrypted refresh token
-    2. Global sandbox refresh token from .env (fallback)
+    The refresh token is strictly per-account: the LWA refresh token determines
+    WHICH seller's data Amazon returns, so falling back to a shared/env token
+    would silently sync another seller's data into this account (this actually
+    happened: an account created without credentials backfilled a different
+    store's history via the old env fallback). An account without its own token
+    must not sync.
 
-    For app credentials (client_id, client_secret, aws_*):
+    For app credentials (client_id, client_secret):
     1. Organization settings (encrypted JSONB)
-    2. Global env vars (fallback)
+    2. Global env vars (fallback) — safe, these identify the app, not the seller.
     """
     refresh_token = None
 
-    # Try per-account credentials first
     if account.sp_api_refresh_token_encrypted:
         try:
             refresh_token = decrypt_value(account.sp_api_refresh_token_encrypted)
             logger.info(f"Using per-account credentials for {account.account_name}")
         except Exception:
             logger.warning(
-                f"Failed to decrypt per-account token for {account.account_name}, "
-                "trying global fallback"
+                f"Failed to decrypt per-account token for {account.account_name}"
             )
-
-    # Fallback to global sandbox credentials
-    if not refresh_token and settings.AMAZON_SP_API_REFRESH_TOKEN:
-        refresh_token = settings.AMAZON_SP_API_REFRESH_TOKEN
-        logger.info(
-            f"Using global sandbox credentials (fallback) for {account.account_name}"
-        )
 
     if not refresh_token:
         raise AmazonAPIError(
             f"No SP-API refresh token available for account {account.account_name}. "
-            "Set per-account credentials or AMAZON_SP_API_REFRESH_TOKEN in .env.",
+            "Connect the account via Login with Amazon to set its own refresh token.",
             error_code="MISSING_CREDENTIALS",
         )
 

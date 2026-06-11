@@ -43,9 +43,21 @@ VENDOR_SALES_FALLBACK_MESSAGE = (
 # reporting period is never requested.
 VENDOR_REPORT_LAG_DAYS = 4
 
-# Pause between months during a historical backfill to avoid throttling the
+# Pause between windows during a historical backfill to avoid throttling the
 # vendor sales report API with rapid back-to-back requests.
-VENDOR_BACKFILL_MONTH_PAUSE_SECONDS = 3.0
+VENDOR_BACKFILL_WINDOW_PAUSE_SECONDS = 3.0
+# GET_VENDOR_SALES_REPORT with reportPeriod=DAY accepts at most 15 days per
+# request (Amazon FATALs on longer windows).
+VENDOR_DAY_WINDOW_MAX_DAYS = 15
+# Rolling window for the routine vendor sales sync. Daily vendor data settles
+# within ~VENDOR_REPORT_LAG_DAYS, so re-pulling the last 35 days every sync
+# absorbs restatements while keeping the report volume comparable to the old
+# monthly scheme (3 windows x 2 distributor views).
+VENDOR_SYNC_DEFAULT_DAYS = 35
+# A throttled-out window during a vendor backfill gets one full quota-window
+# cooldown before being retried, mirroring the seller backfill behaviour.
+VENDOR_BACKFILL_THROTTLE_COOLDOWN_SECONDS = 65.0
+VENDOR_BACKFILL_MAX_WINDOW_ATTEMPTS = 2
 
 # Same idea for the seller Sales & Traffic backfill.
 SELLER_BACKFILL_WINDOW_PAUSE_SECONDS = 2.0
@@ -56,26 +68,21 @@ SELLER_BACKFILL_THROTTLE_COOLDOWN_SECONDS = 65.0
 SELLER_BACKFILL_MAX_WINDOW_ATTEMPTS = 3
 
 
-def _settled_month_windows(start_date: date, end_date: date) -> List[tuple]:
-    """Return [(month_start, month_end), ...] for every complete calendar month
-    overlapping [start_date, end_date].
+def _day_windows(
+    start_date: date, end_date: date, max_days: int = VENDOR_DAY_WINDOW_MAX_DAYS
+) -> List[tuple]:
+    """Return [(window_start, window_end), ...] covering [start_date, end_date]
+    in chunks of at most ``max_days`` days.
 
-    GET_VENDOR_SALES_REPORT with reportPeriod=MONTH only accepts windows aligned
-    to whole calendar months, and only settled months return data. We therefore
-    iterate one month at a time and exclude the current (incomplete) month."""
+    GET_VENDOR_SALES_REPORT with reportPeriod=DAY caps each request at 15 days,
+    so long ranges are walked in 15-day steps. Windows need no calendar
+    alignment."""
     windows: List[tuple] = []
-    cursor = start_date.replace(day=1)
-    # Last fully-elapsed month relative to end_date: never include end_date's own
-    # month unless end_date is its final day.
+    cursor = start_date
     while cursor <= end_date:
-        if cursor.month == 12:
-            next_month = cursor.replace(year=cursor.year + 1, month=1)
-        else:
-            next_month = cursor.replace(month=cursor.month + 1)
-        month_end = next_month - timedelta(days=1)
-        if month_end <= end_date:
-            windows.append((cursor, month_end))
-        cursor = next_month
+        window_end = min(cursor + timedelta(days=max_days - 1), end_date)
+        windows.append((cursor, window_end))
+        cursor = window_end + timedelta(days=1)
     return windows
 
 
@@ -84,7 +91,7 @@ def _month_windows(start_date: date, end_date: date) -> List[tuple]:
     in calendar-month chunks, INCLUDING the trailing partial month up to
     end_date.
 
-    Unlike _settled_month_windows (vendor — only whole settled months), seller
+    Unlike the vendor day windows (capped at 15 days per report), seller
     Sales & Traffic data is available daily up to ~today, so the current
     incomplete month must be backfilled too. Chunking monthly keeps each request
     inside SP-API's recommended range and keeps the per-ASIN section — which the
@@ -173,6 +180,16 @@ class DataExtractionService:
         try:
             return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _parse_report_date(value: Any) -> Optional[date]:
+        """Parse a report startDate/endDate string into a date, or None."""
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(str(value)[:10])
+        except ValueError:
             return None
 
     @staticmethod
@@ -699,14 +716,16 @@ class DataExtractionService:
     ) -> int:
         """Sync vendor sales from the SP-API Vendor Sales report.
 
-        GET_VENDOR_SALES_REPORT only produces RETAIL sales at calendar-month
-        granularity and only for months that have fully settled (vendor data
-        lags by a few days). We therefore request one report per complete,
-        settled calendar month in the window and store one row per ASIN per
-        month. If no month yields real data we fall back to purchase-order
-        netCost as an estimated revenue proxy."""
+        GET_VENDOR_SALES_REPORT is requested with reportPeriod=DAY (max 15 days
+        per request), giving one row per ASIN per day plus a daily aggregate —
+        the same granularity as seller accounts, so charts and forecasts see a
+        uniform daily series. Vendor data settles with a few days of lag, so the
+        trailing unsettled days are excluded. If no window yields report data we
+        fall back to purchase-order netCost as an estimated revenue proxy, but
+        only for days that have no rows yet (the fallback never overwrites
+        report-derived data)."""
         if not start_date:
-            start_date = date.today() - timedelta(days=90)
+            start_date = date.today() - timedelta(days=VENDOR_SYNC_DEFAULT_DAYS)
         if not end_date:
             end_date = date.today()
 
@@ -756,91 +775,94 @@ class DataExtractionService:
                     "shipped_cogs": shipped_cogs,
                 }
 
-        # Request the Vendor Sales report one settled calendar month at a time.
-        # Each month is handled fetch-first / replace-only-on-success: the report
-        # is fetched before any delete, and the month's existing rows are only
-        # cleared and repopulated once we actually hold fresh data. A failed or
-        # empty fetch (FATAL, deprecated, not-yet-settled, throttle-exhausted) is
-        # logged and skipped, leaving the existing rows for that month intact so a
-        # transient Amazon error can never wipe a populated month.
+        # Request the Vendor Sales report in day-granularity windows (max 15
+        # days each). Each window is handled fetch-first / replace-only-on-
+        # success: the report is fetched before any delete, and the window's
+        # existing rows are only cleared and repopulated once we actually hold
+        # fresh data. A failed or empty fetch (FATAL, not-yet-settled,
+        # throttle-exhausted) is logged and skipped, leaving the existing rows
+        # for that window intact so a transient Amazon error can never wipe
+        # populated dates.
         count = 0
-        months = _settled_month_windows(start_date, end_date)
+        windows = _day_windows(start_date, end_date)
         report_rows_seen = False
 
-        for month_start, month_end in months:
+        for window_start, window_end in windows:
             try:
-                report = client.get_vendor_sales_report(month_start, month_end)
+                report = client.get_vendor_sales_report(window_start, window_end)
             except AmazonAPIError as exc:
-                # A single month failing (e.g. not yet settled, or no data) must
-                # not abort the others, and must not delete that month's rows;
-                # only an all-months failure triggers the PO fallback below.
+                # A single window failing must not abort the others, and must
+                # not delete that window's rows; only an all-windows failure
+                # triggers the PO fallback below.
                 logger.warning(
                     "Vendor sales report unavailable for %s %s..%s, leaving existing rows untouched: %s",
-                    account.account_name, month_start, month_end, exc,
+                    account.account_name, window_start, window_end, exc,
                 )
                 self.vendor_sales_months_skipped += 1
                 continue
 
             sales_by_asin = report.get("salesByAsin", []) or []
-            if not sales_by_asin:
-                # No data for the month: do not delete; a previously populated
-                # month must survive an empty re-fetch.
+            sales_aggregate = report.get("salesAggregate", []) or []
+            if not sales_by_asin and not sales_aggregate:
+                # No data for the window: do not delete; previously populated
+                # dates must survive an empty re-fetch.
                 logger.warning(
-                    "Vendor sales report returned no salesByAsin for %s %s..%s, leaving existing rows untouched",
-                    account.account_name, month_start, month_end,
+                    "Vendor sales report returned no data for %s %s..%s, leaving existing rows untouched",
+                    account.account_name, window_start, window_end,
                 )
                 self.vendor_sales_months_skipped += 1
                 continue
 
             # Also fetch the SOURCING view for shipped (sell-through) metrics,
             # which match Vendor Central "Ricavi spediti". Best-effort: a missing
-            # or failed SOURCING report leaves shipped values null for the month
-            # and never aborts it.
-            shipped_by_asin: Dict[str, dict] = {}
-            shipped_aggregate: Optional[dict] = None
+            # or failed SOURCING report leaves shipped values null for the window
+            # and never aborts it. Both per-ASIN and aggregate entries are daily,
+            # so shipped values are keyed by (asin, date) / date.
+            shipped_by_asin_date: Dict[tuple, dict] = {}
+            shipped_agg_by_date: Dict[date, dict] = {}
             try:
                 sreport = client.get_vendor_sales_report(
-                    month_start, month_end, distributor_view="SOURCING"
+                    window_start, window_end, distributor_view="SOURCING"
                 )
             except AmazonAPIError as exc:
                 logger.warning(
                     "Vendor SOURCING sales report unavailable for %s %s..%s, "
                     "shipped metrics left null: %s",
-                    account.account_name, month_start, month_end, exc,
+                    account.account_name, window_start, window_end, exc,
                 )
                 sreport = {}
 
             for sentry in sreport.get("salesByAsin", []) or []:
                 sasin = sentry.get("asin")
-                if not sasin:
+                sdate = self._parse_report_date(sentry.get("startDate"))
+                if not sasin or not sdate:
                     continue
                 s_rev = sentry.get("shippedRevenue", {})
                 s_cogs = sentry.get("shippedCogs", {})
-                shipped_by_asin[sasin] = {
+                shipped_by_asin_date[(sasin, sdate)] = {
                     "revenue": Decimal(str(s_rev.get("amount", 0))) if isinstance(s_rev, dict) else Decimal("0"),
                     "units": sentry.get("shippedUnits", 0) or 0,
                     "cogs": Decimal(str(s_cogs.get("amount", 0))) if isinstance(s_cogs, dict) else Decimal("0"),
                 }
 
-            s_agg_list = sreport.get("salesAggregate", []) or []
-            if s_agg_list:
-                s_agg = s_agg_list[0] or {}
+            for s_agg in sreport.get("salesAggregate", []) or []:
+                sdate = self._parse_report_date(s_agg.get("startDate"))
+                if not sdate:
+                    continue
                 s_rev = s_agg.get("shippedRevenue", {})
                 s_cogs = s_agg.get("shippedCogs", {})
-                shipped_aggregate = {
+                shipped_agg_by_date[sdate] = {
                     "revenue": Decimal(str(s_rev.get("amount", 0))) if isinstance(s_rev, dict) else Decimal("0"),
                     "units": s_agg.get("shippedUnits", 0) or 0,
                     "cogs": Decimal(str(s_cogs.get("amount", 0))) if isinstance(s_cogs, dict) else Decimal("0"),
                 }
 
-            # We have fresh data for this month — replace its rows atomically.
-            # Align the floor to the first of the month so the whole settled
-            # month is cleaned, then repopulated from the report below.
+            # We have fresh data for this window — replace its rows atomically.
             await self.db.execute(
                 delete(SalesData).where(
                     SalesData.account_id == account.id,
-                    SalesData.date >= month_start,
-                    SalesData.date <= month_end,
+                    SalesData.date >= window_start,
+                    SalesData.date <= window_end,
                 )
             )
             # Returns are derived from the same report rows; clear the same
@@ -849,20 +871,16 @@ class DataExtractionService:
             await self.db.execute(
                 delete(ReturnData).where(
                     ReturnData.account_id == account.id,
-                    ReturnData.return_date >= month_start,
-                    ReturnData.return_date <= month_end,
+                    ReturnData.return_date >= window_start,
+                    ReturnData.return_date <= window_end,
                 )
             )
 
-            ordered_asins: set = set()
+            ordered_keys: set = set()
             for entry in sales_by_asin:
                 asin = entry.get("asin")
-                entry_date_str = entry.get("startDate")
-                if not asin or not entry_date_str:
-                    continue
-                try:
-                    entry_date = date.fromisoformat(entry_date_str[:10])
-                except ValueError:
+                entry_date = self._parse_report_date(entry.get("startDate"))
+                if not asin or not entry_date:
                     continue
 
                 ordered_revenue = entry.get("orderedRevenue", {})
@@ -870,8 +888,8 @@ class DataExtractionService:
                 currency = ordered_revenue.get("currencyCode", "EUR") if isinstance(ordered_revenue, dict) else "EUR"
                 units = entry.get("orderedUnits", 0) or 0
 
-                shipped = shipped_by_asin.get(asin)
-                ordered_asins.add(asin)
+                shipped = shipped_by_asin_date.get((asin, entry_date))
+                ordered_keys.add((asin, entry_date))
                 await self._upsert_sales_record({
                     "account_id": account.id,
                     "date": entry_date,
@@ -911,13 +929,13 @@ class DataExtractionService:
 
             # Surface shipped-only / end-of-life ASINs: those present in SOURCING
             # (shipped > 0) but absent from the MANUFACTURING report get a row with
-            # ordered fields zeroed and the shipped values set, dated month_start.
-            for sasin, shipped in shipped_by_asin.items():
-                if sasin in ordered_asins or shipped["revenue"] <= 0:
+            # ordered fields zeroed and the shipped values set, on the shipped day.
+            for (sasin, sdate), shipped in shipped_by_asin_date.items():
+                if (sasin, sdate) in ordered_keys or shipped["revenue"] <= 0:
                     continue
                 await self._upsert_sales_record({
                     "account_id": account.id,
-                    "date": month_start,
+                    "date": sdate,
                     "asin": sasin,
                     "sku": None,
                     "units_ordered": 0,
@@ -932,35 +950,51 @@ class DataExtractionService:
                 })
                 count += 1
 
-            # Use Amazon's own period aggregate for the daily-total sentinel so
+            # Use Amazon's own daily aggregates for the daily-total sentinel so
             # the dashboard total matches the report (no per-ASIN re-summing).
-            # Shipped totals come from the SOURCING salesAggregate (not re-summed
-            # per ASIN), matched to the same agg date.
-            for agg in report.get("salesAggregate", []) or []:
-                agg_date_str = agg.get("startDate")
-                if not agg_date_str:
-                    continue
-                try:
-                    agg_date = date.fromisoformat(agg_date_str[:10])
-                except ValueError:
+            # Shipped totals come from the SOURCING salesAggregate matched on the
+            # same day.
+            for agg in sales_aggregate:
+                agg_date = self._parse_report_date(agg.get("startDate"))
+                if not agg_date:
                     continue
                 ordered_revenue = agg.get("orderedRevenue", {})
                 amount = Decimal(str(ordered_revenue.get("amount", 0))) if isinstance(ordered_revenue, dict) else Decimal("0")
                 currency = ordered_revenue.get("currencyCode", "EUR") if isinstance(ordered_revenue, dict) else "EUR"
                 units = agg.get("orderedUnits", 0) or 0
+                shipped_day = shipped_agg_by_date.get(agg_date)
                 _accumulate_daily(
                     agg_date, units, amount, units, currency,
-                    shipped_revenue=shipped_aggregate["revenue"] if shipped_aggregate else None,
-                    shipped_units=shipped_aggregate["units"] if shipped_aggregate else None,
-                    shipped_cogs=shipped_aggregate["cogs"] if shipped_aggregate else None,
+                    shipped_revenue=shipped_day["revenue"] if shipped_day else None,
+                    shipped_units=shipped_day["units"] if shipped_day else None,
+                    shipped_cogs=shipped_day["cogs"] if shipped_day else None,
                 )
+                report_rows_seen = True
+
+            # Guarantee a continuous daily series: a settled day Amazon omitted
+            # from the aggregate is a true zero-sales day, and downstream gap
+            # detection relies on the sentinel row existing for every date.
+            # Only fill from the first day Amazon actually reported, so a window
+            # straddling the start of Amazon's daily-data horizon never gets
+            # fabricated zeros for days the report simply does not cover.
+            agg_dates = [
+                d for d in (
+                    self._parse_report_date(a.get("startDate")) for a in sales_aggregate
+                ) if d
+            ]
+            if agg_dates:
+                cursor_day = min(agg_dates)
+                while cursor_day <= window_end:
+                    if cursor_day not in daily_totals:
+                        _accumulate_daily(cursor_day, 0, Decimal("0"), 0, "EUR")
+                    cursor_day += timedelta(days=1)
 
         if not report_rows_seen:
             self.vendor_sales_used_po_fallback = True
             logger.warning(
-                "Vendor sales report returned no data for %s (%d month(s) attempted); "
+                "Vendor sales report returned no data for %s (%d window(s) attempted); "
                 "falling back to purchase-order netCost as an estimated revenue proxy",
-                account.account_name, len(months),
+                account.account_name, len(windows),
             )
             # Fall back to purchase orders — aggregate by (date, asin) since
             # multiple POs can contain the same ASIN on the same day.
@@ -1019,30 +1053,27 @@ class DataExtractionService:
                             "currency": currency,
                         }
 
+            # The PO fallback is strictly gap-filling: estimated netCost rows are
+            # only written for days that have no sales rows at all, and nothing
+            # is ever deleted. Report-derived data (written by an earlier
+            # successful sync) always wins over the PO estimate — a transient
+            # all-windows report failure must never degrade good history.
+            existing_dates: set = set()
             if aggregated:
-                # Only now that we hold fresh PO data do we clear the window and
-                # repopulate, so a re-sync replaces rather than double-counts and
-                # an empty fallback never wipes existing rows. The report
-                # (monthly) and PO fallback (daily) use different date layouts,
-                # so clearing the whole window prevents stale rows from a prior
-                # source lingering. Align the floor to the first of the month.
-                clear_from = start_date.replace(day=1)
-                await self.db.execute(
-                    delete(SalesData).where(
+                result = await self.db.execute(
+                    select(SalesData.date)
+                    .where(
                         SalesData.account_id == account.id,
-                        SalesData.date >= clear_from,
+                        SalesData.date >= start_date,
                         SalesData.date <= end_date,
                     )
+                    .distinct()
                 )
-                await self.db.execute(
-                    delete(ReturnData).where(
-                        ReturnData.account_id == account.id,
-                        ReturnData.return_date >= clear_from,
-                        ReturnData.return_date <= end_date,
-                    )
-                )
+                existing_dates = {row[0] for row in result.all()}
 
             for values in aggregated.values():
+                if values["date"] in existing_dates:
+                    continue
                 await self._upsert_sales_record(values)
                 count += 1
                 _accumulate_daily(
@@ -1090,30 +1121,52 @@ class DataExtractionService:
     ) -> int:
         """Backfill historical vendor sales over an explicit date range.
 
-        Reuses sync_vendor_sales_data one settled calendar month at a time so a
-        long history can be rebuilt without holding a single large transaction.
-        Each month reuses the same upsert and DAILY_TOTAL sentinel logic, so the
-        operation is idempotent: re-running clears and repopulates each month's
-        rows rather than double-counting. The default daily sync window is left
-        untouched."""
-        months = _settled_month_windows(start_date, end_date)
+        Reuses sync_vendor_sales_data one 15-day window at a time (the DAY
+        report's maximum) so a long history can be rebuilt as daily rows without
+        holding a single large transaction. Each window reuses the same upsert
+        and DAILY_TOTAL sentinel logic, so the operation is idempotent:
+        re-running clears and repopulates each window's rows rather than
+        double-counting. A window that still fails after a throttle cooldown is
+        skipped so one bad window does not abort the whole backfill."""
+        windows = _day_windows(start_date, end_date)
         total = 0
         self.backfill_windows_skipped = 0
-        for index, (month_start, month_end) in enumerate(months):
+        for index, (window_start, window_end) in enumerate(windows):
             if index > 0:
-                # Pause between months so a long historical backfill does not
+                # Pause between windows so a long historical backfill does not
                 # hammer Amazon's report API and trigger throttling.
-                await asyncio.sleep(VENDOR_BACKFILL_MONTH_PAUSE_SECONDS)
-            count = await self.sync_vendor_sales_data(
-                account, organization, month_start, month_end
-            )
-            await self.db.commit()
-            self.backfill_windows_skipped += self.vendor_sales_months_skipped
-            total += count
-            logger.info(
-                "Backfilled vendor sales for %s %s..%s: %d records",
-                account.account_name, month_start, month_end, count,
-            )
+                await asyncio.sleep(VENDOR_BACKFILL_WINDOW_PAUSE_SECONDS)
+            for attempt in range(1, VENDOR_BACKFILL_MAX_WINDOW_ATTEMPTS + 1):
+                count = await self.sync_vendor_sales_data(
+                    account, organization, window_start, window_end
+                )
+                await self.db.commit()
+                # sync_vendor_sales_data swallows per-window report errors and
+                # reports them via the skip counter; with exactly one window per
+                # call, a nonzero counter means this window yielded nothing.
+                window_skipped = self.vendor_sales_months_skipped > 0
+                if not window_skipped:
+                    total += count
+                    logger.info(
+                        "Backfilled vendor sales for %s %s..%s: %d records",
+                        account.account_name, window_start, window_end, count,
+                    )
+                    break
+                if attempt < VENDOR_BACKFILL_MAX_WINDOW_ATTEMPTS:
+                    logger.warning(
+                        "Vendor backfill window %s..%s yielded no data for %s; "
+                        "cooling down %.0fs before attempt %d/%d",
+                        window_start, window_end, account.account_name,
+                        VENDOR_BACKFILL_THROTTLE_COOLDOWN_SECONDS,
+                        attempt + 1, VENDOR_BACKFILL_MAX_WINDOW_ATTEMPTS,
+                    )
+                    await asyncio.sleep(VENDOR_BACKFILL_THROTTLE_COOLDOWN_SECONDS)
+                else:
+                    self.backfill_windows_skipped += 1
+                    logger.warning(
+                        "Vendor backfill window %s..%s skipped for %s after %d attempt(s)",
+                        window_start, window_end, account.account_name, attempt,
+                    )
         return total
 
     async def backfill_sales_data(

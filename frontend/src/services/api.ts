@@ -225,6 +225,14 @@ export const accountsApi = {
   triggerSync: async (id: string): Promise<void> => {
     await api.post(`/accounts/${id}/sync`)
   },
+
+  triggerBackfill: async (id: string, months = 24): Promise<void> => {
+    await api.post(`/accounts/${id}/backfill`, undefined, { params: { months } })
+  },
+
+  triggerBackfillAll: async (months = 24): Promise<void> => {
+    await api.post('/accounts/backfill-all', undefined, { params: { months } })
+  },
 }
 
 // Reports API

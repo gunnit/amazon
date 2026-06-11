@@ -201,9 +201,19 @@ export interface AmazonAccount {
   has_ads_client_credentials?: boolean
   ads_connection_state?: AdsConnectionState
   ads_connection_detail?: string | null
+  last_backfill_status?: BackfillStatus | null
+  last_backfill_started_at?: string | null
+  last_backfill_completed_at?: string | null
+  last_backfill_records?: number | null
+  last_backfill_windows_skipped?: number | null
+  last_backfill_error?: string | null
+  last_backfill_range_start?: string | null
+  last_backfill_range_end?: string | null
   created_at: string
   updated_at: string
 }
+
+export type BackfillStatus = 'running' | 'success' | 'partial' | 'error'
 
 export type AdsConnectionState =
   | 'ok'
