@@ -15,6 +15,22 @@ _PROVENANCE_KEYS = (
     "weighted_average_rating", "market_revenue_share",
 )
 
+def _first_sentence(text: str) -> str:
+    """Skip reasons can run several sentences; the appendix bullet keeps the
+    first one whole instead of cutting mid-word with an ellipsis."""
+    text = str(text or "").strip()
+    head, _, _ = text.partition(". ")
+    return head.rstrip(".") + "." if head else text
+
+
+_PROVENANCE_LABELS = {
+    "total_revenue_2025": "Total revenue 2025",
+    "total_revenue_2024": "Total revenue 2024",
+    "yoy_percent": "YoY %",
+    "weighted_average_rating": "Weighted average rating",
+    "market_revenue_share": "Market revenue share",
+}
+
 
 class MethodologyAppendixBlock(BaseBlock):
     id = "methodology"
@@ -33,9 +49,9 @@ class MethodologyAppendixBlock(BaseBlock):
         deck.callout(slide, DeckTheme.MARGIN, 1.7, 6.15, 2.3, ctx.t("method_what_we_show"),
                      shown or [ctx.t("no_sections")], accent=DeckTheme.POSITIVE)
 
-        skipped = [f"{name}: {reason}" for name, reason in ctx.skipped_blocks]
+        skipped = [f"{name}: {_first_sentence(reason)}" for name, reason in ctx.skipped_blocks]
         deck.callout(slide, DeckTheme.MARGIN + 6.45, 1.7, 6.15, 2.3, ctx.t("method_skipped"),
-                     [fmt.truncate(item, 110) for item in skipped] or [ctx.t("value_none")],
+                     skipped or [ctx.t("value_none")],
                      accent=DeckTheme.MUTED)
 
         registry = ctx.metrics.get("metric_source_registry") or {}
@@ -44,7 +60,7 @@ class MethodologyAppendixBlock(BaseBlock):
             entry = registry.get(key)
             if not entry:
                 continue
-            rows.append([key.replace("_", " ").capitalize(),
+            rows.append([_PROVENANCE_LABELS.get(key, key.replace("_", " ").capitalize()),
                          str(entry.get("quality") or fmt.EMPTY).upper(),
                          fmt.truncate(str(entry.get("source") or fmt.EMPTY), 48)])
         if rows and all(row[2] == fmt.EMPTY for row in rows):

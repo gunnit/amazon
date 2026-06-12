@@ -29,11 +29,11 @@ class MarketShareBlock(BaseBlock):
         deck.chrome(slide, page)
         deck.heading(slide, ctx.t("market_share_title"), ctx.t("market_share_subtitle"))
         market = ctx.m("market_analysis") or {}
-        chip = ctx.quality("market_revenue_share")
+        chip = ctx.quality_chip("market_revenue_share")
         kpis = [
-            (ctx.t("kpi_market_size_2025"), fmt.currency(market.get("market_size_2025")), chip),
-            (ctx.t("kpi_revenue_share_2025"), fmt.share(market.get("market_share_2025")), chip),
-            (ctx.t("kpi_revenue_share_2024"), fmt.share(market.get("market_share_2024")), chip),
+            (ctx.t("kpi_market_size_2025"), ctx.fmt.currency(market.get("market_size_2025")), chip),
+            (ctx.t("kpi_revenue_share_2025"), ctx.fmt.share(market.get("market_share_2025")), chip),
+            (ctx.t("kpi_revenue_share_2024"), ctx.fmt.share(market.get("market_share_2024")), chip),
         ]
         kpis = [k for k in kpis if k[1] != fmt.EMPTY]
         gap = 0.28
@@ -46,7 +46,7 @@ class MarketShareBlock(BaseBlock):
         if competitors:
             labels = [fmt.truncate(c.get("brand"), 22) for c in competitors]
             values = [float(c.get("revenue") or 0) for c in competitors]
-            png = charts.hbar(labels, values, value_fmt=lambda v: fmt.currency(v),
+            png = charts.hbar(labels, values, value_fmt=lambda v: ctx.fmt.currency(v),
                               color=DeckTheme.accent(0), w_in=11.0, h_in=3.0)
             deck.picture(slide, png, DeckTheme.MARGIN, 3.3, 11.4, 3.0)
         return BlockResult(rendered=True)
@@ -84,18 +84,18 @@ class SearchVisibilityBlock(BaseBlock):
         deck.chrome(slide, page)
         deck.heading(slide, ctx.t("search_visibility_title"), ctx.t("search_visibility_subtitle"))
         market = self._market(ctx)
-        chip = ctx.quality("search_click_share")
+        chip = ctx.quality_chip("search_click_share")
 
         competitor_terms = market.get("terms_with_competitor_top_click")
         terms_total = market.get("search_terms_total")
         competitor_kpi = (
-            f"{fmt.integer(competitor_terms)} / {fmt.integer(terms_total)}"
+            f"{ctx.fmt.integer(competitor_terms)} / {ctx.fmt.integer(terms_total)}"
             if competitor_terms is not None and terms_total
             else fmt.EMPTY
         )
         kpis = [
-            (ctx.t("kpi_search_click_share"), fmt.share(market.get("search_click_share")), chip),
-            (ctx.t("kpi_search_purchase_share"), fmt.share(market.get("search_purchase_share")), chip),
+            (ctx.t("kpi_search_click_share"), ctx.fmt.share(market.get("search_click_share")), chip),
+            (ctx.t("kpi_search_purchase_share"), ctx.fmt.share(market.get("search_purchase_share")), chip),
             (ctx.t("kpi_competitor_top_terms"), competitor_kpi, chip),
         ]
         kpis = [k for k in kpis if k[1] != fmt.EMPTY]
@@ -114,10 +114,10 @@ class SearchVisibilityBlock(BaseBlock):
             elif term.get("top_click_is_competitor") is False:
                 owner = ctx.t("label_own_brand")
             rows.append([
-                fmt.integer(term.get("search_frequency_rank")),
+                ctx.fmt.integer(term.get("search_frequency_rank")),
                 fmt.truncate(term.get("search_term"), 32),
                 fmt.truncate(top_clicked.get("product_title") or top_clicked.get("asin"), 38),
-                fmt.share(top_clicked.get("click_share")),
+                ctx.fmt.share(top_clicked.get("click_share")),
                 owner,
             ])
         if rows:

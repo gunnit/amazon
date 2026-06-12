@@ -27,6 +27,14 @@ _DECK_STRINGS = {
         "of_revenue": "of revenue",
         "latent_value": "latent value in inactive catalog",
         "no_sections": "No data-backed sections were available for this brand.",
+        "insight_revenue_moved": "Revenue moved {a} → {b} ({pct}).",
+        "insight_inactive_asins": "{n} of {total} ASINs are inactive ({pct}) — latent value in inactive catalog.",
+        "insight_top_share": "Top {n} ASINs drive {share} of revenue.",
+        "insight_content_images": "{n} of {total} ASINs carry fewer than 5 images — prioritize image upgrades on the top-revenue ASINs.",
+        "insight_content_generic": "Listing content is broadly complete — keep titles, bullets and images aligned with category best practice.",
+        "frag_gap_prefix": "Key gaps:",
+        "frag_inactive": "{pct} of the catalog is inactive",
+        "frag_declining": "{pct} of active ASINs are declining YoY",
     },
     "it": {
         "exec_summary_title": "Sintesi esecutiva",
@@ -46,6 +54,14 @@ _DECK_STRINGS = {
         "of_revenue": "del fatturato",
         "latent_value": "valore latente nel catalogo inattivo",
         "no_sections": "Nessuna sezione supportata dai dati era disponibile per questa marca.",
+        "insight_revenue_moved": "Il fatturato è passato da {a} a {b} ({pct}).",
+        "insight_inactive_asins": "{n} ASIN su {total} sono inattivi ({pct}) — valore latente nel catalogo inattivo.",
+        "insight_top_share": "I top {n} ASIN generano il {share} del fatturato.",
+        "insight_content_images": "{n} ASIN su {total} hanno meno di 5 immagini — dare priorità all'upgrade immagini sugli ASIN a maggior fatturato.",
+        "insight_content_generic": "I contenuti delle schede sono nel complesso completi — mantenere titoli, bullet e immagini allineati alle best practice di categoria.",
+        "frag_gap_prefix": "Criticità principali:",
+        "frag_inactive": "il {pct} del catalogo è inattivo",
+        "frag_declining": "il {pct} degli ASIN attivi è in calo YoY",
     },
 }
 
@@ -53,10 +69,12 @@ _DECK_STRINGS = {
 class DeckContext:
     def __init__(self, metrics: dict[str, Any], narrative: dict[str, Any], language: str = "en") -> None:
         from app.services.brand_analysis_service import PPTX_STATIC_STRINGS
+        from app.services.brand_analysis.deck.format import Formatter
 
         self.metrics = metrics or {}
         self.narrative = narrative or {}
         self.language = "it" if str(language or "").lower().startswith("it") else "en"
+        self.fmt = Formatter(self.language)
         self.brand = str(self.metrics.get("brand_name") or "Brand").upper()
         self._base_strings = PPTX_STATIC_STRINGS
         self.rendered_block_ids: list[str] = []
@@ -90,6 +108,14 @@ class DeckContext:
     def quality(self, metric_key: str) -> str:
         registry = self.metrics.get("metric_source_registry") or {}
         return str((registry.get(metric_key) or {}).get("quality") or "").upper()
+
+    def quality_chip(self, metric_key: str) -> str:
+        """Chip shown next to a KPI label on client tiles. Exact values are the
+        norm and stay unflagged (the reference deck carries no chips); only
+        estimated/partial provenance is surfaced. Full detail stays in the
+        methodology appendix."""
+        quality = self.quality(metric_key)
+        return "" if quality in ("", "EXACT") else quality
 
     def priority_actions(self) -> list[str]:
         from app.services.brand_analysis_service import build_priority_actions

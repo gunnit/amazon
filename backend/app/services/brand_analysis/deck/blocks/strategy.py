@@ -91,12 +91,12 @@ class GrowthProjectionBlock(BaseBlock):
         deck.text(slide, DeckTheme.MARGIN + 0.25, y + 0.32, 2.5, 0.3,
                   ctx.t("current_situation"), size=12, bold=True, color=DeckTheme.SUBTLE_INK)
         deck.text(slide, DeckTheme.MARGIN + 2.85, y + 0.17, 3.2, 0.56,
-                  fmt.currency(ctx.m("total_revenue_2025")), size=26, bold=True,
+                  ctx.fmt.currency(ctx.m("total_revenue_2025")), size=26, bold=True,
                   color=DeckTheme.BRAND_PRIMARY)
-        detail = (f"{fmt.percent_signed(ctx.m('yoy_percent'))} YoY   ·   "
-                  f"{fmt.integer(ctx.m('active_asins_2025'))} "
+        detail = (f"{ctx.fmt.percent_signed(ctx.m('yoy_percent'))} YoY   ·   "
+                  f"{ctx.fmt.integer(ctx.m('active_asins_2025'))} "
                   f"{ctx.t('projection_active_asins')} "
-                  f"{fmt.integer(ctx.m('total_asins_2025'))}")
+                  f"{ctx.fmt.integer(ctx.m('total_asins_2025'))}")
         deck.text(slide, DeckTheme.MARGIN + 6.3, y + 0.32, DeckTheme.content_w() - 6.55, 0.3,
                   detail, size=12, color=DeckTheme.SUBTLE_INK)
 
@@ -114,8 +114,8 @@ class GrowthProjectionBlock(BaseBlock):
                     f"{self._signed_pct(scenario.get('growth_high'))}")
             deck.text(slide, x + 0.25, cy + 0.72, col_w - 0.5, 0.55,
                       band, size=28, bold=True, color=color)
-            revenue_range = (f"{fmt.currency(scenario.get('revenue_low'))} – "
-                             f"{fmt.currency(scenario.get('revenue_high'))}")
+            revenue_range = (f"{ctx.fmt.currency(scenario.get('revenue_low'))} – "
+                             f"{ctx.fmt.currency(scenario.get('revenue_high'))}")
             deck.text(slide, x + 0.25, cy + 1.5, col_w - 0.5, 0.32,
                       revenue_range, size=14, bold=True, color=DeckTheme.INK)
             deck.text(slide, x + 0.25, cy + 1.95, col_w - 0.5, 0.5,

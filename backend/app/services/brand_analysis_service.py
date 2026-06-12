@@ -2038,78 +2038,135 @@ def _remove_vine_mentions(value: Any) -> Any:
 
 
 def build_fallback_narrative(metrics: dict[str, Any], language: str = "en") -> dict[str, Any]:
-    """Build deterministic strategic text when AI is unavailable."""
+    """Build deterministic strategic text when AI is unavailable.
+
+    Bilingual (en/it, matching the deck language) and dynamic: bullets whose
+    underlying metric is absent are omitted instead of rendering as N/A."""
+    from app.services.brand_analysis.deck.format import Formatter
+    from app.services.brand_analysis.deck.format import real_category as _real_category
+
+    it = str(language or "").lower().startswith("it")
+    fmtr = Formatter(language)
     brand = metrics["brand_name"]
-    top_category = (metrics.get("revenue_by_subcategory") or [{}])[0].get("subcategory", "core categories")
-    decline = metrics.get("subcategory_with_largest_decline") or {}
+    top_category = _real_category((metrics.get("revenue_by_subcategory") or [{}])[0].get("subcategory"))
+    decline_subcat = _real_category((metrics.get("subcategory_with_largest_decline") or {}).get("subcategory"))
     active = metrics.get("active_asins_2025") or 0
     total = metrics.get("total_asins_2025") or 0
     inactive_pct = metrics.get("percentage_inactive_asins") or 0
+    rating = metrics.get("weighted_average_rating")
+    declining = int(metrics.get("declining_asins_count") or 0)
+    top5_share = metrics.get("top_5_revenue_share")
+    revenue_2025 = fmtr.currency(metrics.get("total_revenue_2025"))
+
+    if it:
+        focus = f"sui contenuti di {top_category}" if top_category else "sui contenuti delle categorie principali"
+        overview = (
+            f"{brand} ha generato {revenue_2025} nel 2025 con {active} ASIN attivi su {total}. "
+            f"La principale opportunità è recuperare la copertura del catalogo inattivo e concentrare "
+            f"l'investimento {focus}."
+        )
+        strengths = ["Il fatturato è concentrato su ASIN di punta identificabili: la prioritizzazione è praticabile."]
+        if top_category:
+            strengths.append(f"La categoria principale, {top_category}, mostra slancio.")
+        if rating is not None:
+            strengths.append(f"La valutazione media è {fmtr.number(rating, 2)} dove le recensioni sono presenti.")
+        weaknesses = [f"Il {fmtr.share(inactive_pct)} del catalogo 2025 è inattivo."]
+        if declining > 0:
+            weaknesses.append(f"{declining} ASIN attivi comparabili sono in calo anno su anno.")
+        weaknesses.append("Contenuti delle schede e controllo dei rivenditori richiedono interventi mirati dove i dati mostrano lacune.")
+        adv_focus = f"su {top_category}" if top_category else "sulle categorie a maggior fatturato"
+        pillars = [
+            {"title": "Cleanup & Advanced SEO",
+             "body": f"Dare priorità agli ASIN a maggior fatturato e colmare i gap di contenuto nel catalogo attivo {brand}."},
+            {"title": "Brand Protection",
+             "body": "Monitorare frammentazione dei seller, proprietà della Buy Box e pressione sui prezzi dove i dati seller sono presenti."},
+            {"title": "Integrated ADV Strategy",
+             "body": f"Concentrare le campagne {adv_focus} e difendere la domanda branded prima di ampliare la copertura."},
+        ]
+        roadmap = [
+            {"phase": "01", "title": "Audit & Quick Wins · Mesi 1–3",
+             "body": "Audit del catalogo, pulizia SEO, immagini sugli ASIN prioritari, verifica rivenditori e prime campagne."},
+            {"phase": "02", "title": "Scaling & Optimization · Mesi 4–8",
+             "body": "Rollout contenuti A+, riattivazione selettiva degli ASIN inattivi, espansione campagne e monitoraggio Buy Box."},
+            {"phase": "03", "title": "Consolidation & Growth · Mesi 9–12",
+             "body": "Ottimizzazione Brand Store, bundle o varianti dove supportati, reporting KPI mensile e tuning del ROI."},
+        ]
+        current_situation = [f"Fatturato 2025: {revenue_2025}", f"ASIN attivi: {active} su {total}"]
+        conclusion_strengths = []
+        if top_category:
+            conclusion_strengths.append(f"Categoria principale: {top_category}")
+        if top5_share is not None:
+            conclusion_strengths.append(f"I top 5 ASIN generano il {fmtr.share(top5_share)} del fatturato")
+        plan = ["Piano operativo in 3 fasi su 12 mesi"]
+        urgency = [f"Catalogo inattivo: {fmtr.share(inactive_pct)}"]
+        if decline_subcat:
+            urgency.append(f"Sottocategoria in maggior calo: {decline_subcat}")
+        scenario_label_derived = "Scenario realistico a 12 mesi"
+        scenario_label_illustrative = "Intervallo realistico illustrativo"
+    else:
+        focus = f"on {top_category}" if top_category else "on the core revenue categories"
+        overview = (
+            f"{brand} generated {revenue_2025} in 2025 with {active} active ASINs out of {total}. "
+            f"The main opportunity is to recover inactive catalog coverage and focus content investment {focus}."
+        )
+        strengths = ["Revenue is concentrated in identifiable hero ASINs, making prioritization practical."]
+        if top_category:
+            strengths.append(f"Top category momentum is visible in {top_category}.")
+        if rating is not None:
+            strengths.append(f"Average rating is {fmtr.number(rating, 2)} where ratings are present.")
+        weaknesses = [f"{fmtr.share(inactive_pct)} of the 2025 catalog is inactive."]
+        if declining > 0:
+            weaknesses.append(f"{declining} comparable active ASINs declined year over year.")
+        weaknesses.append("Listing content and reseller control require targeted cleanup where source columns show gaps.")
+        adv_focus = f"on {top_category}" if top_category else "on the top revenue categories"
+        pillars = [
+            {"title": "Cleanup & Advanced SEO",
+             "body": f"Prioritize the top revenue ASINs and fix content gaps across the active {brand} catalog."},
+            {"title": "Brand Protection",
+             "body": "Monitor seller fragmentation, Buy Box ownership and pricing pressure where seller data is present."},
+            {"title": "Integrated ADV Strategy",
+             "body": f"Concentrate campaigns {adv_focus} and defend branded demand before scaling broader coverage."},
+        ]
+        roadmap = [
+            {"phase": "01", "title": "Audit & Quick Wins · Months 1–3",
+             "body": "Catalog audit, SEO cleanup, image fixes on priority ASINs, reseller review and initial campaigns."},
+            {"phase": "02", "title": "Scaling & Optimization · Months 4–8",
+             "body": "A+ content rollout, selective inactive ASIN reactivation, campaign expansion and Buy Box monitoring."},
+            {"phase": "03", "title": "Consolidation & Growth · Months 9–12",
+             "body": "Brand Store optimization, bundles or variants where supported, monthly KPI reporting and ROI tuning."},
+        ]
+        current_situation = [f"Revenue 2025: {revenue_2025}", f"Active ASINs: {active} out of {total}"]
+        conclusion_strengths = []
+        if top_category:
+            conclusion_strengths.append(f"Top category: {top_category}")
+        if top5_share is not None:
+            conclusion_strengths.append(f"Top 5 ASINs drive {fmtr.share(top5_share)} of revenue")
+        plan = ["Use a 3-phase 12-month operating plan"]
+        urgency = [f"Inactive catalog: {fmtr.share(inactive_pct)}"]
+        if decline_subcat:
+            urgency.append(f"Largest declining subcategory: {decline_subcat}")
+        scenario_label_derived = "Realistic scenario at 12 months"
+        scenario_label_illustrative = "Illustrative realistic range"
+
+    scenarios = metrics.get("growth_projection_scenarios") or {}
+    realistic = scenarios.get("realistic") or {}
+    if realistic.get("revenue_low") is not None and realistic.get("revenue_high") is not None:
+        label = (scenario_label_derived
+                 if scenarios.get("basis") == "derived_from_yoy_history"
+                 else scenario_label_illustrative)
+        plan.append(f"{label}: {fmtr.currency(realistic['revenue_low'])} – {fmtr.currency(realistic['revenue_high'])}")
 
     narrative = {
-        "overview": (
-            f"{brand} generated {format_currency(metrics.get('total_revenue_2025'))} in 2025 "
-            f"with {active} active ASINs out of {total}. The main opportunity is to recover inactive catalog coverage "
-            f"and focus content investment on {top_category}."
-        ),
-        "strengths": [
-            f"Revenue is concentrated in identifiable hero ASINs, making prioritization practical.",
-            f"Top category momentum is visible in {top_category}.",
-            f"Average rating is {format_number(metrics.get('weighted_average_rating'), 2)} where ratings are present.",
-        ],
-        "weaknesses": [
-            f"{format_percent(inactive_pct)} of the 2025 catalog is inactive.",
-            f"{metrics.get('declining_asins_count', 0)} comparable active ASINs declined year over year.",
-            "Listing content and reseller control require targeted cleanup where source columns show gaps.",
-        ],
-        "approach_pillars": [
-            {
-                "title": "Cleanup & Advanced SEO",
-                "body": f"Prioritize the top revenue ASINs and fix content gaps across the active {brand} catalog.",
-            },
-            {
-                "title": "Brand Protection",
-                "body": "Monitor seller fragmentation, Buy Box ownership and pricing pressure where seller data is present.",
-            },
-            {
-                "title": "Integrated ADV Strategy",
-                "body": f"Concentrate campaigns on {top_category} and defend branded demand before scaling broader coverage.",
-            },
-        ],
-        "roadmap": [
-            {
-                "phase": "01",
-                "title": "Audit & Quick Wins - Months 1-3",
-                "body": "Catalog audit, SEO cleanup, image fixes on priority ASINs, reseller review and initial campaigns.",
-            },
-            {
-                "phase": "02",
-                "title": "Scaling & Optimization - Months 4-8",
-                "body": "A+ content rollout, selective inactive ASIN reactivation, campaign expansion and Buy Box monitoring.",
-            },
-            {
-                "phase": "03",
-                "title": "Consolidation & Growth - Months 9-12",
-                "body": "Brand Store optimization, bundles or variants where supported, monthly KPI reporting and ROI tuning.",
-            },
-        ],
+        "overview": overview,
+        "strengths": strengths,
+        "weaknesses": weaknesses,
+        "approach_pillars": pillars,
+        "roadmap": roadmap,
         "conclusions": {
-            "current_situation": [
-                f"Revenue 2025: {format_currency(metrics.get('total_revenue_2025'))}",
-                f"Active ASINs: {active} out of {total}",
-            ],
-            "strengths": [
-                f"Top category: {top_category}",
-                f"Top 5 ASINs drive {format_share(metrics.get('top_5_revenue_share'))} of revenue",
-            ],
-            "plan": [
-                "Use a 3-phase 12-month operating plan",
-                f"Illustrative scenario range: {format_currency((metrics.get('growth_projection_scenarios') or {}).get('realistic', {}).get('revenue_low'))} - {format_currency((metrics.get('growth_projection_scenarios') or {}).get('realistic', {}).get('revenue_high'))}",
-            ],
-            "urgency": [
-                f"Inactive catalog: {format_percent(inactive_pct)}",
-                f"Largest declining subcategory: {decline.get('subcategory', 'N/A')}",
-            ],
+            "current_situation": current_situation,
+            "strengths": conclusion_strengths,
+            "plan": plan,
+            "urgency": urgency,
         },
     }
     if not metrics.get("rules", {}).get("can_mention_vine", False):

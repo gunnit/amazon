@@ -46,12 +46,12 @@ class ExecSummaryBlock(BaseBlock):
                      ctx.t("so_what"), headline)
 
         kpis = [
-            (ctx.t("kpi_revenue_2025"), fmt.currency(ctx.m("total_revenue_2025")), ctx.quality("total_revenue_2025")),
-            (ctx.t("kpi_yoy_change"), fmt.percent_signed(ctx.m("yoy_percent")), ctx.quality("yoy_percent")),
-            (ctx.t("kpi_active_2025"), fmt.integer(ctx.m("active_asins_2025")), ""),
-            (ctx.t("kpi_pct_inactive"), fmt.share(ctx.m("percentage_inactive_asins")), ""),
-            (ctx.t("kpi_top_5_revenue_share"), fmt.share(ctx.m("top_5_revenue_share")), ""),
-            (ctx.t("kpi_asins_2025"), fmt.integer(ctx.m("total_asins_2025")), ""),
+            (ctx.t("kpi_revenue_2025"), ctx.fmt.currency(ctx.m("total_revenue_2025")), ctx.quality_chip("total_revenue_2025")),
+            (ctx.t("kpi_yoy_change"), ctx.fmt.percent_signed(ctx.m("yoy_percent")), ctx.quality_chip("yoy_percent")),
+            (ctx.t("kpi_active_2025"), ctx.fmt.integer(ctx.m("active_asins_2025")), ""),
+            (ctx.t("kpi_pct_inactive"), ctx.fmt.share(ctx.m("percentage_inactive_asins")), ""),
+            (ctx.t("kpi_top_5_revenue_share"), ctx.fmt.share(ctx.m("top_5_revenue_share")), ""),
+            (ctx.t("kpi_asins_2025"), ctx.fmt.integer(ctx.m("total_asins_2025")), ""),
         ]
         kpis = [(label, value, chip) for label, value, chip in kpis if value not in ("", "—", "N/A")]
 
@@ -70,8 +70,8 @@ class ExecSummaryBlock(BaseBlock):
 
     @staticmethod
     def _fallback_headline(ctx) -> str:
-        rev = fmt.currency(ctx.m("total_revenue_2025"))
-        yoy = fmt.percent_signed(ctx.m("yoy_percent"))
-        inactive = fmt.share(ctx.m("percentage_inactive_asins"))
+        rev = ctx.fmt.currency(ctx.m("total_revenue_2025"))
+        yoy = ctx.fmt.percent_signed(ctx.m("yoy_percent"))
+        inactive = ctx.fmt.share(ctx.m("percentage_inactive_asins"))
         return (f"{ctx.brand} generated {rev} in 2025 ({yoy} YoY) with {inactive} of the "
                 f"catalog inactive.")

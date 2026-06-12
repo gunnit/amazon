@@ -33,14 +33,15 @@ class RevenueYoYBlock(BaseBlock):
         rev24 = float(ctx.m("total_revenue_2024") or 0)
         rev25 = float(ctx.m("total_revenue_2025") or 0)
         png = charts.waterfall("2024", rev24, "2025", rev25,
-                               value_fmt=lambda v: fmt.currency(v))
+                               value_fmt=lambda v: ctx.fmt.currency(v))
         deck.picture(slide, png, DeckTheme.MARGIN, 1.85, 7.4, 3.6)
         deck.kpi(slide, 9.57, 2.0, 3.4, 1.45, ctx.t("kpi_yoy"),
-                 fmt.percent_signed(ctx.m("yoy_percent")), chip=ctx.quality("yoy_percent"))
+                 ctx.fmt.percent_signed(ctx.m("yoy_percent")), chip=ctx.quality_chip("yoy_percent"))
         deck.kpi(slide, 9.57, 3.65, 3.4, 1.45, ctx.t("kpi_revenue_2025"),
-                 fmt.currency(rev25), chip=ctx.quality("total_revenue_2025"))
-        fallback = (f"Revenue moved {fmt.currency(rev24)} → {fmt.currency(rev25)} "
-                    f"({fmt.percent_signed(ctx.m('yoy_percent'))}).")
+                 ctx.fmt.currency(rev25), chip=ctx.quality_chip("total_revenue_2025"))
+        fallback = ctx.t("insight_revenue_moved").format(
+            a=ctx.fmt.currency(rev24), b=ctx.fmt.currency(rev25),
+            pct=ctx.fmt.percent_signed(ctx.m("yoy_percent")))
         _insight_strip(ctx, deck, slide, self.id, fallback)
         return BlockResult(rendered=True)
 
@@ -58,10 +59,10 @@ class CatalogHealthBlock(BaseBlock):
         deck.chrome(slide, page)
         deck.heading(slide, ctx.t("catalog_health_title"), ctx.t("catalog_health_subtitle"))
         kpis = [
-            (ctx.t("kpi_asins_2025"), fmt.integer(ctx.m("total_asins_2025"))),
-            (ctx.t("kpi_active_2025"), fmt.integer(ctx.m("active_asins_2025"))),
-            (ctx.t("kpi_inactive_2025"), fmt.integer(ctx.m("inactive_asins_2025"))),
-            (ctx.t("kpi_new_yoy"), fmt.integer(ctx.m("new_asins_yoy"))),
+            (ctx.t("kpi_asins_2025"), ctx.fmt.integer(ctx.m("total_asins_2025"))),
+            (ctx.t("kpi_active_2025"), ctx.fmt.integer(ctx.m("active_asins_2025"))),
+            (ctx.t("kpi_inactive_2025"), ctx.fmt.integer(ctx.m("inactive_asins_2025"))),
+            (ctx.t("kpi_new_yoy"), ctx.fmt.integer(ctx.m("new_asins_yoy"))),
         ]
         kpis = [k for k in kpis if k[1] != fmt.EMPTY]
         if not kpis:
@@ -104,17 +105,18 @@ class ActiveInactiveBlock(BaseBlock):
         png = charts.donut(
             [(ctx.t("kpi_active"), active, DeckTheme.POSITIVE),
              (ctx.t("kpi_inactive"), inactive, DeckTheme.NEGATIVE)],
-            center=fmt.share(ctx.m("percentage_inactive_asins")),
+            center=ctx.fmt.share(ctx.m("percentage_inactive_asins")),
         )
         deck.picture(slide, png, DeckTheme.MARGIN, 1.9, 4.0, 3.6)
-        deck.kpi(slide, 6.17, 2.0, 3.3, 1.45, ctx.t("kpi_active"), fmt.integer(active),
+        deck.kpi(slide, 6.17, 2.0, 3.3, 1.45, ctx.t("kpi_active"), ctx.fmt.integer(active),
                  accent=DeckTheme.POSITIVE)
-        deck.kpi(slide, 9.67, 2.0, 3.3, 1.45, ctx.t("kpi_inactive"), fmt.integer(inactive),
+        deck.kpi(slide, 9.67, 2.0, 3.3, 1.45, ctx.t("kpi_inactive"), ctx.fmt.integer(inactive),
                  accent=DeckTheme.NEGATIVE)
         deck.kpi(slide, 6.17, 3.65, 6.8, 1.45, ctx.t("kpi_pct_inactive"),
-                 fmt.share(ctx.m("percentage_inactive_asins")))
-        fallback = (f"{fmt.integer(inactive)} of {fmt.integer(total)} ASINs are inactive "
-                    f"({fmt.share(ctx.m('percentage_inactive_asins'))}) — {ctx.t('latent_value')}.")
+                 ctx.fmt.share(ctx.m("percentage_inactive_asins")))
+        fallback = ctx.t("insight_inactive_asins").format(
+            n=ctx.fmt.integer(inactive), total=ctx.fmt.integer(total),
+            pct=ctx.fmt.share(ctx.m("percentage_inactive_asins")))
         _insight_strip(ctx, deck, slide, self.id, fallback)
         return BlockResult(rendered=True)
 
@@ -132,11 +134,12 @@ class TopPerformersBlock(BaseBlock):
         deck.chrome(slide, page)
         deck.heading(slide, ctx.t("top_performers_title"), ctx.t("top_performers_subtitle"))
         items = (ctx.m("top_5_asins") or [])[:5]
-        labels = [fmt.truncate(item.get("product_name") or item.get("asin"), 34) for item in items]
+        labels = [fmt.product_label(item.get("product_name") or item.get("asin"), ctx.brand, 34)
+                  for item in items]
         values = [float(item.get("revenue_2025") or 0) for item in items]
-        png = charts.hbar(labels, values, value_fmt=lambda v: fmt.currency(v), w_in=11.0, h_in=3.6)
+        png = charts.hbar(labels, values, value_fmt=lambda v: ctx.fmt.currency(v), w_in=11.0, h_in=3.6)
         deck.picture(slide, png, DeckTheme.MARGIN, 1.95, 11.4, 3.8)
-        share = fmt.share(ctx.m("top_5_revenue_share"))
-        fallback = f"Top {len(items)} ASINs drive {share} {ctx.t('of_revenue')}."
+        fallback = ctx.t("insight_top_share").format(
+            n=len(items), share=ctx.fmt.share(ctx.m("top_5_revenue_share")))
         _insight_strip(ctx, deck, slide, self.id, fallback)
         return BlockResult(rendered=True)

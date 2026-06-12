@@ -4,7 +4,6 @@ from __future__ import annotations
 from app.services.brand_analysis.deck.block import Block, Section
 from app.services.brand_analysis.deck.blocks.catalog import (
     ContentAuditBlock,
-    ReviewImageBlock,
     SubcategoryBlock,
 )
 from app.services.brand_analysis.deck.blocks.channel import (
@@ -51,7 +50,6 @@ def default_blocks() -> list[Block]:
         ActiveInactiveBlock(),
         TopPerformersBlock(),
         ContentAuditBlock(),
-        ReviewImageBlock(),
         SubcategoryBlock(),
         OperationalGapBlock(),
         ChannelGapBlock(),
