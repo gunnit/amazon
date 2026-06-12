@@ -6,6 +6,7 @@ required). Seller accounts only.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 import logging
@@ -25,6 +26,8 @@ ECONOMICS_DATA_LAG_DAYS = 2
 # Rolling window for the daily job; first run per account pulls a deeper one.
 ECONOMICS_ROLLING_WINDOW_DAYS = 14
 ECONOMICS_FIRST_SYNC_DAYS = 30
+# Pause between historical backfill windows to pace the Data Kiosk quota.
+ECONOMICS_BACKFILL_WINDOW_PAUSE_SECONDS = 2.0
 
 
 class EconomicsService:
@@ -243,3 +246,38 @@ query {{
             count, account.account_name, start, end,
         )
         return count
+
+    async def backfill_economics_history(
+        self,
+        account: AmazonAccount,
+        organization=None,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        """Backfill historical per-ASIN economics over an explicit date range.
+
+        Walks calendar-month windows through sync_asin_economics, committing
+        per window. Idempotent via the (account, date, asin) upsert. Sellers
+        only (sync_asin_economics returns 0 for vendors)."""
+        from app.services.data_extraction import _month_windows
+
+        if account.account_type == AccountType.VENDOR:
+            return 0
+
+        end_date = min(end_date, date.today() - timedelta(days=ECONOMICS_DATA_LAG_DAYS))
+        if start_date > end_date:
+            return 0
+
+        total = 0
+        for index, (window_start, window_end) in enumerate(
+            _month_windows(start_date, end_date)
+        ):
+            if index > 0:
+                await asyncio.sleep(ECONOMICS_BACKFILL_WINDOW_PAUSE_SECONDS)
+            count = await self.sync_asin_economics(
+                account, organization, start_date=window_start, end_date=window_end
+            )
+            await self.db.commit()
+            total += count
+        return total

@@ -1293,11 +1293,31 @@ class DataExtractionService:
 
         client = self._create_sp_api_client(account, organization)
         raw_orders = client.fetch_orders(created_after, created_before)
+
+        await self._touch_sync(account)
+        synced_orders, synced_items = await self._persist_orders(account, client, raw_orders)
+
+        await self.db.flush()
+        logger.info(
+            "Synced %s orders and %s order items for %s (%s to %s)",
+            synced_orders,
+            synced_items,
+            account.account_name,
+            created_after.isoformat(),
+            created_before.isoformat(),
+        )
+        return synced_orders
+
+    async def _persist_orders(
+        self, account: AmazonAccount, client, raw_orders: List[Dict[str, Any]]
+    ) -> tuple[int, int]:
+        """Upsert raw orders and their items; returns (orders, items) written.
+
+        Fetches items per order with 1 req/s pacing to stay inside the Orders
+        API getOrderItems rate limit."""
         synced_orders = 0
         synced_items = 0
         last_orders_request_at = time.monotonic() - 1.0
-
-        await self._touch_sync(account)
 
         for index, raw_order in enumerate(raw_orders, start=1):
             amazon_order_id = raw_order.get("AmazonOrderId") or raw_order.get("amazonOrderId")
@@ -1374,16 +1394,54 @@ class DataExtractionService:
             if index % 10 == 0 or index == len(raw_orders):
                 await self._touch_sync(account)
 
-        await self.db.flush()
-        logger.info(
-            "Synced %s orders and %s order items for %s (%s to %s)",
-            synced_orders,
-            synced_items,
-            account.account_name,
-            created_after.isoformat(),
-            created_before.isoformat(),
-        )
-        return synced_orders
+        return synced_orders, synced_items
+
+    async def backfill_orders_history(
+        self,
+        account: AmazonAccount,
+        organization=None,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        """Backfill historical seller orders over an explicit date range.
+
+        The routine sync_orders window is clamped to the last 7 days, so this
+        walks the range one calendar month at a time through the Orders API
+        (its own quota, separate from the Reports API) and commits per window.
+        Idempotent via the amazon_order_id upsert. Vendors have no Orders API."""
+        from app.models.amazon_account import AccountType
+
+        if account.account_type == AccountType.VENDOR:
+            logger.info(
+                "Skipping orders history backfill for vendor account %s",
+                account.account_name,
+            )
+            return 0
+
+        client = self._create_sp_api_client(account, organization)
+        total = 0
+        for window_start, window_end in _month_windows(start_date, end_date):
+            window_start_dt = datetime.combine(window_start, datetime.min.time())
+            # CreatedBefore must be at least 2 minutes in the past.
+            window_end_dt = min(
+                datetime.combine(window_end + timedelta(days=1), datetime.min.time()),
+                datetime.utcnow() - timedelta(minutes=2),
+            )
+            if window_start_dt >= window_end_dt:
+                continue
+            raw_orders = client.fetch_orders(window_start_dt, window_end_dt)
+            synced_orders, synced_items = await self._persist_orders(
+                account, client, raw_orders
+            )
+            await self.db.commit()
+            total += synced_orders
+            logger.info(
+                "Backfilled %d orders (%d items) for %s %s..%s",
+                synced_orders, synced_items, account.account_name,
+                window_start, window_end,
+            )
+        return total
 
     # ---- Returns ----
 
@@ -1419,7 +1477,7 @@ class DataExtractionService:
         await self.db.execute(stmt)
 
     async def sync_returns(self, account: AmazonAccount, organization=None) -> int:
-        """Sync seller FBA return events from the returns report."""
+        """Sync seller return events (FBA report, MFN flat file as fallback)."""
         from app.models.amazon_account import AccountType
 
         if account.account_type == AccountType.VENDOR:
@@ -1427,8 +1485,26 @@ class DataExtractionService:
             return 0
 
         client = self._create_sp_api_client(account, organization)
-        raw_rows = client.fetch_returns_report()
+        try:
+            raw_rows = client.fetch_returns_report()
+        except AmazonAPIError as exc:
+            # Amazon CANCELS the FBA returns report for MFN-only sellers, so a
+            # cancelled report means "wrong report", not a transient failure.
+            if exc.error_code != "REPORT_CANCELLED":
+                raise
+            logger.info(
+                "FBA returns report cancelled for %s; falling back to the MFN returns report",
+                account.account_name,
+            )
+            end = date.today()
+            raw_rows = client.fetch_mfn_returns_report(end - timedelta(days=60), end)
 
+        return await self._persist_return_rows(account, raw_rows)
+
+    async def _persist_return_rows(
+        self, account: AmazonAccount, raw_rows: List[Dict[str, Any]]
+    ) -> int:
+        """Dedupe normalized return rows and upsert them; returns rows written."""
         deduped_rows: Dict[tuple[Any, ...], dict] = {}
         failed_rows = 0
 
@@ -1504,6 +1580,53 @@ class DataExtractionService:
             failed_rows,
         )
         return len(deduped_rows)
+
+    async def backfill_returns_history(
+        self,
+        account: AmazonAccount,
+        organization=None,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        """Backfill historical MFN returns over an explicit date range.
+
+        Walks the range in 60-day windows through the merchant-fulfilled
+        returns flat file, committing per window. Best-effort: a window whose
+        report fails is logged and skipped. Idempotent via the returns
+        event-identity upsert."""
+        from app.models.amazon_account import AccountType
+
+        if account.account_type == AccountType.VENDOR:
+            logger.info(
+                "Skipping returns history backfill for vendor account %s",
+                account.account_name,
+            )
+            return 0
+
+        client = self._create_sp_api_client(account, organization)
+        total = 0
+        for index, (window_start, window_end) in enumerate(
+            _day_windows(start_date, end_date, max_days=60)
+        ):
+            if index > 0:
+                await asyncio.sleep(SELLER_BACKFILL_WINDOW_PAUSE_SECONDS)
+            try:
+                raw_rows = client.fetch_mfn_returns_report(window_start, window_end)
+            except AmazonAPIError as exc:
+                logger.warning(
+                    "MFN returns backfill window %s..%s failed for %s, skipping: %s",
+                    window_start, window_end, account.account_name, exc,
+                )
+                continue
+            count = await self._persist_return_rows(account, raw_rows)
+            await self.db.commit()
+            total += count
+            logger.info(
+                "Backfilled %d return rows for %s %s..%s",
+                count, account.account_name, window_start, window_end,
+            )
+        return total
 
     # ---- Inventory Data ----
 

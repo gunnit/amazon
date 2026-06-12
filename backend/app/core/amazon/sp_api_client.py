@@ -1020,6 +1020,64 @@ class SPAPIClient:
             error_code="REPORT_TIMEOUT",
         )
 
+    def fetch_mfn_returns_report(
+        self, start_date: date, end_date: date
+    ) -> List[Dict[str, Any]]:
+        """Fetch and parse the merchant-fulfilled returns flat file.
+
+        The FBA returns report is permanently CANCELLED for MFN-only sellers;
+        this date-ranged report is the MFN counterpart and returns the same
+        normalized row shape as fetch_returns_report."""
+        if self.is_vendor:
+            raise AmazonAPIError(
+                "Returns report is only available for seller accounts",
+                error_code="UNSUPPORTED_ACCOUNT_TYPE",
+            )
+
+        report_data = self.request_and_download_report(
+            report_type="GET_FLAT_FILE_RETURNS_DATA_BY_RETURN_DATE",
+            start_date=start_date,
+            end_date=end_date,
+        )
+        document_text = self._extract_report_document_text(report_data)
+        rows = self._parse_delimited_report_rows(document_text)
+
+        returns: List[Dict[str, Any]] = []
+        for row in rows:
+            return_date = self._parse_report_date(
+                self._pick_report_value(row, "return-request-date", "return-date")
+            )
+            if return_date is None:
+                logger.debug("Skipping MFN return row without return date: %s", row)
+                continue
+
+            returns.append(
+                {
+                    "amazon_order_id": self._normalize_text_label(
+                        self._pick_report_value(row, "order-id", "amazon-order-id")
+                    ),
+                    "asin": self._normalize_asin(self._pick_report_value(row, "asin")),
+                    "sku": self._normalize_text_label(
+                        self._pick_report_value(row, "merchant-sku", "sku", "seller-sku")
+                    ),
+                    "return_date": return_date,
+                    "quantity": self._parse_int(
+                        self._pick_report_value(row, "return-quantity", "quantity")
+                    )
+                    or 1,
+                    "reason": self._normalize_return_reason(
+                        self._pick_report_value(row, "return-reason", "reason")
+                    ),
+                    "disposition": self._normalize_text_label(
+                        self._pick_report_value(row, "resolution")
+                    ),
+                    "detailed_disposition": None,
+                }
+            )
+
+        logger.info("MFN returns report returned %d normalized rows", len(returns))
+        return returns
+
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_inventory_summaries(self) -> List[Dict]:
         """Get FBA inventory summaries with pagination."""

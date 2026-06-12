@@ -177,3 +177,51 @@ def test_fetch_returns_report_supports_eu_dates_and_uppercases_asin(monkeypatch)
             "detailed_disposition": "Customer Damaged",
         }
     ]
+
+
+def test_fetch_mfn_returns_report_maps_flat_file_columns(monkeypatch):
+    client = _make_client()
+    call_args = {}
+    report_body = (
+        "order-id\treturn-request-date\tasin\tmerchant-sku\treturn-quantity\t"
+        "return-reason\tresolution\n"
+        "171-1\t2026-04-01T10:30:00+00:00\tb0mfn001\tSKU-9\t2\tDAMAGED_BY_CARRIER\tRefund\n"
+        "171-2\t2026-04-03\tB0MFN002\tSKU-10\t\tNO_LONGER_NEEDED\tReplacement\n"
+    )
+
+    def fake_request_and_download(report_type, start_date, end_date, report_options=None):
+        call_args.update(report_type=report_type, start_date=start_date, end_date=end_date)
+        return {"document": report_body}
+
+    monkeypatch.setattr(client, "request_and_download_report", fake_request_and_download)
+
+    rows = client.fetch_mfn_returns_report(
+        SP_API_MODULE.date(2026, 4, 1), SP_API_MODULE.date(2026, 5, 31)
+    )
+
+    assert call_args["report_type"] == "GET_FLAT_FILE_RETURNS_DATA_BY_RETURN_DATE"
+    assert call_args["start_date"] == SP_API_MODULE.date(2026, 4, 1)
+    assert call_args["end_date"] == SP_API_MODULE.date(2026, 5, 31)
+    assert rows == [
+        {
+            "amazon_order_id": "171-1",
+            "asin": "B0MFN001",
+            "sku": "SKU-9",
+            "return_date": SP_API_MODULE.date(2026, 4, 1),
+            "quantity": 2,
+            "reason": "Damaged",
+            "disposition": "Refund",
+            "detailed_disposition": None,
+        },
+        {
+            "amazon_order_id": "171-2",
+            "asin": "B0MFN002",
+            "sku": "SKU-10",
+            "return_date": SP_API_MODULE.date(2026, 4, 3),
+            # Blank return-quantity defaults to one returned unit.
+            "quantity": 1,
+            "reason": "No Longer Needed",
+            "disposition": "Replacement",
+            "detailed_disposition": None,
+        },
+    ]

@@ -16,7 +16,7 @@ import threading
 from typing import Iterable, List, Optional, Set, Tuple
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 # allows so dashboards and forecasts have enough history immediately.
 DEFAULT_BACKFILL_MONTHS = 24
 
+# Vendor sales reports reach further back than the seller Sales & Traffic
+# report's hard 2-year cap (verified live: DAY data at least 31 months back).
+VENDOR_BACKFILL_MAX_MONTHS = 36
+
 # Prevent the daily full sync and the lighter intraday sales refresh from
 # competing for the same Amazon Reports API quota.
 _SCHEDULED_SYNC_LOCK = threading.Lock()
@@ -51,10 +55,16 @@ _ORDERS_SYNC_LOCK = threading.Lock()
 # `running` after this long is considered lost and marked as errored.
 BACKFILL_STUCK_THRESHOLD_HOURS = 6
 
-# Sales gap repair: look this far back for missing daily-total rows, stay
-# behind Amazon's publish lag, and cap re-pulled windows per account per run
-# so one account with a long-dead range cannot exhaust the report quota.
-SALES_GAP_LOOKBACK_DAYS = 60
+# An errored backfill is resumed automatically by the recovery sweep once it
+# is at least this old; re-stamping last_backfill_started_at on each attempt
+# makes this the natural retry rate limit.
+BACKFILL_RESUME_MIN_AGE_HOURS = 1
+
+# Sales gap repair: look this far back for missing daily-total rows (bounded
+# per account by its first-ever data point), stay behind Amazon's publish lag,
+# and cap re-pulled windows per account per run so one account with a
+# long-dead range cannot exhaust the report quota.
+SALES_GAP_LOOKBACK_DAYS = 730
 SALES_GAP_PUBLISH_LAG_DAYS = 2
 SALES_GAP_MAX_WINDOWS_PER_ACCOUNT = 5
 
@@ -169,10 +179,16 @@ def sync_accounts_in_thread(account_ids: Iterable[UUID]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_backfill_window(months: int, *, today: Optional[date] = None) -> Tuple[date, date]:
-    """[start, end] for a backfill ``months`` deep, clamped to SP-API's 2-year cap."""
+def _resolve_backfill_window(
+    months: int,
+    *,
+    max_months: int = DEFAULT_BACKFILL_MONTHS,
+    today: Optional[date] = None,
+) -> Tuple[date, date]:
+    """[start, end] for a backfill ``months`` deep, clamped to ``max_months``
+    (sellers are capped at SP-API's 2 years; vendor reports reach further)."""
     end_date = today or date.today()
-    earliest = _subtract_calendar_months(end_date, DEFAULT_BACKFILL_MONTHS)
+    earliest = _subtract_calendar_months(end_date, max_months)
     start_date = max(_subtract_calendar_months(end_date, months), earliest)
     return start_date, end_date
 
@@ -208,44 +224,72 @@ async def _mark_backfill_failed(account_id: UUID, session_factory, exc: Exceptio
         await db.commit()
 
 
-async def _initial_sync_one(account_id: UUID, backfill_months: int, session_factory) -> None:
-    """First-connect pipeline: a full current sync, then a historical sales
-    backfill. Phase 1 stamps account status and fetches current
-    inventory/orders/ads/products + recent sales; phase 2 fills older sales
-    history for forecasting. The backfill is best-effort and never downgrades a
-    successful sync; its outcome is tracked in the last_backfill_* fields."""
-    # Phase 1 — full current sync (also sets sync_status / error state).
-    async with session_factory() as db:
-        service = DataExtractionService(db)
-        try:
-            result = await service.sync_account(account_id)
-            await db.commit()
-            logger.info(
-                "Initial sync completed for %s: %s",
-                account_id,
-                {k: v for k, v in result.items() if k != "status"},
-            )
-        except Exception as exc:
-            try:
-                await db.rollback()
-            except Exception:
-                pass
-            await _persist_sync_failure_state(account_id, session_factory, exc)
-            logger.exception("Initial sync failed for %s; skipping backfill", account_id)
-            return
+async def _backfill_history_extras(
+    account_id: UUID, session_factory, start_date: date, end_date: date
+) -> None:
+    """Best-effort seller history extras: orders, economics, MFN returns.
 
-    # Phase 2 — historical sales backfill (best-effort; commits per month).
-    start_date, end_date = _resolve_backfill_window(backfill_months)
-    await _mark_backfill_started(account_id, session_factory, start_date, end_date)
+    Each source runs in its own session and try/except, so one failure never
+    affects the others — or the sales last_backfill_* status, which is owned
+    exclusively by the sales backfill."""
+    from app.services.economics_service import EconomicsService
+
+    async def _orders(db, account, organization):
+        return await DataExtractionService(db).backfill_orders_history(
+            account, organization, start_date=start_date, end_date=end_date
+        )
+
+    async def _economics(db, account, organization):
+        return await EconomicsService(db).backfill_economics_history(
+            account, organization, start_date=start_date, end_date=end_date
+        )
+
+    async def _returns(db, account, organization):
+        return await DataExtractionService(db).backfill_returns_history(
+            account, organization, start_date=start_date, end_date=end_date
+        )
+
+    for label, runner in (("orders", _orders), ("economics", _economics), ("returns", _returns)):
+        async with session_factory() as db:
+            result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
+            account = result.scalar_one_or_none()
+            if account is None:
+                return
+            # Capture before any rollback: the rollback expires ORM attributes
+            # and a lazy refresh in the except path raises MissingGreenlet.
+            account_name = account.account_name
+            try:
+                organization = await DataExtractionService(db)._load_organization(account)
+                count = await runner(db, account, organization)
+                await db.commit()
+                logger.info(
+                    "History backfill (%s) completed for %s: %d records",
+                    label, account_name, count,
+                )
+            except Exception:
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                logger.exception("History backfill (%s) failed for %s", label, account_name)
+
+
+async def _run_sales_backfill(
+    account_id: UUID, session_factory, start_date: date, end_date: date
+) -> None:
+    """Run the historical sales backfill over [start_date, end_date] and record
+    its outcome in the last_backfill_* fields; sellers then get the best-effort
+    history extras. The caller must already have stamped the backfill started."""
     async with session_factory() as db:
         result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
         account = result.scalar_one_or_none()
         if account is None:
             return
+        is_vendor = account.account_type == AccountType.VENDOR
         service = DataExtractionService(db)
         try:
             organization = await service._load_organization(account)
-            if account.account_type == AccountType.VENDOR:
+            if is_vendor:
                 count = await service.backfill_vendor_sales_data(
                     account, organization, start_date=start_date, end_date=end_date
                 )
@@ -272,10 +316,55 @@ async def _initial_sync_one(account_id: UUID, backfill_months: int, session_fact
             except Exception:
                 pass
             await _mark_backfill_failed(account_id, session_factory, exc)
-            logger.exception(
-                "Historical backfill failed for %s (current sync already succeeded)",
+            logger.exception("Historical sales backfill failed for %s", account_id)
+            return
+
+    if not is_vendor:
+        await _backfill_history_extras(account_id, session_factory, start_date, end_date)
+
+
+async def _initial_sync_one(account_id: UUID, backfill_months: int, session_factory) -> None:
+    """First-connect pipeline: a full current sync, then a historical backfill.
+    Phase 1 stamps account status and fetches current
+    inventory/orders/ads/products + recent sales; phase 2 fills older sales
+    history for forecasting, plus orders/economics/returns history for sellers.
+    The backfill is best-effort and never downgrades a successful sync; its
+    outcome is tracked in the last_backfill_* fields."""
+    # Phase 1 — full current sync (also sets sync_status / error state).
+    async with session_factory() as db:
+        service = DataExtractionService(db)
+        try:
+            result = await service.sync_account(account_id)
+            await db.commit()
+            logger.info(
+                "Initial sync completed for %s: %s",
                 account_id,
+                {k: v for k, v in result.items() if k != "status"},
             )
+        except Exception as exc:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            await _persist_sync_failure_state(account_id, session_factory, exc)
+            logger.exception("Initial sync failed for %s; skipping backfill", account_id)
+            return
+
+    # Phase 2 — historical sales backfill (best-effort; commits per month).
+    # The window is resolved only after loading the account because vendors
+    # get a deeper one than the seller report's 2-year cap allows.
+    async with session_factory() as db:
+        result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
+        account = result.scalar_one_or_none()
+        if account is None:
+            return
+        if account.account_type == AccountType.VENDOR:
+            backfill_months = max_months = VENDOR_BACKFILL_MAX_MONTHS
+        else:
+            max_months = DEFAULT_BACKFILL_MONTHS
+    start_date, end_date = _resolve_backfill_window(backfill_months, max_months=max_months)
+    await _mark_backfill_started(account_id, session_factory, start_date, end_date)
+    await _run_sales_backfill(account_id, session_factory, start_date, end_date)
 
 
 def _run_initial_sync(account_ids: List[UUID], backfill_months: int) -> None:
@@ -441,14 +530,118 @@ async def _recover_stuck_backfills(session_factory) -> int:
             account.last_backfill_error = (
                 f"Backfill did not report completion within "
                 f"{BACKFILL_STUCK_THRESHOLD_HOURS}h; it was likely interrupted by a "
-                f"process restart. Re-run via POST /accounts/{account.id}/backfill."
+                f"process restart. It will be resumed automatically."
             )
         await db.commit()
         return len(accounts)
 
 
+async def _claim_resumable_backfills(session_factory) -> List[UUID]:
+    """Claim errored backfills that are due for an automatic resume.
+
+    Claiming re-marks them as running and re-stamps last_backfill_started_at,
+    so a resume that dies is re-claimed by a later sweep and retries are
+    naturally rate-limited to one per BACKFILL_RESUME_MIN_AGE_HOURS."""
+    cutoff = datetime.utcnow() - timedelta(hours=BACKFILL_RESUME_MIN_AGE_HOURS)
+    async with session_factory() as db:
+        result = await db.execute(
+            select(AmazonAccount).where(
+                AmazonAccount.is_active.is_(True),
+                AmazonAccount.last_backfill_status == BackfillStatus.ERROR.value,
+                AmazonAccount.last_backfill_started_at < cutoff,
+                AmazonAccount.last_backfill_range_start.is_not(None),
+                AmazonAccount.last_backfill_range_end.is_not(None),
+            )
+        )
+        accounts = result.scalars().all()
+        for account in accounts:
+            account.last_backfill_status = BackfillStatus.RUNNING.value
+            account.last_backfill_started_at = datetime.utcnow()
+            account.last_backfill_completed_at = None
+        await db.commit()
+        return [account.id for account in accounts]
+
+
+async def _resume_backfill_one(account_id: UUID, session_factory) -> None:
+    """Resume a claimed backfill from its earliest missing daily-total date.
+
+    Re-runs the sales backfill (plus the seller history extras) over
+    [first hole, original range end]; when the recorded range has no holes the
+    backfill is marked successful without calling Amazon."""
+    from app.models.sales_data import SalesData
+    from app.services.data_extraction import DAILY_TOTAL_ASIN, VENDOR_REPORT_LAG_DAYS
+
+    async with session_factory() as db:
+        result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
+        account = result.scalar_one_or_none()
+        if account is None:
+            return
+        account_name = account.account_name
+        range_start = account.last_backfill_range_start
+        range_end = account.last_backfill_range_end
+
+        # Stay behind the publish lag so trailing not-yet-published days are
+        # not treated as holes (that would re-pull the tail window every hour).
+        lag_days = (
+            VENDOR_REPORT_LAG_DAYS
+            if account.account_type == AccountType.VENDOR
+            else SALES_GAP_PUBLISH_LAG_DAYS
+        )
+        detect_end = min(range_end, date.today() - timedelta(days=lag_days))
+
+        missing: List[Tuple[date, date]] = []
+        if range_start <= detect_end:
+            rows = await db.execute(
+                select(SalesData.date).where(
+                    SalesData.account_id == account.id,
+                    SalesData.asin == DAILY_TOTAL_ASIN,
+                    SalesData.date >= range_start,
+                    SalesData.date <= detect_end,
+                )
+            )
+            existing = {row[0] for row in rows.all()}
+            missing = _missing_date_windows(existing, range_start, detect_end)
+
+        if not missing:
+            account.last_backfill_status = BackfillStatus.SUCCESS.value
+            account.last_backfill_completed_at = datetime.utcnow()
+            account.last_backfill_error = None
+            await db.commit()
+            logger.info(
+                "Backfill resume for %s: no missing dates in %s..%s, marked success",
+                account_name, range_start, detect_end,
+            )
+            return
+
+        resume_start = min(start for start, _ in missing)
+
+    logger.info(
+        "Resuming backfill for %s from %s (recorded range %s..%s)",
+        account_name, resume_start, range_start, range_end,
+    )
+    await _run_sales_backfill(account_id, session_factory, resume_start, range_end)
+
+
+def _run_backfill_resume(account_ids: List[UUID]) -> None:
+    engine, session_factory = _make_local_session_factory()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        for account_id in account_ids:
+            try:
+                loop.run_until_complete(_resume_backfill_one(account_id, session_factory))
+            except Exception:
+                logger.exception("Backfill resume failed for %s", account_id)
+    finally:
+        try:
+            loop.run_until_complete(engine.dispose())
+        finally:
+            loop.close()
+
+
 def run_backfill_recovery_sweep() -> dict:
-    """Entrypoint for the scheduler: recover backfills lost to process restarts."""
+    """Entrypoint for the scheduler: recover backfills lost to process restarts
+    and resume errored ones from their first missing date."""
     engine, session_factory = _make_local_session_factory()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -456,7 +649,17 @@ def run_backfill_recovery_sweep() -> dict:
         recovered = loop.run_until_complete(_recover_stuck_backfills(session_factory))
         if recovered:
             logger.warning("Backfill recovery sweep: marked %d stuck backfill(s) as error", recovered)
-        return {"status": "success", "recovered": recovered}
+        resumable = loop.run_until_complete(_claim_resumable_backfills(session_factory))
+        if resumable:
+            logger.info("Backfill recovery sweep: resuming %d backfill(s)", len(resumable))
+            thread = threading.Thread(
+                target=_run_backfill_resume,
+                args=(resumable,),
+                name=f"backfill-resume-{len(resumable)}",
+                daemon=True,
+            )
+            thread.start()
+        return {"status": "success", "recovered": recovered, "resumed": len(resumable)}
     finally:
         try:
             loop.run_until_complete(engine.dispose())
@@ -493,19 +696,36 @@ def _missing_date_windows(
 
 
 async def _repair_sales_gaps_one(account_id: UUID, session_factory) -> int:
-    """Find and re-pull missing daily-total sales dates for one seller account."""
+    """Find and re-pull missing daily-total sales dates for one account."""
     from app.models.sales_data import SalesData
-    from app.services.data_extraction import DAILY_TOTAL_ASIN
+    from app.services.data_extraction import DAILY_TOTAL_ASIN, VENDOR_REPORT_LAG_DAYS
     from app.core.exceptions import AmazonAPIError
 
     async with session_factory() as db:
         result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
         account = result.scalar_one_or_none()
-        if account is None or account.account_type == AccountType.VENDOR:
+        if account is None:
             return 0
 
-        end = date.today() - timedelta(days=SALES_GAP_PUBLISH_LAG_DAYS)
+        is_vendor = account.account_type == AccountType.VENDOR
+        lag_days = VENDOR_REPORT_LAG_DAYS if is_vendor else SALES_GAP_PUBLISH_LAG_DAYS
+        end = date.today() - timedelta(days=lag_days)
         start = date.today() - timedelta(days=SALES_GAP_LOOKBACK_DAYS)
+
+        first_row = await db.execute(
+            select(func.min(SalesData.date)).where(
+                SalesData.account_id == account.id,
+                SalesData.asin == DAILY_TOTAL_ASIN,
+            )
+        )
+        earliest = first_row.scalar()
+        if earliest is None:
+            # No sales history at all: that is the backfill's job, not a gap.
+            return 0
+        # Never probe before the account's first-ever data point: Amazon has
+        # nothing there, and unfillable windows would burn the nightly quota.
+        start = max(start, earliest)
+
         rows = await db.execute(
             select(SalesData.date).where(
                 SalesData.account_id == account.id,
@@ -515,9 +735,6 @@ async def _repair_sales_gaps_one(account_id: UUID, session_factory) -> int:
             )
         )
         existing = {row[0] for row in rows.all()}
-        if not existing:
-            # No sales history at all: that is the backfill's job, not a gap.
-            return 0
 
         windows = _missing_date_windows(existing, start, end)
         if not windows:
@@ -534,9 +751,16 @@ async def _repair_sales_gaps_one(account_id: UUID, session_factory) -> int:
         repaired = 0
         for window_start, window_end in windows:
             try:
-                count = await service.sync_sales_data(
-                    account, organization, window_start, window_end
-                )
+                if is_vendor:
+                    # Handles the DAY report's 15-day-per-request cap itself.
+                    count = await service.backfill_vendor_sales_data(
+                        account, organization,
+                        start_date=window_start, end_date=window_end,
+                    )
+                else:
+                    count = await service.sync_sales_data(
+                        account, organization, window_start, window_end
+                    )
             except AmazonAPIError as exc:
                 # Report failures happen before any rows are written; skip the
                 # window without a rollback (a rollback would expire the loaded
@@ -556,7 +780,7 @@ async def _repair_sales_gaps_one(account_id: UUID, session_factory) -> int:
 
 
 def run_sales_gap_repair_all() -> dict:
-    """Entrypoint for the scheduler: re-pull missing sales dates for sellers."""
+    """Entrypoint for the scheduler: re-pull missing sales dates per account."""
     if not _SCHEDULED_SYNC_LOCK.acquire(blocking=False):
         logger.info("Sales gap repair skipped: another scheduled sync is running")
         return {"status": "skipped", "accounts": 0, "records": 0}
@@ -570,7 +794,7 @@ def run_sales_gap_repair_all() -> dict:
 
         async def _collect() -> List[UUID]:
             async with session_factory() as db:
-                return await list_active_seller_account_ids(db)
+                return await list_active_account_ids(db)
 
         account_ids = loop.run_until_complete(_collect())
         records = 0

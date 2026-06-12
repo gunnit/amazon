@@ -1,7 +1,12 @@
-"""Data Kiosk economics row normalization."""
+"""Data Kiosk economics row normalization and history backfill."""
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 
+import pytest
+
+from app.models.amazon_account import AccountType
+from app.services import economics_service
 from app.services.economics_service import EconomicsService
 
 
@@ -95,3 +100,53 @@ def test_build_query_embeds_window_and_marketplace():
     assert '"APJ6JRA9NG5V4"' in query
     assert "analytics_economics_2024_03_15" in query
     assert "aggregateBy: { date: DAY, productId: CHILD_ASIN }" in query
+
+
+class FakeDb:
+    def __init__(self):
+        self.commits = 0
+
+    async def commit(self):
+        self.commits += 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_economics_history_walks_month_windows(monkeypatch):
+    db = FakeDb()
+    service = EconomicsService(db)
+    windows = []
+
+    async def fake_sync(_account, _organization, *, start_date, end_date):
+        windows.append((start_date, end_date))
+        return 2
+
+    async def fake_sleep(_seconds):
+        pass
+
+    monkeypatch.setattr(service, "sync_asin_economics", fake_sync)
+    monkeypatch.setattr(economics_service.asyncio, "sleep", fake_sleep)
+
+    total = await service.backfill_economics_history(
+        SimpleNamespace(account_type=AccountType.SELLER),
+        start_date=date(2026, 1, 15),
+        end_date=date(2026, 3, 10),
+    )
+
+    assert windows == [
+        (date(2026, 1, 15), date(2026, 1, 31)),
+        (date(2026, 2, 1), date(2026, 2, 28)),
+        (date(2026, 3, 1), date(2026, 3, 10)),
+    ]
+    assert total == 6
+    assert db.commits == 3
+
+
+@pytest.mark.asyncio
+async def test_backfill_economics_history_skips_vendor_accounts():
+    service = EconomicsService(FakeDb())
+    total = await service.backfill_economics_history(
+        SimpleNamespace(account_type=AccountType.VENDOR),
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 3, 1),
+    )
+    assert total == 0
