@@ -125,11 +125,13 @@ class MarketSnapshotService:
                 raw_price = offer.get("buy_box_price")
                 buy_box_price = Decimal(str(raw_price)) if raw_price is not None else None
                 buy_box_seller = offer.get("buy_box_seller_id")
-                is_ours = (
-                    bool(account.seller_id)
-                    and buy_box_seller is not None
-                    and str(buy_box_seller) == str(account.seller_id)
-                ) or None
+                # Tri-state: None = unknown (no winner reported / no seller_id),
+                # False = a competitor owns the Buy Box. `... or None` would
+                # collapse False into None and make Buy Box loss undetectable.
+                if buy_box_seller is None or not account.seller_id:
+                    is_ours = None
+                else:
+                    is_ours = str(buy_box_seller) == str(account.seller_id)
                 await self._upsert_price_snapshot({
                     "account_id": account.id,
                     "asin": product.asin,

@@ -200,6 +200,18 @@ class ProductPerformance(BaseModel):
     ad_sales: float = 0.0
     acos: Optional[float] = None
     roas: Optional[float] = None
+    # Catalog + market enrichment (snapshot warehouses; None when not ingested).
+    rating: Optional[float] = None
+    review_count: Optional[int] = None
+    buy_box_owned: Optional[bool] = None
+    buy_box_price: Optional[float] = None
+    # Amazon-computed actuals over the period (Data Kiosk economics)…
+    amazon_fees: Optional[float] = None
+    net_proceeds: Optional[float] = None
+    net_margin_pct: Optional[float] = None
+    # …falling back to a fee estimate at the current price when absent.
+    estimated_fees: Optional[float] = None
+    margin_source: Optional[str] = None
 
 
 class TopPerformers(BaseModel):

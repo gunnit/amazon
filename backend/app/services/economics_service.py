@@ -65,9 +65,12 @@ query {{
       }}
       fees {{
         feeTypeName
-        aggregatedDetail {{ totalAmount {{ amount currencyCode }} }}
+        charges {{ aggregatedDetail {{ totalAmount {{ amount currencyCode }} }} }}
       }}
-      ads {{ adSpend {{ amount currencyCode }} }}
+      ads {{
+        adTypeName
+        charge {{ totalAmount {{ amount currencyCode }} }}
+      }}
       netProceeds {{
         total {{ amount currencyCode }}
         perUnit {{ amount currencyCode }}
@@ -109,28 +112,47 @@ query {{
             return None
 
         sales = row.get("sales") or {}
-        ads = row.get("ads") or {}
         net_proceeds = row.get("netProceeds") or {}
 
+        # A FeeSummary's `charges` list can hold multiple Fee entries when the
+        # window straddles an Amazon fee-change date — sum them all.
         fee_breakdown: Dict[str, float] = {}
         total_fees = Decimal("0")
         fees_seen = False
         for fee in row.get("fees") or []:
             if not isinstance(fee, dict):
                 continue
-            detail = fee.get("aggregatedDetail") or {}
-            amount = cls._money(detail.get("totalAmount"))
+            name = str(fee.get("feeTypeName") or "unknown")
+            for charge in fee.get("charges") or []:
+                if not isinstance(charge, dict):
+                    continue
+                detail = charge.get("aggregatedDetail") or {}
+                amount = cls._money(detail.get("totalAmount"))
+                if amount is None:
+                    continue
+                fees_seen = True
+                total_fees += amount
+                fee_breakdown[name] = float(fee_breakdown.get(name, 0) + float(amount))
+
+        # `ads` is a list of AdSummary (one per ad type); spend = charge.totalAmount.
+        ads_spend = Decimal("0")
+        ads_seen = False
+        ads_currency = None
+        for ad in row.get("ads") or []:
+            if not isinstance(ad, dict):
+                continue
+            charge = ad.get("charge") or {}
+            amount = cls._money(charge.get("totalAmount"))
             if amount is None:
                 continue
-            fees_seen = True
-            total_fees += amount
-            name = str(fee.get("feeTypeName") or "unknown")
-            fee_breakdown[name] = float(fee_breakdown.get(name, 0) + float(amount))
+            ads_seen = True
+            ads_spend += amount
+            ads_currency = ads_currency or cls._currency(charge.get("totalAmount"))
 
         ordered_sales = cls._money(sales.get("orderedProductSales"))
         currency = (
             cls._currency(sales.get("orderedProductSales"))
-            or cls._currency(ads.get("adSpend"))
+            or ads_currency
             or cls._currency(net_proceeds.get("total"))
         )
 
@@ -144,7 +166,7 @@ query {{
             "net_product_sales": cls._money(sales.get("netProductSales")),
             "currency": currency,
             "total_fees": total_fees if fees_seen else None,
-            "ads_spend": cls._money(ads.get("adSpend")),
+            "ads_spend": ads_spend if ads_seen else None,
             "net_proceeds_total": cls._money(net_proceeds.get("total")),
             "net_proceeds_per_unit": cls._money(net_proceeds.get("perUnit")),
             "fee_breakdown": fee_breakdown or None,

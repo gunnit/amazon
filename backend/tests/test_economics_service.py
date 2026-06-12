@@ -21,14 +21,25 @@ def _row(**overrides):
         "fees": [
             {
                 "feeTypeName": "FBA fulfillment fees",
-                "aggregatedDetail": {"totalAmount": {"amount": "-15.30", "currencyCode": "EUR"}},
+                "charges": [
+                    {"aggregatedDetail": {"totalAmount": {"amount": "-15.30", "currencyCode": "EUR"}}},
+                ],
             },
             {
                 "feeTypeName": "Referral fees",
-                "aggregatedDetail": {"totalAmount": {"amount": "-18.08", "currencyCode": "EUR"}},
+                # Two charges for one fee type: the window straddles an Amazon
+                # fee-change date — they must be summed.
+                "charges": [
+                    {"aggregatedDetail": {"totalAmount": {"amount": "-10.08", "currencyCode": "EUR"}}},
+                    {"aggregatedDetail": {"totalAmount": {"amount": "-8.00", "currencyCode": "EUR"}}},
+                ],
             },
         ],
-        "ads": {"adSpend": {"amount": "-12.00", "currencyCode": "EUR"}},
+        "ads": [
+            {"adTypeName": "Sponsored Products charge", "charge": {"totalAmount": {"amount": "-9.00", "currencyCode": "EUR"}}},
+            {"adTypeName": "Sponsored Brands charge", "charge": {"totalAmount": {"amount": "-3.00", "currencyCode": "EUR"}}},
+            {"adTypeName": "No charge ads", "charge": None},
+        ],
         "netProceeds": {
             "total": {"amount": "65.12", "currencyCode": "EUR"},
             "perUnit": {"amount": "7.2356", "currencyCode": "EUR"},
@@ -53,6 +64,13 @@ def test_normalize_row_maps_all_fields():
         "FBA fulfillment fees": -15.30,
         "Referral fees": -18.08,
     }
+
+
+def test_build_query_uses_live_schema_fields():
+    query = EconomicsService._build_query("APJ6JRA9NG5V4", date(2026, 5, 1), date(2026, 5, 31))
+    assert "charges { aggregatedDetail { totalAmount { amount currencyCode } } }" in query
+    assert "charge { totalAmount { amount currencyCode } }" in query
+    assert "adSpend" not in query
 
 
 def test_normalize_row_without_asin_or_date_is_dropped():

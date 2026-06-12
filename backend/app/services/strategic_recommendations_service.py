@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
 from app.models.amazon_account import AccountType, AmazonAccount
+from app.models.brand_search_term import BrandSearchTerm
+from app.models.economics import AsinEconomics
 from app.models.inventory import InventoryData
+from app.models.listing_quality import ListingQualitySnapshot
+from app.models.market_snapshot import FeeEstimate, PriceSnapshot
 from app.models.product import Product
 from app.models.sales_data import SalesData
 from app.models.strategic_recommendation import StrategicRecommendation
@@ -291,6 +295,7 @@ Rules:
 - Ground every recommendation in the numbers from the snapshot; do not invent data.
 - The snapshot already covers a window appropriate to each account's reporting cadence (`accounts[].cadence`: vendor accounts report monthly, so their data trails by weeks). NEVER infer a stock-out, dead listing, or "0 units sold" problem from an empty or low window: the snapshot's sales totals are the authoritative figures for the window shown. If `data_sufficiency.status` is "insufficient" for an account, do NOT emit any negative/alarm recommendation for it — at most note that more data is needed (confidence "low").
 - Set `confidence` to "low" when the supporting numbers are thin or trailing, "high" only when the window has solid, recent data directly backing the action.
+- If `product_signals` is present, cross-reference it: lost Buy Box entries (`buy_box.lost_detail`) and thin/negative margins (`fees_margins`) are prime pricing candidates; low `listing_quality` scores and `catalog_weak_social_proof` are prime content candidates; `search_terms` shows where the brand already ranks organically. Quote the specific ASIN and numbers. Distinguish Amazon-computed actuals (`source: amazon_economics_actuals`) from estimates.
 - In every `rationale`, state the period analysed and the account/metric it is based on.
 - If `snapshot.filters.selected_asin` is present, sales and inventory are scoped to that ASIN.
 - If `snapshot.filters.selected_asin` is present, ads metrics remain account-level unless a field explicitly says they are ASIN-level.
@@ -757,7 +762,246 @@ class StrategicRecommendationsService:
             )
 
         snapshot["top_asins_by_revenue"] = top_asins
+
+        # --- product-level signals: Buy Box, fees/margins, listing quality,
+        # catalog health, search terms. Each block is omitted when its source
+        # has no data, so the prompt never grows with empty noise.
+        signals = await self._collect_product_signals(
+            account_ids,
+            [t["asin"] for t in top_asins],
+            normalized_asin,
+            start_date,
+            today,
+        )
+        if signals:
+            snapshot["product_signals"] = signals
+
         return snapshot
+
+    async def _collect_product_signals(
+        self,
+        account_ids: List[UUID],
+        top_asins: List[str],
+        selected_asin: Optional[str],
+        start_date: date,
+        today: date,
+    ) -> Dict[str, Any]:
+        """Cross-reference per-ASIN signals from the snapshot warehouses.
+
+        All sources are best-effort: a missing table or an account type that
+        never ingests a source (vendors have no pricing/fees snapshots) simply
+        yields no block.
+        """
+        signals: Dict[str, Any] = {}
+        recent_cutoff = today - timedelta(days=7)
+
+        def _latest_per_asin(rows, date_attr: str):
+            latest: Dict[str, Any] = {}
+            for row in rows:
+                current = latest.get(row.asin)
+                if current is None or getattr(row, date_attr) > getattr(current, date_attr):
+                    latest[row.asin] = row
+            return latest
+
+        # Buy Box ownership + price gap (price_snapshots, sellers only).
+        price_stmt = select(PriceSnapshot).where(
+            PriceSnapshot.account_id.in_(account_ids),
+            PriceSnapshot.snapshot_date >= recent_cutoff,
+        )
+        if selected_asin:
+            price_stmt = price_stmt.where(PriceSnapshot.asin == selected_asin)
+        price_rows = _latest_per_asin(
+            (await self.db.execute(price_stmt)).scalars().all(), "snapshot_date"
+        )
+        if price_rows:
+            lost = []
+            for row in price_rows.values():
+                if row.is_buy_box_ours is False:
+                    gap = None
+                    if row.our_price and row.buy_box_price and float(row.our_price) > 0:
+                        gap = round(
+                            (float(row.our_price) - float(row.buy_box_price))
+                            / float(row.our_price) * 100,
+                            1,
+                        )
+                    lost.append(
+                        {
+                            "asin": row.asin,
+                            "our_price": float(row.our_price) if row.our_price is not None else None,
+                            "buy_box_price": float(row.buy_box_price) if row.buy_box_price is not None else None,
+                            "our_price_vs_buy_box_pct": gap,
+                            "offer_count": row.offer_count,
+                        }
+                    )
+            lost.sort(key=lambda item: item.get("our_price_vs_buy_box_pct") or 0, reverse=True)
+            signals["buy_box"] = {
+                "asins_tracked": len(price_rows),
+                "buy_box_owned": sum(1 for r in price_rows.values() if r.is_buy_box_ours),
+                "buy_box_lost": len(lost),
+                "buy_box_unknown": sum(
+                    1 for r in price_rows.values() if r.is_buy_box_ours is None
+                ),
+                "lost_detail": lost[:10],
+            }
+
+        # Margins: prefer Amazon-computed economics (actuals) over fee estimates.
+        margin_asins = [a for a in ([selected_asin] if selected_asin else top_asins) if a]
+        if margin_asins:
+            economics_rows = (
+                await self.db.execute(
+                    select(
+                        AsinEconomics.asin,
+                        func.sum(AsinEconomics.ordered_product_sales).label("sales"),
+                        func.sum(AsinEconomics.total_fees).label("fees"),
+                        func.sum(AsinEconomics.ads_spend).label("ads"),
+                        func.sum(AsinEconomics.net_proceeds_total).label("proceeds"),
+                    )
+                    .where(
+                        AsinEconomics.account_id.in_(account_ids),
+                        AsinEconomics.asin.in_(margin_asins),
+                        AsinEconomics.date >= start_date,
+                    )
+                    .group_by(AsinEconomics.asin)
+                )
+            ).all()
+            margins = []
+            for row in economics_rows:
+                sales = float(row.sales or 0)
+                proceeds = float(row.proceeds or 0)
+                margins.append(
+                    {
+                        "asin": row.asin,
+                        "sales": sales,
+                        "amazon_fees": float(row.fees or 0),
+                        "ads_spend": float(row.ads or 0),
+                        "net_proceeds": proceeds,
+                        "net_margin_pct": round(proceeds / sales * 100, 1) if sales > 0 else None,
+                        "source": "amazon_economics_actuals",
+                    }
+                )
+            if not margins:
+                fee_stmt = select(FeeEstimate).where(
+                    FeeEstimate.account_id.in_(account_ids),
+                    FeeEstimate.asin.in_(margin_asins),
+                    FeeEstimate.snapshot_date >= recent_cutoff,
+                )
+                fee_rows = _latest_per_asin(
+                    (await self.db.execute(fee_stmt)).scalars().all(), "snapshot_date"
+                )
+                for row in fee_rows.values():
+                    if row.estimated_fees is None or row.price_basis is None:
+                        continue
+                    price = float(row.price_basis)
+                    fees = float(row.estimated_fees)
+                    margins.append(
+                        {
+                            "asin": row.asin,
+                            "price": price,
+                            "estimated_amazon_fees": fees,
+                            "estimated_margin_before_cogs_pct": (
+                                round((price - fees) / price * 100, 1) if price > 0 else None
+                            ),
+                            "source": "fee_estimate_at_current_price",
+                        }
+                    )
+            if margins:
+                signals["fees_margins"] = margins[:8]
+
+        # Listing quality: average + worst offenders with their missing components.
+        quality_stmt = select(ListingQualitySnapshot).where(
+            ListingQualitySnapshot.account_id.in_(account_ids),
+            ListingQualitySnapshot.snapshot_date >= today - timedelta(days=14),
+        )
+        if selected_asin:
+            quality_stmt = quality_stmt.where(ListingQualitySnapshot.asin == selected_asin)
+        quality_rows = _latest_per_asin(
+            (await self.db.execute(quality_stmt)).scalars().all(), "snapshot_date"
+        )
+        if quality_rows:
+            worst = sorted(quality_rows.values(), key=lambda r: r.score)[:5]
+            signals["listing_quality"] = {
+                "asins_scored": len(quality_rows),
+                "average_score": round(
+                    sum(r.score for r in quality_rows.values()) / len(quality_rows), 1
+                ),
+                "worst": [
+                    {
+                        "asin": row.asin,
+                        "score": row.score,
+                        "missing_components": [
+                            name
+                            for name, detail in (row.components or {}).items()
+                            if isinstance(detail, dict) and not detail.get("earned")
+                        ],
+                    }
+                    for row in worst
+                ],
+            }
+
+        # Catalog health for the top sellers: missing/weak social proof.
+        if margin_asins:
+            product_rows = (
+                await self.db.execute(
+                    select(Product.asin, Product.rating, Product.review_count)
+                    .where(
+                        Product.account_id.in_(account_ids),
+                        Product.asin.in_(margin_asins),
+                    )
+                )
+            ).all()
+            weak = [
+                {
+                    "asin": row.asin,
+                    "rating": float(row.rating) if row.rating is not None else None,
+                    "review_count": row.review_count,
+                }
+                for row in product_rows
+                if row.rating is None
+                or float(row.rating) < 4.0
+                or (row.review_count or 0) < 20
+            ]
+            if weak:
+                signals["catalog_weak_social_proof"] = weak[:5]
+
+        # Brand Analytics search terms: latest ingested week where our ASINs rank.
+        latest_week = (
+            await self.db.execute(
+                select(func.max(BrandSearchTerm.week_start)).where(
+                    BrandSearchTerm.account_id.in_(account_ids)
+                )
+            )
+        ).scalar()
+        if latest_week:
+            term_rows = (
+                (
+                    await self.db.execute(
+                        select(BrandSearchTerm)
+                        .where(
+                            BrandSearchTerm.account_id.in_(account_ids),
+                            BrandSearchTerm.week_start == latest_week,
+                            BrandSearchTerm.contains_account_asin.is_(True),
+                        )
+                        .order_by(BrandSearchTerm.search_frequency_rank.asc())
+                        .limit(5)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if term_rows:
+                signals["search_terms"] = {
+                    "week_start": latest_week.isoformat(),
+                    "terms_where_own_asin_in_top3": [
+                        {
+                            "term": row.search_term,
+                            "search_frequency_rank": row.search_frequency_rank,
+                            "top_clicked": row.top_clicked,
+                        }
+                        for row in term_rows
+                    ],
+                }
+
+        return signals
 
     async def _resolve_window(
         self,

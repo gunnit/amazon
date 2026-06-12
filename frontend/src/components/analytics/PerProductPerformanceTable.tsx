@@ -203,19 +203,28 @@ export function PerProductPerformanceTable({ dateRange, accountIds, enabled }: P
                   {sortIcon('roas')}
                 </TableHead>
                 <TableHead className="text-right">BSR</TableHead>
+                <TableHead className="text-right">
+                  {t('analytics.perProduct.col.rating')}
+                </TableHead>
+                <TableHead className="text-center">
+                  {t('analytics.perProduct.col.buyBox')}
+                </TableHead>
+                <TableHead className="text-right">
+                  {t('analytics.perProduct.col.margin')}
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {query.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={10} className="text-center py-8">
+                  <TableCell colSpan={13} className="text-center py-8">
                     <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                   </TableCell>
                 </TableRow>
               )}
               {!query.isLoading && items.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={13} className="text-center py-8 text-muted-foreground">
                     {search
                       ? t('analytics.perProduct.emptySearch')
                       : t('analytics.perProduct.empty')}
@@ -259,6 +268,40 @@ export function PerProductPerformanceTable({ dateRange, accountIds, enabled }: P
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {item.current_bsr != null ? item.current_bsr.toLocaleString() : '—'}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">
+                    {item.rating != null
+                      ? `${item.rating.toFixed(1)} ★${item.review_count != null ? ` (${item.review_count.toLocaleString()})` : ''}`
+                      : '—'}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {item.buy_box_owned === true && (
+                      <span className="inline-block rounded px-1.5 py-0.5 text-xs bg-emerald-500/15 text-emerald-600">✓</span>
+                    )}
+                    {item.buy_box_owned === false && (
+                      <span
+                        className="inline-block rounded px-1.5 py-0.5 text-xs bg-red-500/15 text-red-600"
+                        title={item.buy_box_price != null ? formatCurrency(item.buy_box_price) : undefined}
+                      >
+                        ✗
+                      </span>
+                    )}
+                    {item.buy_box_owned == null && '—'}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">
+                    {item.net_margin_pct != null ? (
+                      <span title={t('analytics.perProduct.marginActual')}>
+                        {item.net_margin_pct.toFixed(1)}%
+                      </span>
+                    ) : item.estimated_fees != null ? (
+                      <span className="text-muted-foreground">
+                        {t('analytics.perProduct.marginEstimated', {
+                          fees: formatCurrency(item.estimated_fees),
+                        })}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

@@ -23,6 +23,7 @@ from app.services.ai_analysis_service import ProductTrendInsightsAnalysisService
 from app.services.product_trends_service import ProductTrendsService, build_rule_based_insights
 from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.models.economics import AsinEconomics
+from app.models.market_snapshot import FeeEstimate, PriceSnapshot
 from app.schemas.analytics import (
     DashboardKPIs, MetricValue, TrendData, TrendDataPoint,
     ComparisonDailyPoint, ComparisonMetric, ComparisonPeriod, ComparisonResponse,
@@ -1336,9 +1337,71 @@ async def get_per_product_performance(
             func.max(Product.title).label("title"),
             func.max(Product.sku).label("sku"),
             func.max(Product.current_bsr).label("current_bsr"),
+            func.max(Product.rating).label("rating"),
+            func.max(Product.review_count).label("review_count"),
         )
         .where(Product.account_id.in_(accounts_query))
         .group_by(Product.asin)
+        .subquery()
+    )
+
+    # Latest price/Buy Box snapshot per ASIN (sellers only; vendors have none).
+    price_ranked = (
+        select(
+            PriceSnapshot.asin.label("asin"),
+            PriceSnapshot.is_buy_box_ours.label("is_buy_box_ours"),
+            PriceSnapshot.buy_box_price.label("buy_box_price"),
+            func.row_number()
+            .over(
+                partition_by=PriceSnapshot.asin,
+                order_by=PriceSnapshot.snapshot_date.desc(),
+            )
+            .label("rn"),
+        )
+        .where(PriceSnapshot.account_id.in_(accounts_query))
+        .subquery()
+    )
+    price_subq = (
+        select(price_ranked.c.asin, price_ranked.c.is_buy_box_ours, price_ranked.c.buy_box_price)
+        .where(price_ranked.c.rn == 1)
+        .subquery()
+    )
+
+    # Latest fee estimate per ASIN (fallback when economics actuals are absent).
+    fee_ranked = (
+        select(
+            FeeEstimate.asin.label("asin"),
+            FeeEstimate.estimated_fees.label("estimated_fees"),
+            func.row_number()
+            .over(
+                partition_by=FeeEstimate.asin,
+                order_by=FeeEstimate.snapshot_date.desc(),
+            )
+            .label("rn"),
+        )
+        .where(FeeEstimate.account_id.in_(accounts_query))
+        .subquery()
+    )
+    fee_subq = (
+        select(fee_ranked.c.asin, fee_ranked.c.estimated_fees)
+        .where(fee_ranked.c.rn == 1)
+        .subquery()
+    )
+
+    # Amazon-computed economics aggregated over the requested period.
+    econ_subq = (
+        select(
+            AsinEconomics.asin.label("asin"),
+            func.sum(AsinEconomics.ordered_product_sales).label("econ_sales"),
+            func.sum(AsinEconomics.total_fees).label("econ_fees"),
+            func.sum(AsinEconomics.net_proceeds_total).label("econ_proceeds"),
+        )
+        .where(
+            AsinEconomics.account_id.in_(accounts_query),
+            AsinEconomics.date >= start_date,
+            AsinEconomics.date <= end_date,
+        )
+        .group_by(AsinEconomics.asin)
         .subquery()
     )
 
@@ -1362,6 +1425,14 @@ async def get_per_product_performance(
             product_subq.c.title,
             product_subq.c.sku,
             product_subq.c.current_bsr,
+            product_subq.c.rating,
+            product_subq.c.review_count,
+            price_subq.c.is_buy_box_ours,
+            price_subq.c.buy_box_price,
+            fee_subq.c.estimated_fees,
+            econ_subq.c.econ_sales,
+            econ_subq.c.econ_fees,
+            econ_subq.c.econ_proceeds,
             ad_spend_col,
             ad_sales_col,
             acos_col,
@@ -1370,6 +1441,9 @@ async def get_per_product_performance(
         .select_from(sales_subq)
         .join(product_subq, product_subq.c.asin == sales_subq.c.asin, isouter=True)
         .join(ad_subq, ad_subq.c.asin == sales_subq.c.asin, isouter=True)
+        .join(price_subq, price_subq.c.asin == sales_subq.c.asin, isouter=True)
+        .join(fee_subq, fee_subq.c.asin == sales_subq.c.asin, isouter=True)
+        .join(econ_subq, econ_subq.c.asin == sales_subq.c.asin, isouter=True)
     )
 
     if search:
@@ -1411,6 +1485,25 @@ async def get_per_product_performance(
     base = base.limit(limit).offset(offset)
 
     rows = (await db.execute(base)).all()
+
+    def _margin_fields(row) -> dict:
+        """Prefer Amazon-computed economics actuals; fall back to fee estimates."""
+        econ_sales = float(row.econ_sales) if row.econ_sales is not None else 0.0
+        if row.econ_proceeds is not None and econ_sales > 0:
+            proceeds = float(row.econ_proceeds)
+            return {
+                "amazon_fees": round(float(row.econ_fees or 0), 2),
+                "net_proceeds": round(proceeds, 2),
+                "net_margin_pct": round(proceeds / econ_sales * 100, 1),
+                "margin_source": "amazon_economics",
+            }
+        if row.estimated_fees is not None:
+            return {
+                "estimated_fees": round(float(row.estimated_fees), 2),
+                "margin_source": "fee_estimate",
+            }
+        return {}
+
     items = [
         ProductPerformance(
             asin=row.asin,
@@ -1431,6 +1524,11 @@ async def get_per_product_performance(
             ad_sales=round(float(row.ad_sales or 0), 2),
             acos=round(float(row.acos), 1) if row.acos is not None else None,
             roas=round(float(row.roas), 2) if row.roas is not None else None,
+            rating=float(row.rating) if row.rating is not None else None,
+            review_count=row.review_count,
+            buy_box_owned=row.is_buy_box_ours,
+            buy_box_price=float(row.buy_box_price) if row.buy_box_price is not None else None,
+            **_margin_fields(row),
         )
         for row in rows
     ]

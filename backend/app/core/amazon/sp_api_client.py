@@ -1378,7 +1378,12 @@ class SPAPIClient:
             is_fba=True,
         )
         payload = response.payload
-        candidates: List[Decimal] = []
+        # (priority, amount): TotalFeesEstimate is the canonical total; FeeAmount
+        # entries are per-fee details. The response echoes the request (including
+        # the listing price) under FeesEstimateRequest, so that subtree — and
+        # bare "Amount" keys in general — must never be treated as a fee.
+        candidates: List[tuple] = []
+        _FEE_KEYS = {"TotalFeesEstimate": 0, "FinalFee": 1, "FeeAmount": 2}
 
         def walk(node: Any) -> None:
             if isinstance(node, list):
@@ -1387,26 +1392,23 @@ class SPAPIClient:
                 return
             if not isinstance(node, dict):
                 return
-            for key in ("FinalFee", "TotalFeesEstimate", "FeeAmount", "Amount"):
+            for key, priority in _FEE_KEYS.items():
                 value = node.get(key)
                 if isinstance(value, dict):
                     amount = value.get("Amount") or value.get("amount")
                     if amount is not None:
                         try:
-                            candidates.append(Decimal(str(amount)))
+                            candidates.append((priority, Decimal(str(amount))))
                         except Exception:
                             pass
-                elif key == "Amount" and value is not None:
-                    try:
-                        candidates.append(Decimal(str(value)))
-                    except Exception:
-                        pass
-            for value in node.values():
+            for key, value in node.items():
+                if key == "FeesEstimateRequest":
+                    continue
                 if isinstance(value, (dict, list)):
                     walk(value)
 
         walk(payload)
-        return candidates[0] if candidates else None
+        return min(candidates)[1] if candidates else None
 
     @staticmethod
     def _summarize_aplus_payload(payload: Any) -> Dict[str, Any]:

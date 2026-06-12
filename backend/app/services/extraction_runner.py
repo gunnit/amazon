@@ -719,6 +719,9 @@ async def _with_account(account_id: UUID, session_factory, runner) -> int:
         account = result.scalar_one_or_none()
         if account is None:
             return 0
+        # Capture before any rollback: the rollback expires ORM attributes and a
+        # lazy refresh in the except path raises MissingGreenlet.
+        account_name = account.account_name
         try:
             count = await runner(db, account)
             await db.commit()
@@ -728,7 +731,7 @@ async def _with_account(account_id: UUID, session_factory, runner) -> int:
                 await db.rollback()
             except Exception:
                 pass
-            logger.exception("Per-account job failed for %s", account.account_name)
+            logger.exception("Per-account job failed for %s", account_name)
             return 0
 
 

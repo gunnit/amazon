@@ -427,6 +427,15 @@ export interface PerProductPerformanceItem {
   ad_sales: number
   acos: number | null
   roas: number | null
+  rating: number | null
+  review_count: number | null
+  buy_box_owned: boolean | null
+  buy_box_price: number | null
+  amazon_fees: number | null
+  net_proceeds: number | null
+  net_margin_pct: number | null
+  estimated_fees: number | null
+  margin_source: 'amazon_economics' | 'fee_estimate' | null
 }
 
 export interface PaginatedProductPerformance {
