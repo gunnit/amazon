@@ -28,16 +28,16 @@ def test_backfill_is_clamped_to_amazon_two_year_limit():
     )
 
 
-def test_vendor_backfill_window_reaches_three_years():
-    assert VENDOR_BACKFILL_MAX_MONTHS == 36
+def test_vendor_backfill_window_reaches_four_years():
+    assert VENDOR_BACKFILL_MAX_MONTHS == 48
     assert _resolve_backfill_window(
         VENDOR_BACKFILL_MAX_MONTHS,
         max_months=VENDOR_BACKFILL_MAX_MONTHS,
         today=date(2026, 6, 10),
-    ) == (date(2023, 6, 10), date(2026, 6, 10))
+    ) == (date(2022, 6, 10), date(2026, 6, 10))
 
 
 def test_vendor_max_months_still_clamps_deeper_requests():
     assert _resolve_backfill_window(
-        48, max_months=VENDOR_BACKFILL_MAX_MONTHS, today=date(2026, 6, 10)
-    ) == (date(2023, 6, 10), date(2026, 6, 10))
+        60, max_months=VENDOR_BACKFILL_MAX_MONTHS, today=date(2026, 6, 10)
+    ) == (date(2022, 6, 10), date(2026, 6, 10))

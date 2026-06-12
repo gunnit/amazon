@@ -40,8 +40,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_BACKFILL_MONTHS = 24
 
 # Vendor sales reports reach further back than the seller Sales & Traffic
-# report's hard 2-year cap (verified live: DAY data at least 31 months back).
-VENDOR_BACKFILL_MAX_MONTHS = 36
+# report's hard 2-year cap: Amazon serves ~4 years and rejects older ranges as
+# prohibited (verified live: 48 months back returned data, 51 months FATALed).
+# Windows past the sliding boundary fail per-window and are skipped cleanly.
+VENDOR_BACKFILL_MAX_MONTHS = 48
 
 # Prevent the daily full sync and the lighter intraday sales refresh from
 # competing for the same Amazon Reports API quota.
