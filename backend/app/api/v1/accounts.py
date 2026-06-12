@@ -563,9 +563,10 @@ async def amazon_oauth_callback(
     await db.commit()
     await db.refresh(account)
 
-    # New accounts get the first-connect sync + historical backfill; existing
-    # accounts only need a fresh sync with the re-authorized token.
-    if is_new:
+    # New accounts get the first-connect sync + historical backfill. Reconnected
+    # accounts that never completed a backfill (e.g. first connected with a bad
+    # token) get the same treatment; otherwise a fresh sync is enough.
+    if is_new or account.last_backfill_status is None:
         from app.services.extraction_runner import initial_sync_in_thread
 
         initial_sync_in_thread(account.id)

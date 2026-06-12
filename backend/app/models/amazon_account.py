@@ -46,7 +46,11 @@ class AmazonAccount(Base):
         UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
     account_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    account_type: Mapped[AccountType] = mapped_column(Enum(AccountType), nullable=False)
+    # native_enum=False: the column is VARCHAR (migration 001), so SQL-level
+    # comparisons must not cast parameters to a Postgres enum type.
+    account_type: Mapped[AccountType] = mapped_column(
+        Enum(AccountType, native_enum=False, length=50), nullable=False
+    )
     marketplace_id: Mapped[str] = mapped_column(String(50), nullable=False)
     marketplace_country: Mapped[str] = mapped_column(String(10), nullable=False)
     seller_id: Mapped[str] = mapped_column(String(100), nullable=True)
@@ -63,7 +67,9 @@ class AmazonAccount(Base):
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_sync_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
-    sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.PENDING)
+    sync_status: Mapped[SyncStatus] = mapped_column(
+        Enum(SyncStatus, native_enum=False, length=50), default=SyncStatus.PENDING
+    )
     sync_error_message: Mapped[str] = mapped_column(Text, nullable=True)
     last_sync_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     last_sync_succeeded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)

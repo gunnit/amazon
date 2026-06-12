@@ -79,7 +79,11 @@ class OrganizationMember(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
-    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.MEMBER)
+    # native_enum=False: the column is VARCHAR, so SQL-level comparisons must
+    # not cast parameters to a Postgres enum type.
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, native_enum=False, length=50), default=UserRole.MEMBER
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     # Relationships

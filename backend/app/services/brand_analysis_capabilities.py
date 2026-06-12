@@ -229,7 +229,12 @@ async def detect_brand_analysis_capabilities(
         else:
             from app.services.data_extraction import DataExtractionService
 
-            client = DataExtractionService(db)._create_sp_api_client(account, organization)
+            service = DataExtractionService(db)
+            if organization is None:
+                # Org settings hold the LWA client_id/client_secret; without them
+                # every probe fails with MissingCredentials before reaching Amazon.
+                organization = await service._load_organization(account)
+            client = service._create_sp_api_client(account, organization)
     except Exception as exc:
         reason = _role_reason("sp_api_credentials", exc)
         result.last_error_by_capability["sp_api_credentials"] = reason
@@ -286,7 +291,10 @@ async def detect_brand_analysis_capabilities(
     )
     probe(
         "finance_reports_available",
-        lambda: client._finances_api().list_financial_event_groups(MaxResultsPerPage=1).payload,
+        lambda: client._finances_api().list_financial_event_groups(
+            MaxResultsPerPage=1,
+            FinancialEventGroupStartedAfter=(checked_at - timedelta(days=30)).isoformat(),
+        ).payload,
         role_name="Finances",
     )
     probe(
