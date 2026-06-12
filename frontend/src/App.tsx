@@ -8,6 +8,7 @@ import Login from '@/pages/Login'
 import Register from '@/pages/Register'
 import ForgotPassword from '@/pages/ForgotPassword'
 import ResetPassword from '@/pages/ResetPassword'
+import AmazonOAuthForward from '@/pages/AmazonOAuthForward'
 import Dashboard from '@/pages/Dashboard'
 import Performance from '@/pages/Performance'
 import ProductAnalytics from '@/pages/ProductAnalytics'
@@ -76,6 +77,7 @@ function App() {
         <Route path="/reset-password" element={
           isAuthenticated ? <Navigate to="/" replace /> : <ResetPassword />
         } />
+        <Route path="/amazon/callback" element={<AmazonOAuthForward />} />
 
         <Route path="/" element={
           <ProtectedRoute>

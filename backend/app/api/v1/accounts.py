@@ -436,8 +436,15 @@ async def start_amazon_oauth(
     )
 
     # version=beta is required while the SP-API app is in Draft status.
+    # redirect_uri pins the callback: with several redirect URIs registered on
+    # the app, Amazon otherwise sends the consent response to the first one.
     consent_url = f"{consent_host}/apps/authorize/consent?" + urlencode(
-        {"application_id": app_id, "state": state, "version": "beta"}
+        {
+            "application_id": app_id,
+            "state": state,
+            "version": "beta",
+            "redirect_uri": _oauth_redirect_uri(),
+        }
     )
     return AmazonOAuthStartResponse(consent_url=consent_url)
 
@@ -490,25 +497,36 @@ async def amazon_oauth_callback(
 
     import httpx
 
+    # The exchange redirect_uri must equal the one Amazon used for the consent
+    # redirect. Normally that's the backend callback, but when the browser was
+    # forwarded here from the frontend /amazon/callback safety-net route the
+    # original redirect URI was the frontend one — so try both.
+    candidate_redirect_uris = [
+        _oauth_redirect_uri(),
+        f"{frontend}/amazon/callback",
+    ]
+    refresh_token = None
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            LWA_TOKEN_URL,
-            data={
-                "grant_type": "authorization_code",
-                "code": spapi_oauth_code.strip(),
-                "redirect_uri": _oauth_redirect_uri(),
-                "client_id": client_id,
-                "client_secret": client_secret,
-            },
-        )
-    if resp.status_code != 200:
-        logger.warning(
-            "Amazon OAuth code exchange failed: %s %s", resp.status_code, resp.text[:300]
-        )
-        return fail("token_exchange_failed")
-    refresh_token = resp.json().get("refresh_token")
+        for redirect_uri in candidate_redirect_uris:
+            resp = await client.post(
+                LWA_TOKEN_URL,
+                data={
+                    "grant_type": "authorization_code",
+                    "code": spapi_oauth_code.strip(),
+                    "redirect_uri": redirect_uri,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                },
+            )
+            if resp.status_code == 200:
+                refresh_token = resp.json().get("refresh_token")
+                break
+            logger.warning(
+                "Amazon OAuth code exchange failed (redirect_uri=%s): %s %s",
+                redirect_uri, resp.status_code, resp.text[:300],
+            )
     if not refresh_token:
-        return fail("no_refresh_token")
+        return fail("token_exchange_failed")
 
     account = None
     is_new = True
