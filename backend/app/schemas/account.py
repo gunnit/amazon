@@ -2,7 +2,7 @@
 from datetime import date, datetime
 from typing import Optional, List
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 
 
@@ -45,6 +45,15 @@ class AmazonAccountCreate(BaseModel):
     login_email: Optional[str] = None
     login_password: Optional[str] = None
 
+    @field_validator("refresh_token", "advertising_refresh_token", mode="before")
+    @classmethod
+    def _strip_token_whitespace(cls, value):
+        # Pasted tokens often pick up stray newlines/spaces that Amazon
+        # rejects with invalid_grant; real tokens never contain whitespace.
+        if isinstance(value, str):
+            value = "".join(value.split())
+        return value or None
+
 
 class AmazonAccountUpdate(BaseModel):
     """Schema for updating an Amazon account."""
@@ -60,6 +69,26 @@ class AmazonAccountUpdate(BaseModel):
     advertising_refresh_token: Optional[str] = None
     login_email: Optional[str] = None
     login_password: Optional[str] = None
+
+    @field_validator("refresh_token", "advertising_refresh_token", mode="before")
+    @classmethod
+    def _strip_token_whitespace(cls, value):
+        if isinstance(value, str):
+            value = "".join(value.split())
+        return value or None
+
+
+class AmazonOAuthStartRequest(BaseModel):
+    """Begin the Login with Amazon consent flow for a new or existing account."""
+    account_type: AccountType
+    marketplace_id: str = Field(..., min_length=1)
+    marketplace_country: str = Field(..., min_length=2, max_length=10)
+    account_name: Optional[str] = Field(None, max_length=255)
+    account_id: Optional[UUID] = None  # set when re-authorizing an existing account
+
+
+class AmazonOAuthStartResponse(BaseModel):
+    consent_url: str
 
 
 class AdvertisingProfilesRequest(BaseModel):

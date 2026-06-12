@@ -1,7 +1,7 @@
 import axios from 'axios'
 import type {
   User, AuthTokens, Organization,
-  AmazonAccount, AccountSummary, AdvertisingProfile, AdvertisingProfilesRequest,
+  AmazonAccount, AccountSummary, AccountType, AdvertisingProfile, AdvertisingProfilesRequest,
   DashboardKPIs, TrendData, SalesAggregated, ComparisonResponse, TodayMetrics,
   AdsVsOrganicResponse, AdvertisingInsights,
   HourlyOrdersData, ProductTrendsResponse, ProductTrendInsightsResponse, ReturnsAnalyticsResponse, TopPerformersResponse,
@@ -200,6 +200,17 @@ export const accountsApi = {
 
   create: async (data: Partial<AmazonAccount>): Promise<AmazonAccount> => {
     const response = await api.post('/accounts', data)
+    return response.data
+  },
+
+  startOAuth: async (data: {
+    account_type: AccountType
+    marketplace_id: string
+    marketplace_country: string
+    account_name?: string
+    account_id?: string
+  }): Promise<{ consent_url: string }> => {
+    const response = await api.post('/accounts/oauth/start', data)
     return response.data
   },
 

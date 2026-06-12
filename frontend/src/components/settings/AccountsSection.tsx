@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
@@ -7,6 +7,7 @@ import {
   Check,
   Clock,
   Edit,
+  ExternalLink,
   Eye,
   History,
   KeyRound,
@@ -64,7 +65,7 @@ import type {
   SyncStatus,
 } from '@/types'
 
-type ConnectionMode = 'manual' | 'sp' | 'ads'
+type ConnectionMode = 'manual' | 'ads'
 type StatusFilter = 'all' | 'connected' | 'partial' | 'missing' | 'error'
 
 type AccountPayload = {
@@ -341,11 +342,9 @@ function AccountDialog({
   const isSaving = createMutation.isPending || updateMutation.isPending
   const title = mode === 'ads'
     ? t('accounts.connectAds')
-    : mode === 'sp'
-      ? t('accounts.connectSellerCentral')
-      : account
-        ? t('accounts.editAccount')
-        : t('accounts.addAccountManually')
+    : account
+      ? t('accounts.editAccount')
+      : t('accounts.addAccountManually')
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -510,6 +509,112 @@ function AccountDialog({
   )
 }
 
+function ConnectAmazonDialog({
+  open,
+  account,
+  onOpenChange,
+}: {
+  open: boolean
+  account: AmazonAccount | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [accountName, setAccountName] = useState(account?.account_name || '')
+  const [accountType, setAccountType] = useState<AccountType>(account?.account_type || 'seller')
+  const [marketplace, setMarketplace] = useState(account?.marketplace_id || 'APJ6JRA9NG5V4')
+
+  const isReconnect = !!account
+  const selectedMarketplace = marketplaces.find((item) => item.id === marketplace)
+
+  const startMutation = useMutation({
+    mutationFn: () => accountsApi.startOAuth({
+      account_type: accountType,
+      marketplace_id: selectedMarketplace!.id,
+      marketplace_country: selectedMarketplace!.country,
+      account_name: accountName || undefined,
+      account_id: account?.id,
+    }),
+    onSuccess: ({ consent_url }) => {
+      window.location.href = consent_url
+    },
+    onError: (error: unknown) => {
+      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast({ variant: 'destructive', title: t('accounts.oauthStartFailed'), description: detail })
+    },
+  })
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {isReconnect ? t('accounts.reconnectSp') : t('accounts.connectAmazon')}
+          </DialogTitle>
+          <DialogDescription>
+            {isReconnect ? t('accounts.oauthReconnectDesc') : t('accounts.connectAmazonDesc')}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          {!isReconnect && (
+            <>
+              <div className="space-y-2">
+                <Label>{t('accounts.dialog.accountName')}</Label>
+                <Input
+                  value={accountName}
+                  onChange={(e) => setAccountName(e.target.value)}
+                  placeholder={t('accounts.oauthNamePlaceholder')}
+                />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>{t('accounts.dialog.accountType')}</Label>
+                  <Select value={accountType} onValueChange={(value: AccountType) => setAccountType(value)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="seller">{t('accounts.dialog.seller')}</SelectItem>
+                      <SelectItem value="vendor">{t('accounts.dialog.vendor')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('accounts.dialog.marketplace')}</Label>
+                  <Select value={marketplace} onValueChange={setMarketplace}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {marketplaces.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {t(item.nameKey)} ({item.country})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </>
+          )}
+          <p className="text-xs text-muted-foreground">{t('accounts.oauthHelp')}</p>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            type="button"
+            onClick={() => startMutation.mutate()}
+            disabled={startMutation.isPending || !selectedMarketplace}
+          >
+            {startMutation.isPending
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              : <ExternalLink className="mr-2 h-4 w-4" />}
+            {t('accounts.oauthContinue')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -517,9 +622,43 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
   const [dialogMode, setDialogMode] = useState<ConnectionMode | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<AmazonAccount | null>(null)
   const [detailsAccount, setDetailsAccount] = useState<AmazonAccount | null>(null)
+  const [oauthDialogOpen, setOauthDialogOpen] = useState(false)
+  const [oauthAccount, setOauthAccount] = useState<AmazonAccount | null>(null)
   const [marketplaceFilter, setMarketplaceFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [typeFilter, setTypeFilter] = useState<'all' | AccountType>('all')
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Landing back from the Amazon consent page (backend callback redirect).
+  useEffect(() => {
+    const amazonStatus = searchParams.get('amazon_status')
+    if (!amazonStatus) return
+    if (amazonStatus === 'connected') {
+      toast({
+        title: t('accounts.oauthSuccessTitle'),
+        description: searchParams.get('account') || undefined,
+      })
+      queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      queryClient.invalidateQueries({ queryKey: ['accounts-summary'] })
+    } else {
+      toast({
+        variant: 'destructive',
+        title: t('accounts.oauthErrorTitle'),
+        description: searchParams.get('reason') || undefined,
+      })
+    }
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete('amazon_status')
+    nextParams.delete('account')
+    nextParams.delete('reason')
+    setSearchParams(nextParams, { replace: true })
+  }, [searchParams, setSearchParams, queryClient, t, toast])
+
+  const openOAuthDialog = (account: AmazonAccount | null = null) => {
+    setDetailsAccount(null)
+    setOauthAccount(account)
+    setOauthDialogOpen(true)
+  }
 
   const { data: accounts = [], isLoading, isError } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -613,15 +752,15 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
           <p className="text-muted-foreground">{t('accounts.subtitle')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => openDialog('sp')}>
+          <Button onClick={() => openOAuthDialog()}>
             <Store className="mr-2 h-4 w-4" />
-            {t('accounts.connectSellerCentral')}
+            {t('accounts.connectAmazon')}
           </Button>
           <Button variant="outline" onClick={() => openDialog('ads')}>
             <Megaphone className="mr-2 h-4 w-4" />
             {t('accounts.connectAds')}
           </Button>
-          <Button variant="outline" onClick={() => openDialog('manual')}>
+          <Button variant="ghost" onClick={() => openDialog('manual')}>
             <Plus className="mr-2 h-4 w-4" />
             {t('accounts.addAccountManually')}
           </Button>
@@ -691,7 +830,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
           <h3 className="mt-4 text-lg font-semibold">{t('accounts.emptyTitle')}</h3>
           <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">{t('accounts.emptyDesc')}</p>
           <div className="mt-5 flex flex-wrap justify-center gap-2">
-            <Button onClick={() => openDialog('sp')}><Store className="mr-2 h-4 w-4" />{t('accounts.connectSellerCentral')}</Button>
+            <Button onClick={() => openOAuthDialog()}><Store className="mr-2 h-4 w-4" />{t('accounts.connectAmazon')}</Button>
             <Button variant="outline" onClick={() => openDialog('ads')}><Megaphone className="mr-2 h-4 w-4" />{t('accounts.connectAds')}</Button>
           </div>
         </div>
@@ -763,7 +902,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                     <TableCell>
                       <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
                         <Button variant="ghost" size="icon" onClick={() => openDialog('manual', account)} aria-label={t('common.edit')}><Edit className="h-4 w-4" /></Button>
-                        <Button variant="ghost" size="icon" onClick={() => openDialog('sp', account)} aria-label={t('accounts.reconnectSp')}><KeyRound className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => openOAuthDialog(account)} aria-label={t('accounts.reconnectSp')} title={t('accounts.reconnectSp')}><KeyRound className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => openDialog('ads', account)} aria-label={t('accounts.reconnectAds')}><Megaphone className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="icon" onClick={() => syncMutation.mutate(account.id)} disabled={syncMutation.isPending || account.sync_status === 'syncing'} aria-label={t('accounts.sync')}><RefreshCw className="h-4 w-4" /></Button>
                         <Button
@@ -843,7 +982,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                 )}
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => openDialog('sp', detailsAccount)}>{t('accounts.reconnectSp')}</Button>
+                <Button variant="outline" onClick={() => openOAuthDialog(detailsAccount)}>{t('accounts.reconnectSp')}</Button>
                 <Button variant="outline" onClick={() => openDialog('ads', detailsAccount)}>{t('accounts.reconnectAds')}</Button>
                 <Button
                   variant="outline"
@@ -873,6 +1012,16 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
             setDialogMode(null)
             setSelectedAccount(null)
           }
+        }}
+      />
+
+      <ConnectAmazonDialog
+        key={`oauth-${oauthAccount?.id || 'new'}-${oauthDialogOpen}`}
+        open={oauthDialogOpen}
+        account={oauthAccount}
+        onOpenChange={(open) => {
+          setOauthDialogOpen(open)
+          if (!open) setOauthAccount(null)
         }}
       />
     </div>

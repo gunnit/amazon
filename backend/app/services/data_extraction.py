@@ -442,7 +442,10 @@ class DataExtractionService:
                     warning_message = f"{label} sync warning for {account.account_name}: {detail}"
                     logger.warning(warning_message)
                     warning_messages.append(warning_message)
-                    warning_codes.append(getattr(exc, "error_code", type(exc).__name__))
+                    # error_code may be an int (e.g. HTTP 400 from the SP-API client);
+                    # the column is VARCHAR, so coerce or asyncpg rejects the flush.
+                    code = getattr(exc, "error_code", None)
+                    warning_codes.append(str(code) if code is not None else type(exc).__name__)
                     account.last_sync_heartbeat_at = datetime.utcnow()
                     await self.db.flush()
                     return 0
