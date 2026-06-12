@@ -648,9 +648,20 @@ class AmazonAccountDataSource:
         today = date.today()
         last_sunday = today - timedelta(days=today.isoweekday())
         week_start = last_sunday - timedelta(days=6)
+        # Scope to the brand's ASINs: the marketplace-wide report is
+        # stream-filtered in the client, and the aggregate click/conversion
+        # shares then describe the brand's terms instead of the whole
+        # marketplace. Without a scope the client still caps memory.
+        try:
+            scope_asins = await self._resolve_scope_asins()
+        except Exception:
+            scope_asins = None
         try:
             signal = client.get_brand_analytics_search_terms(
-                week_start, last_sunday, report_period="WEEK"
+                week_start,
+                last_sunday,
+                report_period="WEEK",
+                keep_asins=scope_asins or None,
             )
         except Exception as exc:
             logger.info("Brand Analytics search-terms fetch unavailable: %s", exc)

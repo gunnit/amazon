@@ -495,7 +495,20 @@ class SPAPIClient:
     ) -> dict:
         """Request a report, poll until done, and download the result."""
         api = self._reports_api()
+        doc_id = self._poll_report_document_id(
+            api, report_type, start_date, end_date, report_options
+        )
+        return self._download_report_document(api, doc_id)
 
+    def _poll_report_document_id(
+        self,
+        api: Reports,
+        report_type: str,
+        start_date: date,
+        end_date: date,
+        report_options: Optional[dict] = None,
+    ) -> str:
+        """Request a report and poll until DONE; return the document id."""
         create_params = {
             "reportType": report_type,
             "dataStartTime": start_date.isoformat(),
@@ -533,8 +546,7 @@ class SPAPIClient:
                         f"Report {report_id} DONE but no reportDocumentId",
                         error_code="REPORT_NO_DOCUMENT",
                     )
-                # Download the report document
-                return self._download_report_document(api, doc_id)
+                return doc_id
             elif status in ("FATAL", "CANCELLED"):
                 reason = self._describe_failed_report(api, status_payload)
                 logger.warning(
@@ -553,6 +565,55 @@ class SPAPIClient:
             f"Report {report_id} timed out after {max_attempts * poll_interval}s",
             error_code="REPORT_TIMEOUT",
         )
+
+    def _request_report_document_meta(
+        self,
+        report_type: str,
+        start_date: date,
+        end_date: date,
+        report_options: Optional[dict] = None,
+    ) -> dict:
+        """Request a report and return the document METADATA (url, compression)
+        without loading its content into memory."""
+        api = self._reports_api()
+        doc_id = self._poll_report_document_id(
+            api, report_type, start_date, end_date, report_options
+        )
+        return api.get_report_document(doc_id).payload
+
+    @staticmethod
+    def _stream_report_document_to_file(document_meta: dict, fh) -> int:
+        """Stream a report document's content into ``fh``, decompressing
+        incrementally. Marketplace-wide documents (e.g. Brand Analytics search
+        terms) are hundreds of MB uncompressed — loading them whole OOM-kills
+        small instances, so this never holds more than one chunk in memory."""
+        import httpx
+        import zlib
+
+        url = document_meta.get("url")
+        if not url:
+            raise AmazonAPIError(
+                "Report document has no download url", error_code="REPORT_NO_URL"
+            )
+        compression = (document_meta.get("compressionAlgorithm") or "").upper()
+        # wbits=47 auto-detects gzip/zlib headers.
+        decompressor = zlib.decompressobj(47) if compression == "GZIP" else None
+
+        written = 0
+        with httpx.Client(timeout=120) as http:
+            with http.stream("GET", url) as response:
+                response.raise_for_status()
+                for chunk in response.iter_bytes(chunk_size=1 << 20):
+                    data = decompressor.decompress(chunk) if decompressor else chunk
+                    if data:
+                        fh.write(data)
+                        written += len(data)
+                if decompressor:
+                    tail = decompressor.flush()
+                    if tail:
+                        fh.write(tail)
+                        written += len(tail)
+        return written
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def _data_kiosk_create_query(self, query: str) -> Dict[str, Any]:
@@ -1820,7 +1881,13 @@ class SPAPIClient:
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_brand_analytics_search_terms(
-        self, start_date: date, end_date: date, *, report_period: str = "WEEK"
+        self,
+        start_date: date,
+        end_date: date,
+        *,
+        report_period: str = "WEEK",
+        keep_asins: Optional[set] = None,
+        max_terms: int = 1000,
     ) -> Dict[str, Any]:
         """Fetch the Brand Analytics Search Terms report (brand-owner only).
 
@@ -1830,16 +1897,86 @@ class SPAPIClient:
         non-brand-owner accounts get a permission error which the caller guards
         against via the persisted ``brand_analytics_available`` capability.
 
+        The report covers the WHOLE marketplace (millions of rows), so it is
+        streamed to disk and parsed incrementally — never loaded into memory.
+        ``keep_asins`` keeps only terms whose top-3 clicked ASINs intersect the
+        given set (aggregates are computed over kept terms); ``max_terms`` caps
+        the returned list.
+
         The window must match ``report_period``: WEEK windows align to whole
         Amazon reporting weeks; the caller is responsible for passing an aligned
         range or Amazon returns FATAL."""
-        report_data = self.request_and_download_report(
+        import tempfile
+
+        document_meta = self._request_report_document_meta(
             report_type="GET_BRAND_ANALYTICS_SEARCH_TERMS_REPORT",
             start_date=start_date,
             end_date=end_date,
             report_options={"reportPeriod": report_period},
         )
-        return self._parse_brand_analytics_search_terms(self._report_json_payload(report_data))
+        with tempfile.TemporaryFile("w+b") as fh:
+            size = self._stream_report_document_to_file(document_meta, fh)
+            logger.info(
+                "Brand Analytics search terms document streamed: %.1f MB", size / 1e6
+            )
+            fh.seek(0)
+            return self._parse_brand_analytics_search_terms_stream(
+                fh, keep_asins=keep_asins, max_terms=max_terms
+            )
+
+    @classmethod
+    def _parse_brand_analytics_search_terms_stream(
+        cls,
+        fh,
+        *,
+        keep_asins: Optional[set] = None,
+        max_terms: int = 1000,
+    ) -> Dict[str, Any]:
+        """Incrementally parse a search-terms report document from a file.
+
+        Same output shape as ``_parse_brand_analytics_search_terms`` plus
+        ``terms_scanned``; memory stays constant regardless of document size."""
+        import ijson
+
+        keep = {str(a).upper() for a in keep_asins} if keep_asins else None
+        terms: List[Dict[str, Any]] = []
+        click_shares: List[float] = []
+        conversion_shares: List[float] = []
+        scanned = 0
+
+        for prefix in (
+            "dataByDepartmentAndSearchTerm.item",
+            "dataByAsin.item",
+            "searchTerms.item",
+        ):
+            fh.seek(0)
+            for record in ijson.items(fh, prefix):
+                scanned += 1
+                parsed = cls._parse_search_term_record(record)
+                if not parsed:
+                    continue
+                if keep is not None and not (
+                    {entry["asin"] for entry in parsed["top_clicked_asins"]} & keep
+                ):
+                    continue
+                for entry in parsed["top_clicked_asins"]:
+                    if entry["click_share"] is not None:
+                        click_shares.append(entry["click_share"])
+                    if entry["conversion_share"] is not None:
+                        conversion_shares.append(entry["conversion_share"])
+                if len(terms) < max_terms:
+                    terms.append(parsed)
+            if scanned:
+                break
+
+        return {
+            "source": "brand_analytics_search_terms",
+            "term_count": len(terms),
+            "terms_scanned": scanned,
+            "terms": terms,
+            "aggregate_click_share": cls._mean_share(click_shares),
+            "aggregate_conversion_share": cls._mean_share(conversion_shares),
+        }
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_brand_analytics_market_basket(
@@ -1876,50 +2013,15 @@ class SPAPIClient:
         click_shares: List[float] = []
         conversion_shares: List[float] = []
         for record in records:
-            if not isinstance(record, dict):
+            parsed = cls._parse_search_term_record(record)
+            if not parsed:
                 continue
-            term = cls._normalize_text_label(
-                record.get("searchTerm") or record.get("search_term")
-            )
-            if not term:
-                continue
-            top_asins: List[Dict[str, Any]] = []
-            for slot in (1, 2, 3):
-                asin = cls._normalize_asin(record.get(f"clickedAsin{slot}") or record.get(f"#{slot}ClickedItemAsin"))
-                if not asin:
-                    continue
-                click_share = cls._coerce_share(record.get(f"clickShare{slot}") or record.get(f"#{slot}ClickShare"))
-                conversion_share = cls._coerce_share(
-                    record.get(f"conversionShare{slot}") or record.get(f"#{slot}ConversionShare")
-                )
-                top_asins.append(
-                    {
-                        "rank": slot,
-                        "asin": asin,
-                        "product_title": cls._normalize_text_label(
-                            record.get(f"clickedItemName{slot}") or record.get(f"#{slot}ProductTitle")
-                        ),
-                        "click_share": click_share,
-                        "conversion_share": conversion_share,
-                    }
-                )
-                if click_share is not None:
-                    click_shares.append(click_share)
-                if conversion_share is not None:
-                    conversion_shares.append(conversion_share)
-            terms.append(
-                {
-                    "search_term": term,
-                    "search_frequency_rank": cls._parse_int(
-                        record.get("searchFrequencyRank") or record.get("search_frequency_rank")
-                    )
-                    or None,
-                    "department": cls._normalize_text_label(
-                        record.get("departmentName") or record.get("reportingDate")
-                    ),
-                    "top_clicked_asins": top_asins,
-                }
-            )
+            for entry in parsed["top_clicked_asins"]:
+                if entry["click_share"] is not None:
+                    click_shares.append(entry["click_share"])
+                if entry["conversion_share"] is not None:
+                    conversion_shares.append(entry["conversion_share"])
+            terms.append(parsed)
 
         return {
             "source": "brand_analytics_search_terms",
@@ -1927,6 +2029,48 @@ class SPAPIClient:
             "terms": terms,
             "aggregate_click_share": cls._mean_share(click_shares),
             "aggregate_conversion_share": cls._mean_share(conversion_shares),
+        }
+
+    @classmethod
+    def _parse_search_term_record(cls, record: Any) -> Optional[Dict[str, Any]]:
+        """Normalize one search-terms report record; None when unusable."""
+        if not isinstance(record, dict):
+            return None
+        term = cls._normalize_text_label(
+            record.get("searchTerm") or record.get("search_term")
+        )
+        if not term:
+            return None
+        top_asins: List[Dict[str, Any]] = []
+        for slot in (1, 2, 3):
+            asin = cls._normalize_asin(record.get(f"clickedAsin{slot}") or record.get(f"#{slot}ClickedItemAsin"))
+            if not asin:
+                continue
+            top_asins.append(
+                {
+                    "rank": slot,
+                    "asin": asin,
+                    "product_title": cls._normalize_text_label(
+                        record.get(f"clickedItemName{slot}") or record.get(f"#{slot}ProductTitle")
+                    ),
+                    "click_share": cls._coerce_share(
+                        record.get(f"clickShare{slot}") or record.get(f"#{slot}ClickShare")
+                    ),
+                    "conversion_share": cls._coerce_share(
+                        record.get(f"conversionShare{slot}") or record.get(f"#{slot}ConversionShare")
+                    ),
+                }
+            )
+        return {
+            "search_term": term,
+            "search_frequency_rank": cls._parse_int(
+                record.get("searchFrequencyRank") or record.get("search_frequency_rank")
+            )
+            or None,
+            "department": cls._normalize_text_label(
+                record.get("departmentName") or record.get("reportingDate")
+            ),
+            "top_clicked_asins": top_asins,
         }
 
     @classmethod

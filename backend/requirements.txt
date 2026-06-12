@@ -24,6 +24,7 @@ apscheduler==3.10.4
 # Amazon APIs
 python-amazon-sp-api==1.7.1
 boto3==1.34.25
+ijson==3.2.3  # incremental parse of marketplace-wide report documents
 
 # Data Processing & Analytics
 pandas==2.1.4

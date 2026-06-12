@@ -95,7 +95,11 @@ class BrandAnalyticsIngestService:
             return 0
 
         client = self._create_sp_api_client(account, organization)
-        signal = client.get_brand_analytics_search_terms(week_start, week_end)
+        # keep_asins makes the client stream-filter the marketplace-wide report
+        # down to the account's own terms instead of materializing all of it.
+        signal = client.get_brand_analytics_search_terms(
+            week_start, week_end, keep_asins=own_asins
+        )
 
         count = 0
         for term in signal.get("terms") or []:

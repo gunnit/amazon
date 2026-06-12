@@ -1,5 +1,6 @@
 """Tests for the Brand Analytics fetch + metric wiring (P0-7 / P1-11)."""
 import asyncio
+import json
 from datetime import date
 from pathlib import Path
 import sys
@@ -78,26 +79,54 @@ def test_market_basket_parser_collects_copurchased_asins():
     assert basket["purchased_with"][0]["asin"] == "B200"
 
 
-def test_get_brand_analytics_search_terms_reuses_report_poller():
+def test_get_brand_analytics_search_terms_streams_document():
     client = SPAPIClient.__new__(SPAPIClient)
     captured = {}
 
-    def fake_poller(report_type, start_date, end_date, report_options=None):
+    def fake_meta(report_type, start_date, end_date, report_options=None):
         captured["report_type"] = report_type
         captured["report_options"] = report_options
-        return {
-            "dataByDepartmentAndSearchTerm": [
-                {"searchTerm": "widget", "clickedAsin1": "B1", "clickShare1": "0.5"}
-            ]
-        }
+        return {"url": "https://example.test/doc", "compressionAlgorithm": None}
 
-    client.request_and_download_report = fake_poller  # type: ignore[assignment]
+    def fake_stream(document_meta, fh):
+        payload = json.dumps(
+            {
+                "dataByDepartmentAndSearchTerm": [
+                    {"searchTerm": "widget", "clickedAsin1": "B1", "clickShare1": "0.5"}
+                ]
+            }
+        ).encode()
+        fh.write(payload)
+        return len(payload)
+
+    client._request_report_document_meta = fake_meta  # type: ignore[assignment]
+    client._stream_report_document_to_file = fake_stream  # type: ignore[assignment]
     out = client.get_brand_analytics_search_terms(
         date(2026, 6, 1), date(2026, 6, 7), report_period="WEEK"
     )
     assert captured["report_type"] == "GET_BRAND_ANALYTICS_SEARCH_TERMS_REPORT"
     assert captured["report_options"] == {"reportPeriod": "WEEK"}
     assert out["term_count"] == 1
+
+
+def test_search_terms_stream_parser_filters_and_caps():
+    import io
+
+    records = [
+        {"searchTerm": f"term {i}", "clickedAsin1": f"B{i:03d}", "clickShare1": "0.10"}
+        for i in range(50)
+    ]
+    fh = io.BytesIO(json.dumps({"dataByDepartmentAndSearchTerm": records}).encode())
+
+    out = SPAPIClient._parse_brand_analytics_search_terms_stream(
+        fh, keep_asins={"b001", "B005"}, max_terms=1
+    )
+    assert out["terms_scanned"] == 50
+    # Only the two matching terms survive the filter; max_terms caps the list.
+    assert out["term_count"] == 1
+    assert out["terms"][0]["top_clicked_asins"][0]["asin"] == "B001"
+    # Aggregates cover all KEPT terms (2), not just the capped list.
+    assert out["aggregate_click_share"] == pytest.approx(0.10, rel=1e-3)
 
 
 # --------------------------------------------------------------------------
@@ -128,7 +157,7 @@ def test_brand_analytics_fetched_once_when_capability_present():
     calls = {"count": 0}
 
     class _Client:
-        def get_brand_analytics_search_terms(self, start, end, report_period="WEEK"):
+        def get_brand_analytics_search_terms(self, start, end, report_period="WEEK", **kwargs):
             calls["count"] += 1
             return {
                 "source": "brand_analytics_search_terms",
