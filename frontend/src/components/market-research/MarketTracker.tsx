@@ -16,6 +16,7 @@ import {
 import { useToast } from '@/components/ui/use-toast'
 import { marketResearchApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
+import { usablePrices } from '@/lib/market-research'
 import MarketSearchEmptyState from './MarketSearchEmptyState'
 import MarketOverviewStats from './MarketOverviewStats'
 import MarketSearchResultsTable from './MarketSearchResultsTable'
@@ -163,7 +164,7 @@ export default function MarketTracker({
   }
 
   // Compute averages for the detail dialog
-  const prices = searchResults?.map((r) => r.price).filter((p): p is number => p != null) || []
+  const prices = searchResults ? usablePrices(searchResults) : []
   const bsrs = searchResults?.map((r) => r.bsr).filter((b): b is number => b != null) || []
   const avgPrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : null
   const avgBsr = bsrs.length > 0 ? bsrs.reduce((a, b) => a + b, 0) / bsrs.length : null

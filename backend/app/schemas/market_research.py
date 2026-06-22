@@ -145,6 +145,18 @@ class MarketSearchResult(BaseModel):
     review_count: Optional[int] = None
     rating: Optional[float] = None
     missing_data: Optional[List[str]] = None
+    price_unreliable: Optional[bool] = None
+    price_unavailable_reason: Optional[
+        Literal[
+            "api_no_price",
+            "pricing_forbidden",
+            "pricing_unsupported_account_type",
+            "pricing_throttled",
+            "pricing_failed",
+            "price_unreliable",
+            "invalid_price",
+        ]
+    ] = None
 
 
 class MarketSearchResponse(BaseModel):

@@ -3,6 +3,7 @@ import { formatCurrency, formatNumber } from '@/lib/utils'
 export interface PricedItem {
   asin: string
   price: number | null
+  price_unreliable?: boolean | null
 }
 
 export interface MetricBearer {
@@ -20,6 +21,7 @@ export interface MetricBearer {
 // non-positive prices outright.
 const SENTINEL_MIN_OCCURRENCES = 3
 const SENTINEL_MIN_SHARE = 0.3
+const SENTINEL_MIN_VALUE = 1000
 
 function sentinelPrices(items: PricedItem[]): Set<number> {
   const counts = new Map<number, number>()
@@ -35,7 +37,11 @@ function sentinelPrices(items: PricedItem[]): Set<number> {
   if (priced < SENTINEL_MIN_OCCURRENCES) return sentinels
 
   for (const [value, count] of counts) {
-    if (count >= SENTINEL_MIN_OCCURRENCES && count / priced >= SENTINEL_MIN_SHARE) {
+    if (
+      value >= SENTINEL_MIN_VALUE &&
+      count >= SENTINEL_MIN_OCCURRENCES &&
+      count / priced >= SENTINEL_MIN_SHARE
+    ) {
       sentinels.add(value)
     }
   }
@@ -48,7 +54,10 @@ export function usablePrices(items: PricedItem[]): number[] {
   const sentinels = sentinelPrices(items)
   return items
     .map((item) => item.price)
-    .filter((price): price is number => price != null && price > 0 && Number.isFinite(price))
+    .filter((price, index): price is number => {
+      const item = items[index]
+      return price != null && price > 0 && Number.isFinite(price) && !item.price_unreliable
+    })
     .filter((price) => !sentinels.has(price))
 }
 

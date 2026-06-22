@@ -935,6 +935,16 @@ export interface MarketSearchResult {
   review_count: number | null
   rating: number | null
   missing_data?: string[] | null
+  price_unreliable?: boolean | null
+  price_unavailable_reason?:
+    | 'api_no_price'
+    | 'pricing_forbidden'
+    | 'pricing_unsupported_account_type'
+    | 'pricing_throttled'
+    | 'pricing_failed'
+    | 'price_unreliable'
+    | 'invalid_price'
+    | null
 }
 
 export interface MarketSearchResponse {

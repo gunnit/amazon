@@ -2,12 +2,16 @@ from decimal import Decimal
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+from uuid import uuid4
 
+import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.core.amazon.sp_api_client import SPAPIClient
 from app.services.market_research_service import (
+    _backfill_missing_prices_from_catalog,
+    _detect_sentinel_prices,
     _fetch_product_data,
     _flag_sentinel_prices,
 )
@@ -346,6 +350,8 @@ def test_market_search_endpoint_helper_matches_implementation():
     # The fix is to NOT skip items without a price. Make sure no `continue`
     # statement is gated on missing price inside the helper any more.
     assert "Skipping market search result without price" not in source
+    assert "price_unavailable_reason" in source
+    assert "pricing_unsupported_account_type" in source
 
 
 def test_fetch_product_data_keeps_competitive_price_when_offers_fail():
@@ -405,6 +411,21 @@ def test_flag_sentinel_prices_marks_repeated_placeholder():
     assert "price_unreliable" not in snapshots[4]
 
 
+def test_repeated_ordinary_prices_are_not_sentinel():
+    """Several real products can legitimately share a normal retail price."""
+    snapshots = [
+        {"asin": "B0A", "price": 9.99},
+        {"asin": "B0B", "price": 9.99},
+        {"asin": "B0C", "price": 9.99},
+        {"asin": "B0D", "price": 12.99},
+    ]
+
+    _flag_sentinel_prices(snapshots)
+
+    assert _detect_sentinel_prices([9.99, 9.99, 9.99, 12.99]) == set()
+    assert all("price_unreliable" not in snapshot for snapshot in snapshots)
+
+
 def test_flag_sentinel_prices_clears_stale_flag():
     snapshots = [
         {"asin": "B0A", "price": 12.5, "price_unreliable": True},
@@ -414,3 +435,24 @@ def test_flag_sentinel_prices_clears_stale_flag():
     _flag_sentinel_prices(snapshots)
 
     assert "price_unreliable" not in snapshots[0]
+
+
+@pytest.mark.asyncio
+async def test_backfill_missing_prices_from_saved_catalog():
+    class FakeResult:
+        def all(self):
+            return [("B0KNOWN", Decimal("22.30"))]
+
+    class FakeDb:
+        async def execute(self, _stmt):
+            return FakeResult()
+
+    snapshots = [
+        {"asin": "B0KNOWN", "price": None},
+        {"asin": "B0EXISTING", "price": 12.99},
+    ]
+
+    await _backfill_missing_prices_from_catalog(FakeDb(), uuid4(), snapshots)
+
+    assert snapshots[0]["price"] == 22.3
+    assert snapshots[1]["price"] == 12.99

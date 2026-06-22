@@ -15,6 +15,14 @@ interface MarketSearchResultsTableProps {
 type SortField = 'price' | 'bsr' | 'brand' | 'title'
 type SortDir = 'asc' | 'desc'
 
+function formatInteger(value: number | null | undefined): string {
+  return value != null && Number.isFinite(value) ? Math.round(value).toLocaleString() : ''
+}
+
+function formatRating(value: number | null | undefined): string {
+  return value != null && Number.isFinite(value) ? value.toFixed(1) : ''
+}
+
 export default function MarketSearchResultsTable({
   results,
   referenceAsin,
@@ -93,6 +101,35 @@ export default function MarketSearchResultsTable({
     )
   }
 
+  const MissingMetric = () => (
+    <span
+      className="text-xs text-muted-foreground"
+      title={t('marketResearch.metricUnavailableHint')}
+    >
+      {t('marketResearch.noData')}
+    </span>
+  )
+
+  const priceUnavailableHint = (reason?: MarketSearchResult['price_unavailable_reason']) => {
+    switch (reason) {
+      case 'pricing_forbidden':
+        return t('marketResearch.priceUnavailablePricingForbidden')
+      case 'pricing_unsupported_account_type':
+        return t('marketResearch.priceUnavailableVendor')
+      case 'pricing_throttled':
+        return t('marketResearch.priceUnavailableThrottled')
+      case 'pricing_failed':
+        return t('marketResearch.priceUnavailablePricingFailed')
+      case 'price_unreliable':
+        return t('marketResearch.priceUnreliableHint')
+      case 'invalid_price':
+        return t('marketResearch.priceUnavailableInvalid')
+      case 'api_no_price':
+      default:
+        return t('marketResearch.priceUnavailableApiNoPrice')
+    }
+  }
+
   return (
     <div className="border rounded-lg overflow-auto">
       <table className="w-full text-sm">
@@ -137,6 +174,8 @@ export default function MarketSearchResultsTable({
                 <SortIcon field="bsr" />
               </span>
             </th>
+            <th className="text-right p-3 font-medium">{t('marketResearch.reviews')}</th>
+            <th className="text-right p-3 font-medium">{t('marketResearch.rating')}</th>
           </tr>
         </thead>
         <tbody>
@@ -186,7 +225,14 @@ export default function MarketSearchResultsTable({
                   ) : '--'}
                 </td>
                 <td className="p-3 text-right">
-                  {isUsablePrice(result.price, results) ? (
+                  {result.price_unreliable || (result.price != null && !isUsablePrice(result.price, results)) ? (
+                    <span
+                      className="text-xs text-muted-foreground"
+                      title={priceUnavailableHint(result.price_unavailable_reason)}
+                    >
+                      {t('marketResearch.priceUnreliable')}
+                    </span>
+                  ) : isUsablePrice(result.price, results) ? (
                     <div className="flex items-center justify-end">
                       <span className="font-mono text-xs">{formatEur(result.price)}</span>
                       {getPriceBadge(result.price)}
@@ -194,14 +240,20 @@ export default function MarketSearchResultsTable({
                   ) : (
                     <span
                       className="text-xs text-muted-foreground"
-                      title={t('marketResearch.priceUnreliableHint')}
+                      title={priceUnavailableHint(result.price_unavailable_reason)}
                     >
-                      {t('marketResearch.priceUnreliable')}
+                      {t('marketResearch.noData')}
                     </span>
                   )}
                 </td>
                 <td className="p-3 text-right">
-                  {getBsrBar(result.bsr)}
+                  {getBsrBar(result.bsr) || <MissingMetric />}
+                </td>
+                <td className="p-3 text-right font-mono text-xs">
+                  {result.review_count != null ? formatInteger(result.review_count) : <MissingMetric />}
+                </td>
+                <td className="p-3 text-right font-mono text-xs">
+                  {result.rating != null ? formatRating(result.rating) : <MissingMetric />}
                 </td>
               </tr>
             )

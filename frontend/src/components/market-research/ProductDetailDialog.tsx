@@ -55,7 +55,7 @@ export default function ProductDetailDialog({
 
   if (!product) return null
 
-  const priceDiff = product.price != null && averagePrice != null
+  const priceDiff = product.price != null && !product.price_unreliable && averagePrice != null
     ? formatDiff(product.price, averagePrice, true, t)
     : null
 
@@ -104,7 +104,11 @@ export default function ProductDetailDialog({
             <div className="rounded-lg border p-3 space-y-1">
               <p className="text-xs text-muted-foreground">{t('marketResearch.price')}</p>
               <p className="text-lg font-bold">
-                {product.price != null ? formatEur(product.price) : '—'}
+                {product.price != null && !product.price_unreliable
+                  ? formatEur(product.price)
+                  : product.price_unreliable
+                    ? t('marketResearch.priceUnreliable')
+                    : '—'}
               </p>
               {priceDiff && (
                 <p className={`text-xs ${priceDiff.color}`}>{priceDiff.text}</p>

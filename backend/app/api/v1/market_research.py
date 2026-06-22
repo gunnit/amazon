@@ -2,7 +2,7 @@
 from datetime import datetime
 import logging
 import time
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select as sa_select
@@ -37,6 +37,42 @@ router = APIRouter()
 
 MARKET_SEARCH_RESULT_LIMIT = 20
 MARKET_SEARCH_CANDIDATE_LIMIT = 60
+
+
+def _classify_market_search_pricing_failure(exc: Exception) -> str:
+    """Map pricing lookup failures to stable UI-facing reason codes."""
+    error_code = str(getattr(exc, "error_code", "") or getattr(exc, "code", "")).lower()
+    message = str(exc).lower()
+    if "throttl" in error_code or "throttl" in message:
+        return "pricing_throttled"
+    if (
+        "forbidden" in error_code
+        or "unauthorized" in error_code
+        or "accessdenied" in error_code
+        or "403" in message
+        or "forbidden" in message
+        or "not authorized" in message
+    ):
+        return "pricing_forbidden"
+    return "pricing_failed"
+
+
+def _mark_missing_price(row: dict, reason: str) -> None:
+    missing = list(row.get("missing_data") or [])
+    if "price" not in missing:
+        missing.append("price")
+    row["missing_data"] = missing
+    row["price_unavailable_reason"] = reason
+
+
+def _coerce_positive_price(value) -> Optional[float]:
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    if price <= 0:
+        return None
+    return price
 
 
 def _report_to_response(report) -> MarketResearchResponse:
@@ -215,6 +251,7 @@ async def refresh_report(
     from app.models.amazon_account import AmazonAccount
     from app.models.market_research import MarketResearchReport
     from app.services.market_research_service import _fetch_product_data
+    from app.services.market_research_service import _backfill_missing_prices_from_catalog
 
     result = await db.execute(
         sa_select(MarketResearchReport)
@@ -305,6 +342,7 @@ async def refresh_report(
     product_snapshot = dict(report.product_snapshot or {})
     all_snapshots = ([product_snapshot] if product_snapshot else []) + refreshed_competitors
     _backfill_missing_prices(client, all_snapshots)
+    await _backfill_missing_prices_from_catalog(db, report.account_id, all_snapshots)
     _flag_sentinel_prices(all_snapshots)
     if product_snapshot:
         report.product_snapshot = product_snapshot
@@ -381,6 +419,7 @@ async def market_search(
     from app.core.amazon.sp_api_client import SPAPIClient, resolve_marketplace
     from app.core.amazon.credentials import resolve_credentials
     from app.models.user import Organization
+    from app.models.product import Product
 
     # Verify account belongs to org
     result = await db.execute(
@@ -415,7 +454,28 @@ async def market_search(
             detail=f"Failed to connect to Amazon SP-API: {e}",
         )
 
-    def _priced_results(items: List[dict], limit: int) -> List[dict]:
+    async def _load_internal_price_fallbacks(asins: List[str]) -> dict[str, float]:
+        """Return saved account catalog prices for ASINs already known internally."""
+        normalized = list(dict.fromkeys(asin.upper() for asin in asins if asin))
+        if not normalized:
+            return {}
+
+        result = await db.execute(
+            sa_select(Product.asin, Product.current_price)
+            .where(
+                Product.account_id == account.id,
+                Product.asin.in_(normalized),
+                Product.current_price.is_not(None),
+            )
+        )
+        prices: dict[str, float] = {}
+        for asin, current_price in result.all():
+            price = _coerce_positive_price(current_price)
+            if price is not None:
+                prices[str(asin).upper()] = price
+        return prices
+
+    async def _priced_results(items: List[dict], limit: int) -> List[dict]:
         """Return up to ``limit`` catalog results, enriching with Pricing API data when possible.
 
         Products without a price are still returned. The previous behaviour
@@ -424,23 +484,53 @@ async def market_search(
         403s, or items with no live offers). Missing fields are flagged via
         ``missing_data`` so the UI can display "N/A" markers explicitly.
         """
-        missing_price_asins = [item["asin"] for item in items if item.get("price") is None]
-        try:
-            price_map = client.get_market_prices_for_asins(missing_price_asins)
-        except Exception as exc:
-            logger.warning(
-                "Bulk pricing lookup failed for market search; continuing without prices: %s",
-                exc,
-            )
+        missing_price_asins = [
+            item["asin"]
+            for item in items
+            if item.get("asin") and item.get("price") is None
+        ]
+        pricing_failure_reason = None
+        if getattr(client, "is_vendor", False):
             price_map = {}
+            pricing_failure_reason = "pricing_unsupported_account_type"
+        else:
+            try:
+                price_map = client.get_market_prices_for_asins(missing_price_asins)
+            except Exception as exc:
+                pricing_failure_reason = _classify_market_search_pricing_failure(exc)
+                logger.warning(
+                    "Bulk pricing lookup failed for market search; continuing without prices: %s",
+                    exc,
+                )
+                price_map = {}
+
+        still_missing = [
+            asin
+            for asin in missing_price_asins
+            if price_map.get(str(asin).upper()) is None
+        ]
+        internal_price_map = await _load_internal_price_fallbacks(still_missing)
 
         enriched_items: List[dict] = []
         for item in items[:limit]:
             enriched = dict(item)
             if enriched.get("price") is None:
-                price = price_map.get(enriched["asin"])
+                price = price_map.get(str(enriched.get("asin", "")).upper())
                 if price is not None:
                     enriched["price"] = float(price)
+            if enriched.get("price") is None:
+                price = internal_price_map.get(str(enriched.get("asin", "")).upper())
+                if price is not None:
+                    enriched["price"] = price
+
+            if enriched.get("price") is None:
+                _mark_missing_price(
+                    enriched,
+                    pricing_failure_reason or "api_no_price",
+                )
+            elif _coerce_positive_price(enriched.get("price")) is None:
+                enriched["price"] = None
+                _mark_missing_price(enriched, "invalid_price")
 
             missing_fields = [
                 field
@@ -462,7 +552,7 @@ async def market_search(
             # For ASIN search: get the specific product + discover competitors
             from app.services.market_research_service import _fetch_product_data
             product = _fetch_product_data(client, data.query.upper())
-            results = _priced_results([product], limit=1)
+            results = await _priced_results([product], limit=1)
 
             # Also discover related products using the product title
             title = product.get("title", "")
@@ -473,7 +563,7 @@ async def market_search(
                 )
                 related = [item for item in related if item["asin"] != data.query.upper()]
                 results.extend(
-                    _priced_results(
+                    await _priced_results(
                         related,
                         limit=max(MARKET_SEARCH_RESULT_LIMIT - len(results), 0),
                     )
@@ -484,7 +574,7 @@ async def market_search(
                 data.query,
                 max_results=MARKET_SEARCH_CANDIDATE_LIMIT,
             )
-            results = _priced_results(raw_results, limit=MARKET_SEARCH_RESULT_LIMIT)
+            results = await _priced_results(raw_results, limit=MARKET_SEARCH_RESULT_LIMIT)
     except AmazonAPIError as e:
         error_code = getattr(e, "error_code", "UNKNOWN")
         if error_code == "THROTTLED":
@@ -503,19 +593,19 @@ async def market_search(
             detail=f"Search failed: {str(e)[:200]}",
         )
 
-    # Null out repeated placeholder prices server-side so every client gets
+    # Flag repeated placeholder prices server-side so every client gets
     # honest data, not just the web UI (which re-applies the same guard).
     sentinel_values = _detect_sentinel_prices(
         [float(r["price"]) for r in results if r.get("price") is not None]
     )
     for r in results:
         price = r.get("price")
-        if price is not None and (float(price) <= 0 or float(price) in sentinel_values):
+        if price is not None and float(price) <= 0:
             r["price"] = None
-            missing = list(r.get("missing_data") or [])
-            if "price" not in missing:
-                missing.append("price")
-            r["missing_data"] = missing
+            _mark_missing_price(r, "invalid_price")
+        elif price is not None and float(price) in sentinel_values:
+            r["price_unreliable"] = True
+            _mark_missing_price(r, "price_unreliable")
 
     search_results = [
         MarketSearchResult(
@@ -528,6 +618,8 @@ async def market_search(
             review_count=r.get("review_count"),
             rating=r.get("rating"),
             missing_data=r.get("missing_data") or None,
+            price_unreliable=r.get("price_unreliable") or None,
+            price_unavailable_reason=r.get("price_unavailable_reason"),
         )
         for r in results
     ]

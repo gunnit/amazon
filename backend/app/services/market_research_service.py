@@ -54,6 +54,7 @@ except ImportError:  # pragma: no cover - keeps pure unit tests independent of S
 
 from app.models.market_research import MarketResearchReport
 from app.models.amazon_account import AmazonAccount
+from app.models.product import Product
 from app.schemas.market_research import MarketResearchCreate
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,7 @@ AUTO_DISCOVER_COUNT = 8
 # keeps averages, ranges and the comparison matrix honest.
 _SENTINEL_PRICE_MIN_OCCURRENCES = 3
 _SENTINEL_PRICE_MIN_SHARE = 0.3
+_SENTINEL_PRICE_MIN_VALUE = 1000.0
 
 
 def _detect_sentinel_prices(values: list[float]) -> set[float]:
@@ -82,7 +84,8 @@ def _detect_sentinel_prices(values: list[float]) -> set[float]:
     return {
         value
         for value, count in counts.items()
-        if count >= _SENTINEL_PRICE_MIN_OCCURRENCES
+        if value >= _SENTINEL_PRICE_MIN_VALUE
+        and count >= _SENTINEL_PRICE_MIN_OCCURRENCES
         and count / len(positive) >= _SENTINEL_PRICE_MIN_SHARE
     }
 
@@ -144,6 +147,42 @@ def _backfill_missing_prices(client, snapshots: List[dict]) -> None:
         price = price_map.get(str(snapshot.get("asin", "")).upper())
         if price is not None:
             snapshot["price"] = float(price)
+
+
+async def _backfill_missing_prices_from_catalog(
+    db: AsyncSession,
+    account_id: UUID,
+    snapshots: List[dict],
+) -> None:
+    """Fill missing prices from the account's saved catalog when available."""
+    missing = [
+        str(s["asin"]).upper()
+        for s in snapshots
+        if s.get("asin") and _snapshot_price(s) is None
+    ]
+    if not missing:
+        return
+
+    result = await db.execute(
+        select(Product.asin, Product.current_price)
+        .where(
+            Product.account_id == account_id,
+            Product.asin.in_(list(dict.fromkeys(missing))),
+            Product.current_price.is_not(None),
+        )
+    )
+    price_map: dict[str, float] = {}
+    for asin, current_price in result.all():
+        price = _snapshot_price({"price": current_price})
+        if price is not None and price > 0:
+            price_map[str(asin).upper()] = price
+
+    for snapshot in snapshots:
+        if _snapshot_price(snapshot) is not None:
+            continue
+        price = price_map.get(str(snapshot.get("asin", "")).upper())
+        if price is not None:
+            snapshot["price"] = price
 
 
 class MarketResearchService:
@@ -733,6 +772,11 @@ def process_report_background(
                 product_snapshot = dict(report.product_snapshot or {})
                 comp_data = [dict(c) for c in (report.competitor_data or [])]
                 _backfill_missing_prices(client, [product_snapshot, *comp_data])
+                await _backfill_missing_prices_from_catalog(
+                    db,
+                    report.account_id,
+                    [product_snapshot, *comp_data],
+                )
                 _flag_sentinel_prices([product_snapshot, *comp_data])
                 report.product_snapshot = product_snapshot
                 report.competitor_data = comp_data
