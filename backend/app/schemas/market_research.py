@@ -3,6 +3,24 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class MarketSearchSeedSnapshot(BaseModel):
+    """Market Tracker result snapshot used to seed report generation.
+
+    Values are never invented: they come from the just-completed market-search
+    response and are used only as fallback when the report re-fetch misses a
+    field that was already available.
+    """
+    asin: str
+    title: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    price: Optional[float] = None
+    bsr: Optional[int] = None
+    review_count: Optional[int] = None
+    rating: Optional[float] = None
+    price_unreliable: Optional[bool] = None
+
+
 class MarketResearchCreate(BaseModel):
     """Request to create a market research report.
 
@@ -18,6 +36,7 @@ class MarketResearchCreate(BaseModel):
     market_competitor_asins: Optional[List[str]] = Field(default=None, max_length=15)
     search_query: Optional[str] = Field(default=None, max_length=200)
     search_type: Optional[str] = Field(default=None, pattern="^(keyword|brand|asin)$")
+    market_search_results: Optional[List[MarketSearchSeedSnapshot]] = Field(default=None, max_length=20)
 
 
 class ProductSnapshot(BaseModel):

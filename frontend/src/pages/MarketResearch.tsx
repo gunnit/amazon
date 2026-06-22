@@ -232,6 +232,7 @@ export default function MarketResearch() {
       language: string
       extra_competitor_asins?: string[]
       market_competitor_asins?: string[]
+      market_search_results?: MarketSearchResult[]
       search_query?: string
       search_type?: string
     }) => marketResearchApi.generate(params),
@@ -558,6 +559,9 @@ export default function MarketResearch() {
                 ...(params.source_asin ? { source_asin: params.source_asin } : {}),
                 ...(params.market_competitor_asins
                   ? { market_competitor_asins: params.market_competitor_asins }
+                  : {}),
+                ...(params.market_search_results
+                  ? { market_search_results: params.market_search_results }
                   : {}),
               })
             }}

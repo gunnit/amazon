@@ -185,6 +185,42 @@ async def _backfill_missing_prices_from_catalog(
             snapshot["price"] = price
 
 
+def _seed_market_search_snapshots(
+    snapshots: List[dict],
+    market_search_results: Optional[List[dict]],
+) -> None:
+    """Fill missing snapshot fields from the market-search result set.
+
+    Report generation re-fetches each ASIN from SP-API. If that second pass
+    misses a price that the just-completed Market Tracker search already
+    obtained, keep the known value instead of losing it. Freshly fetched fields
+    always win; seed prices must be positive and not marked unreliable.
+    """
+    if not market_search_results:
+        return
+
+    seeds: dict[str, dict] = {}
+    for result in market_search_results:
+        asin = str((result or {}).get("asin") or "").upper()
+        if asin:
+            seeds[asin] = result
+
+    for snapshot in snapshots:
+        asin = str(snapshot.get("asin") or "").upper()
+        seed = seeds.get(asin)
+        if not seed:
+            continue
+
+        for field in ("title", "brand", "category", "bsr", "review_count", "rating"):
+            if snapshot.get(field) is None and seed.get(field) is not None:
+                snapshot[field] = seed[field]
+
+        if _snapshot_price(snapshot) is None and not seed.get("price_unreliable"):
+            price = _snapshot_price(seed)
+            if price is not None and price > 0:
+                snapshot["price"] = price
+
+
 class MarketResearchService:
     """Service for creating and managing market research reports."""
 
@@ -472,6 +508,7 @@ def process_report_background(
     market_competitor_asins: Optional[List[str]] = None,
     search_query: Optional[str] = None,
     search_type: Optional[str] = None,
+    market_search_results: Optional[List[dict]] = None,
 ):
     """Process a market research report synchronously in a background thread.
 
@@ -771,6 +808,10 @@ def process_report_background(
                 # persisted or fed to the AI.
                 product_snapshot = dict(report.product_snapshot or {})
                 comp_data = [dict(c) for c in (report.competitor_data or [])]
+                _seed_market_search_snapshots(
+                    [product_snapshot, *comp_data],
+                    market_search_results,
+                )
                 _backfill_missing_prices(client, [product_snapshot, *comp_data])
                 await _backfill_missing_prices_from_catalog(
                     db,

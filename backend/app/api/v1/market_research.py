@@ -170,6 +170,10 @@ async def generate_report(
         "market_competitor_asins": data.market_competitor_asins or [],
         "search_query": data.search_query,
         "search_type": data.search_type,
+        "market_search_results": [
+            snapshot.model_dump()
+            for snapshot in (data.market_search_results or [])
+        ],
     }
 
     try:

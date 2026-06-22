@@ -14,6 +14,7 @@ from app.services.market_research_service import (
     _detect_sentinel_prices,
     _fetch_product_data,
     _flag_sentinel_prices,
+    _seed_market_search_snapshots,
 )
 
 
@@ -456,3 +457,36 @@ async def test_backfill_missing_prices_from_saved_catalog():
 
     assert snapshots[0]["price"] == 22.3
     assert snapshots[1]["price"] == 12.99
+
+
+def test_seed_market_search_snapshots_preserves_found_price():
+    snapshots = [
+        {"asin": "B0FOUND", "title": None, "price": None},
+        {"asin": "B0FRESH", "price": 18.0},
+        {"asin": "B0BAD", "price": None},
+    ]
+    market_search_results = [
+        {
+            "asin": "B0FOUND",
+            "title": "Found in tracker",
+            "price": 24.9,
+            "bsr": 123,
+        },
+        {
+            "asin": "B0FRESH",
+            "price": 99.0,
+        },
+        {
+            "asin": "B0BAD",
+            "price": 6954.0,
+            "price_unreliable": True,
+        },
+    ]
+
+    _seed_market_search_snapshots(snapshots, market_search_results)
+
+    assert snapshots[0]["title"] == "Found in tracker"
+    assert snapshots[0]["price"] == 24.9
+    assert snapshots[0]["bsr"] == 123
+    assert snapshots[1]["price"] == 18.0
+    assert snapshots[2]["price"] is None

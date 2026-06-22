@@ -15,6 +15,7 @@ def process_market_research(
     market_competitor_asins: Optional[List[str]] = None,
     search_query: Optional[str] = None,
     search_type: Optional[str] = None,
+    market_search_results: Optional[List[dict]] = None,
 ):
     """Dispatch market research processing through the shared service logic."""
     from app.services.market_research_service import process_report_background
@@ -26,6 +27,7 @@ def process_market_research(
             market_competitor_asins=market_competitor_asins,
             search_query=search_query,
             search_type=search_type,
+            market_search_results=market_search_results,
         )
     except Exception as exc:
         logger.exception("Market research task failed for %s", report_id)

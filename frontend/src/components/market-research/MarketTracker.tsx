@@ -42,6 +42,7 @@ interface MarketTrackerProps {
     search_type: string
     source_asin?: string
     market_competitor_asins?: string[]
+    market_search_results?: MarketSearchResult[]
   }) => void
   isGenerating: boolean
 }
@@ -145,12 +146,19 @@ export default function MarketTracker({
       .filter((product) => product.asin !== referenceAsin)
       .map((product) => product.asin)
       .slice(0, 10)
+    const selectedSnapshots = (searchResults || [])
+      .filter(
+        (product) =>
+          product.asin === referenceAsin || competitorAsins.includes(product.asin),
+      )
+      .slice(0, 11)
 
     onGenerateReport({
       search_query: searchQuery.trim(),
       search_type: searchType,
       ...(referenceAsin ? { source_asin: referenceAsin } : {}),
       ...(competitorAsins.length > 0 ? { market_competitor_asins: competitorAsins } : {}),
+      ...(selectedSnapshots.length > 0 ? { market_search_results: selectedSnapshots } : {}),
     })
   }
 

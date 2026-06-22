@@ -13,7 +13,7 @@ import type {
   ScheduledReport, ScheduledReportRun,
   GoogleSheetsConnection, GoogleSheetsSync, GoogleSheetsSyncRun,
   ApiKeysUpdate, ApiKeysResponse,
-  MarketResearchReport, MarketResearchListItem, ComparisonMatrixResponse, MarketSearchResponse,
+  MarketResearchReport, MarketResearchListItem, ComparisonMatrixResponse, MarketSearchResponse, MarketSearchResult,
   BrandAnalysisJob, BrandAnalysisListItem, BrandPulseResponse,
   BrandIntelligenceReport, BrandIntelligenceReportListItem,
   BrandIntelligenceGenerateResponse, BrandIntelligenceSchedule,
@@ -1043,6 +1043,7 @@ export const marketResearchApi = {
     language: string
     extra_competitor_asins?: string[]
     market_competitor_asins?: string[]
+    market_search_results?: MarketSearchResult[]
     search_query?: string
     search_type?: string
   }): Promise<MarketResearchReport> => {
