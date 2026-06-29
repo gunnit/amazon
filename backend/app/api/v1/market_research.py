@@ -176,13 +176,7 @@ async def generate_report(
         ],
     }
 
-    try:
-        process_market_research.delay(str(report.id), **task_kwargs)
-    except Exception:
-        logger.exception(
-            "Failed to enqueue market research %s on Celery; falling back to in-process thread",
-            report.id,
-        )
+    def _run_inline() -> None:
         import threading
 
         thread = threading.Thread(
@@ -192,6 +186,19 @@ async def generate_report(
             daemon=True,
         )
         thread.start()
+
+    if settings.run_tasks_inline:
+        # No Celery worker in this deployment: dispatch in-process deterministically.
+        _run_inline()
+    else:
+        try:
+            process_market_research.delay(str(report.id), **task_kwargs)
+        except Exception:
+            logger.exception(
+                "Failed to enqueue market research %s on Celery; falling back to in-process thread",
+                report.id,
+            )
+            _run_inline()
 
     return _report_to_response(report)
 

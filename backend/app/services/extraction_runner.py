@@ -669,6 +669,34 @@ def run_backfill_recovery_sweep() -> dict:
             loop.close()
 
 
+def run_brand_analysis_recovery() -> dict:
+    """Scheduler entrypoint: finalize brand-analysis jobs whose in-process
+    thread was lost to a web-process restart (deploy mid-run).
+
+    Uses a dedicated local engine — never the live app's shared engine — so it
+    is safe to run inside the API process from the in-process scheduler.
+    """
+    from workers.tasks.brand_analysis import _recover_stuck_jobs
+
+    engine, session_factory = _make_local_session_factory()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        result = loop.run_until_complete(_recover_stuck_jobs(session_factory))
+        if result.get("failed") or result.get("cancelled"):
+            logger.warning(
+                "Brand analysis recovery: finalized %d failed, %d cancelled",
+                result.get("failed", 0),
+                result.get("cancelled", 0),
+            )
+        return result
+    finally:
+        try:
+            loop.run_until_complete(engine.dispose())
+        finally:
+            loop.close()
+
+
 # ---------------------------------------------------------------------------
 # Sales gap detection + repair
 # ---------------------------------------------------------------------------

@@ -943,6 +943,9 @@ export default function BrandAnalysis() {
                     ))}
                   </SelectContent>
                 </Select>
+                {selectedAccount === 'none' && (
+                  <p className="mt-1 text-xs text-muted-foreground">{t('brandAnalysis.accountNoneHint')}</p>
+                )}
               </div>
             </div>
 
@@ -1577,6 +1580,19 @@ export default function BrandAnalysis() {
                         aria-label={t('brandAnalysis.history.downloadRow', { brand: job.brand_name })}
                       >
                         <Download className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                    {(job.status === 'failed' || job.status === 'cancelled') ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => startMutation.mutate(job.id)}
+                        disabled={startMutation.isPending}
+                        title={t('brandAnalysis.history.restart')}
+                        aria-label={t('brandAnalysis.history.restart')}
+                      >
+                        <RefreshCw className="h-4 w-4" />
                       </Button>
                     ) : null}
                     <DeleteAnalysisButton

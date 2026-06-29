@@ -416,6 +416,7 @@ export default function MarketResearch() {
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground mt-1">{t('marketResearch.accountSelectorHint')}</p>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">{t('marketResearch.analysisLanguage')}</label>

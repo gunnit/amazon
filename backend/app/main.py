@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI):
             from app.services.extraction_runner import (
                 run_asin_economics_sync_all,
                 run_backfill_recovery_sweep,
+                run_brand_analysis_recovery,
                 run_brand_search_terms_sync_all,
                 run_daily_sync_all,
                 run_listing_quality_snapshot_all,
@@ -148,6 +149,17 @@ async def lifespan(app: FastAPI):
                 max_instances=1,
                 coalesce=True,
                 misfire_grace_time=3600,
+            )
+            # Finalize brand-analysis jobs whose in-process thread was lost to a
+            # web-process restart (deploy mid-run). Without this, such jobs hang
+            # at "In preparazione" forever since there is no Celery beat in prod.
+            scheduler.add_job(
+                run_brand_analysis_recovery,
+                IntervalTrigger(minutes=settings.BRAND_ANALYSIS_RECOVERY_INTERVAL_MINUTES),
+                id="brand-analysis-recovery",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=600,
             )
             scheduler.start()
             logger.info(

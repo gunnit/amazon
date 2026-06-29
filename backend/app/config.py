@@ -125,6 +125,17 @@ class Settings(BaseSettings):
     # scan is a cheap query; any due report is generated + emailed in a daemon
     # thread, so no separate Celery/Redis worker is required.
     SCHEDULED_REPORT_SCAN_INTERVAL_MINUTES: int = 10
+    # When True, on-demand long jobs (brand analysis, market research) skip
+    # Celery entirely and run in a daemon thread inside the API process, so
+    # dispatch is deterministic instead of relying on .delay() failing fast to
+    # trigger the in-process fallback. Defaults off, but see ``run_tasks_inline``
+    # which also turns it on automatically wherever the in-process scheduler is
+    # enabled (i.e. a deploy with no separate Celery worker). The stuck-job
+    # recovery sweep heals threads lost to a web-process restart.
+    EXECUTE_TASKS_INLINE: bool = False
+    # How often the in-process scheduler finalizes brand-analysis jobs whose
+    # worker/thread stalled (e.g. killed by a deploy mid-run).
+    BRAND_ANALYSIS_RECOVERY_INTERVAL_MINUTES: int = 10
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
@@ -147,6 +158,16 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.APP_ENV.lower() == "production"
+
+    @property
+    def run_tasks_inline(self) -> bool:
+        """Whether on-demand long jobs should run in-process (no Celery worker).
+
+        True when explicitly requested, or implicitly whenever the in-process
+        scheduler is enabled — that flag already marks a deploy that has no
+        separate Celery worker, so on-demand tasks must run inline there too.
+        """
+        return self.EXECUTE_TASKS_INLINE or self.ENABLE_INPROCESS_SCHEDULER
 
 
 # Placeholder defaults that must never survive into production.

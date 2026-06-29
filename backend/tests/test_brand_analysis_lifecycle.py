@@ -5,6 +5,7 @@ live database by stubbing ``get_job`` and using a no-op fake session, so the
 status transitions and guard rails are covered in CI without Postgres.
 """
 import asyncio
+from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -23,6 +24,7 @@ from app.services.brand_analysis_service import (  # noqa: E402
     BrandAnalysisJobRunningError,
     BrandAnalysisService,
 )
+from workers.tasks.brand_analysis import _is_stuck_brand_analysis_job  # noqa: E402
 
 
 def _run(coro):
@@ -127,3 +129,39 @@ def test_delete_terminal_job_is_allowed():
 def test_notification_alert_types_map_to_contract():
     assert svc.BRAND_ANALYSIS_READY_ALERT_TYPE == "brand_analysis_ready"
     assert svc.BRAND_ANALYSIS_FAILED_ALERT_TYPE == "brand_analysis_failed"
+
+
+def test_recovery_marks_old_pending_job_without_heartbeat_as_stuck():
+    cutoff = datetime(2026, 6, 21, 10, 0, 0)
+    job = _job(
+        status="pending",
+        heartbeat_at=None,
+        started_at=None,
+        updated_at=cutoff - timedelta(minutes=1),
+        created_at=cutoff - timedelta(hours=1),
+    )
+    assert _is_stuck_brand_analysis_job(job, cutoff) is True
+
+
+def test_recovery_keeps_recent_pending_job_without_heartbeat_running():
+    cutoff = datetime(2026, 6, 21, 10, 0, 0)
+    job = _job(
+        status="pending",
+        heartbeat_at=None,
+        started_at=None,
+        updated_at=cutoff + timedelta(minutes=1),
+        created_at=cutoff - timedelta(hours=1),
+    )
+    assert _is_stuck_brand_analysis_job(job, cutoff) is False
+
+
+def test_recovery_uses_fresh_heartbeat_over_old_timestamps():
+    cutoff = datetime(2026, 6, 21, 10, 0, 0)
+    job = _job(
+        status="generating_pptx",
+        heartbeat_at=cutoff + timedelta(minutes=1),
+        started_at=cutoff - timedelta(hours=1),
+        updated_at=cutoff - timedelta(hours=1),
+        created_at=cutoff - timedelta(hours=2),
+    )
+    assert _is_stuck_brand_analysis_job(job, cutoff) is False

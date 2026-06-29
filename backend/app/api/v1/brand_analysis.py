@@ -250,25 +250,35 @@ async def start_brand_analysis_processing(
     job.started_at = None
     await db.commit()
 
-    try:
-        async_result = process_brand_analysis.delay(str(job.id))
-        job.celery_task_id = async_result.id
-        job.started_at = datetime.utcnow()
-        await db.commit()
-    except Exception:
-        logger.exception(
-            "Failed to enqueue brand analysis %s on Celery; falling back to in-process thread",
-            job.id,
-        )
-        await db.rollback()
-        import threading
+    import threading
 
-        from app.services.brand_analysis_service import process_brand_analysis_job
+    from app.services.brand_analysis_service import process_brand_analysis_job
 
+    def _run_inline() -> None:
         job.started_at = datetime.utcnow()
-        await db.commit()
         thread = threading.Thread(target=process_brand_analysis_job, args=(str(job.id),), daemon=True)
         thread.start()
+
+    if settings.run_tasks_inline:
+        # No Celery worker in this deployment: skip the broker entirely so the
+        # job is dispatched deterministically (a blocking .delay() inside an
+        # async route can stall the event loop).
+        _run_inline()
+        await db.commit()
+    else:
+        try:
+            async_result = process_brand_analysis.delay(str(job.id))
+            job.celery_task_id = async_result.id
+            job.started_at = datetime.utcnow()
+            await db.commit()
+        except Exception:
+            logger.exception(
+                "Failed to enqueue brand analysis %s on Celery; falling back to in-process thread",
+                job.id,
+            )
+            await db.rollback()
+            _run_inline()
+            await db.commit()
 
     job = await service.get_job(job_id, organization.id)
     return _job_to_response(job)
