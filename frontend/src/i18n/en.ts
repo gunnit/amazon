@@ -78,6 +78,8 @@ const en: Record<string, string> = {
   'comparison.mom': 'MoM',
   'comparison.qoq': 'QoQ',
   'comparison.yoy': 'YoY',
+  'comparison.apply': 'Apply',
+  'comparison.applyHint': 'Select both periods, then press Apply',
   'comparison.dashboardTitle': 'Period Comparison',
   'comparison.dashboardDescription': 'Compare KPI movement across two time periods without leaving the dashboard.',
   'comparison.dashboardDescriptionScoped': 'Compare KPI movement for {accountName} across two time periods.',

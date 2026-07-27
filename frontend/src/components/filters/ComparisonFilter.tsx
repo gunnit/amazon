@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { format, subMonths } from 'date-fns'
-import { ArrowRightLeft, CalendarRange } from 'lucide-react'
+import { ArrowRightLeft, CalendarRange, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -23,16 +23,21 @@ const PRESET_OPTIONS: Array<{ value: ComparisonPreset; labelKey: string }> = [
   { value: 'yoy', labelKey: 'comparison.yoy' },
 ]
 
+const CALENDAR_FROM_YEAR = 2020
+
+interface DraftRange {
+  start: string
+  end: string
+}
+
 function ComparisonDateRangeButton({
   label,
-  start,
-  end,
+  range,
   onChange,
 }: {
   label: string
-  start: string | null
-  end: string | null
-  onChange: (start: string, end: string) => void
+  range: DraftRange | null
+  onChange: (range: DraftRange) => void
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -49,15 +54,15 @@ function ComparisonDateRangeButton({
   }, [open])
 
   const committedRange: DateRange = {
-    from: start ? new Date(start + 'T00:00:00') : undefined,
-    to: end ? new Date(end + 'T00:00:00') : undefined,
+    from: range ? new Date(range.start + 'T00:00:00') : undefined,
+    to: range ? new Date(range.end + 'T00:00:00') : undefined,
   }
   const displayedRange: DateRange = pendingRange ?? committedRange
 
-  const handleSelect = (range: DateRange | undefined) => {
-    setPendingRange(range)
-    if (range?.from && range?.to) {
-      onChange(format(range.from, 'yyyy-MM-dd'), format(range.to, 'yyyy-MM-dd'))
+  const handleSelect = (selected: DateRange | undefined) => {
+    setPendingRange(selected)
+    if (selected?.from && selected?.to) {
+      onChange({ start: format(selected.from, 'yyyy-MM-dd'), end: format(selected.to, 'yyyy-MM-dd') })
       setOpen(false)
       setPendingRange(undefined)
     }
@@ -70,8 +75,8 @@ function ComparisonDateRangeButton({
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm" className="h-9 min-w-[185px] justify-start text-xs">
           <CalendarRange className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
-          {start && end
-            ? `${label}: ${format(new Date(start + 'T00:00:00'), 'MMM d, yyyy')} - ${format(new Date(end + 'T00:00:00'), 'MMM d, yyyy')}`
+          {range
+            ? `${label}: ${format(new Date(range.start + 'T00:00:00'), 'MMM d, yyyy')} - ${format(new Date(range.end + 'T00:00:00'), 'MMM d, yyyy')}`
             : `${label}: ${t('filter.pickDates')}`}
         </Button>
       </PopoverTrigger>
@@ -88,6 +93,9 @@ function ComparisonDateRangeButton({
           numberOfMonths={2}
           defaultMonth={defaultMonth}
           disabled={{ after: new Date() }}
+          captionLayout="dropdown-buttons"
+          fromYear={CALENDAR_FROM_YEAR}
+          toYear={new Date().getFullYear()}
         />
       </PopoverContent>
     </Popover>
@@ -108,6 +116,49 @@ export function ComparisonFilter() {
     setComparisonPeriod2Range,
   } = useFilterStore()
   const { t } = useTranslation()
+
+  // Picked dates live here as a draft; nothing fires until the user presses
+  // Apply. Before this, the comparison silently kept showing preset data
+  // until both ranges happened to be complete, with no cue that the input
+  // hadn't been submitted.
+  const [draft1, setDraft1] = useState<DraftRange | null>(
+    comparisonPeriod1Start && comparisonPeriod1End
+      ? { start: comparisonPeriod1Start, end: comparisonPeriod1End }
+      : null
+  )
+  const [draft2, setDraft2] = useState<DraftRange | null>(
+    comparisonPeriod2Start && comparisonPeriod2End
+      ? { start: comparisonPeriod2Start, end: comparisonPeriod2End }
+      : null
+  )
+
+  // Follow external store changes (e.g. the reset button).
+  useEffect(() => {
+    setDraft1(
+      comparisonPeriod1Start && comparisonPeriod1End
+        ? { start: comparisonPeriod1Start, end: comparisonPeriod1End }
+        : null
+    )
+    setDraft2(
+      comparisonPeriod2Start && comparisonPeriod2End
+        ? { start: comparisonPeriod2Start, end: comparisonPeriod2End }
+        : null
+    )
+  }, [comparisonPeriod1Start, comparisonPeriod1End, comparisonPeriod2Start, comparisonPeriod2End])
+
+  const complete = Boolean(draft1 && draft2)
+  const applied =
+    complete &&
+    draft1!.start === comparisonPeriod1Start &&
+    draft1!.end === comparisonPeriod1End &&
+    draft2!.start === comparisonPeriod2Start &&
+    draft2!.end === comparisonPeriod2End
+
+  const handleApply = () => {
+    if (!draft1 || !draft2) return
+    setComparisonPeriod1Range(draft1.start, draft1.end)
+    setComparisonPeriod2Range(draft2.start, draft2.end)
+  }
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-background/80 px-2 py-2">
@@ -147,16 +198,26 @@ export function ComparisonFilter() {
         <>
           <ComparisonDateRangeButton
             label={t('comparison.period1')}
-            start={comparisonPeriod1Start}
-            end={comparisonPeriod1End}
-            onChange={setComparisonPeriod1Range}
+            range={draft1}
+            onChange={setDraft1}
           />
           <ComparisonDateRangeButton
             label={t('comparison.period2')}
-            start={comparisonPeriod2Start}
-            end={comparisonPeriod2End}
-            onChange={setComparisonPeriod2Range}
+            range={draft2}
+            onChange={setDraft2}
           />
+          <Button
+            size="sm"
+            className="h-9 text-xs"
+            disabled={!complete || applied}
+            onClick={handleApply}
+          >
+            <Play className="mr-1.5 h-3.5 w-3.5" />
+            {t('comparison.apply')}
+          </Button>
+          {!complete && (
+            <span className="text-xs text-muted-foreground">{t('comparison.applyHint')}</span>
+          )}
         </>
       )}
     </div>

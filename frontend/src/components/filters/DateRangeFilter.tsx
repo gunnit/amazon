@@ -133,6 +133,9 @@ export function DateRangeFilter() {
               numberOfMonths={2}
               defaultMonth={defaultMonth}
               disabled={{ after: new Date() }}
+              captionLayout="dropdown-buttons"
+              fromYear={2020}
+              toYear={new Date().getFullYear()}
             />
           </PopoverContent>
         </Popover>
