@@ -194,6 +194,9 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/api/docs" if settings.APP_DEBUG else None,
     redoc_url="/api/redoc" if settings.APP_DEBUG else None,
+    # Disabling docs_url alone still leaves /openapi.json public, which hands
+    # out the full endpoint/schema inventory. Nothing consumes it in prod.
+    openapi_url="/openapi.json" if settings.APP_DEBUG else None,
     lifespan=lifespan,
 )
 
@@ -252,6 +255,17 @@ async def health_check():
     }
 
 
+def _readiness_detail(exc: Exception) -> str:
+    """Readiness is unauthenticated, so never echo the driver's error text.
+
+    Connection errors routinely embed host, port, database name and sometimes
+    credentials. The full traceback goes to the logs instead.
+    """
+    if settings.is_production:
+        return type(exc).__name__
+    return str(exc)[:200]
+
+
 @app.get("/health/ready")
 async def readiness_check():
     """Readiness probe — verifies DB and (when configured) Redis are reachable.
@@ -270,7 +284,8 @@ async def readiness_check():
         checks["database"] = {"status": "ok"}
     except Exception as exc:  # broad: any failure is a readiness signal
         overall_ok = False
-        checks["database"] = {"status": "error", "detail": str(exc)[:200]}
+        logger.warning("Readiness: database check failed", exc_info=True)
+        checks["database"] = {"status": "error", "detail": _readiness_detail(exc)}
 
     # Redis (best-effort — skipped if no URL configured)
     redis_url = settings.REDIS_URL or settings.CELERY_BROKER_URL
@@ -286,7 +301,8 @@ async def readiness_check():
                 await redis_client.aclose()
         except Exception as exc:
             overall_ok = False
-            checks["redis"] = {"status": "error", "detail": str(exc)[:200]}
+            logger.warning("Readiness: redis check failed", exc_info=True)
+            checks["redis"] = {"status": "error", "detail": _readiness_detail(exc)}
     else:
         checks["redis"] = {"status": "skipped", "detail": "no REDIS_URL configured"}
 

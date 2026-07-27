@@ -46,3 +46,7 @@ backend/celerybeat-schedule
 
 # Claude worktrees (session-local)
 .claude/worktrees/
+.claude/settings.local.json
+
+# Database dumps (may contain encrypted credentials — never commit)
+*.dump

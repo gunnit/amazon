@@ -127,7 +127,7 @@ export class BackendClient {
       "/api/v1/auth/refresh",
       {
         method: "POST",
-        query: { refresh_token: this.refreshToken },
+        body: { refresh_token: this.refreshToken },
       },
       false,
     );

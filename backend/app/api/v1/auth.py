@@ -28,7 +28,7 @@ from app.config import settings
 from app.services.notification_service import NotificationService
 from app.api.deps import (
     CurrentUser, CurrentOrganization, DbSession,
-    RateLimiter, revoke_token, security,
+    RateLimiter, is_token_revoked, revoke_token, security,
 )
 from fastapi.security import HTTPAuthorizationCredentials
 
@@ -123,16 +123,14 @@ async def login(user_in: UserLogin, db: DbSession):
 @router.post("/refresh", response_model=Token, dependencies=[Depends(_auth_limit)])
 async def refresh_token(
     db: DbSession,
-    body: Optional[RefreshRequest] = None,
-    refresh_token: Optional[str] = None,
+    body: RefreshRequest,
 ):
     """Refresh JWT tokens.
 
-    Accepts the token in the request body (preferred). A `refresh_token`
-    query param is still honoured for backward compatibility with older
-    clients, but the body should be used going forward.
+    The token is accepted in the request body only — never as a query
+    param, which would leak it into proxy/access logs.
     """
-    token = body.refresh_token if body else refresh_token
+    token = body.refresh_token
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -149,6 +147,13 @@ async def refresh_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if is_token_revoked(payload.get("jti")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     user_id = payload.get("sub")
     result = await db.execute(select(User).where(User.id == UUID(user_id)))
     user = result.scalar_one_or_none()
@@ -160,9 +165,12 @@ async def refresh_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Create new tokens
+    # Create new tokens, then revoke the old refresh token so rotation
+    # actually invalidates it (best-effort: degrades open without Redis,
+    # same as the rest of the revocation infrastructure).
     access_token = create_access_token(data={"sub": str(user.id)})
     new_refresh_token = create_refresh_token(data={"sub": str(user.id)})
+    revoke_token(payload.get("jti"), payload.get("exp"))
 
     return Token(
         access_token=access_token,
@@ -227,7 +235,7 @@ async def forgot_password(request: ForgotPasswordRequest, db: DbSession):
     return {"message": "If an account exists for that email, a reset link has been sent."}
 
 
-@router.post("/reset-password")
+@router.post("/reset-password", dependencies=[Depends(_auth_limit)])
 async def reset_password(request: ResetPasswordRequest, db: DbSession):
     """Reset a password using a valid reset token."""
     payload = decode_token(request.token)

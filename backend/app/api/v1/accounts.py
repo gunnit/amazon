@@ -521,9 +521,12 @@ async def amazon_oauth_callback(
             if resp.status_code == 200:
                 refresh_token = resp.json().get("refresh_token")
                 break
+            # Body is deliberately not logged: on some failure modes Amazon
+            # echoes back parts of the request, and the POST above carries the
+            # client_secret and the authorization code.
             logger.warning(
-                "Amazon OAuth code exchange failed (redirect_uri=%s): %s %s",
-                redirect_uri, resp.status_code, resp.text[:300],
+                "Amazon OAuth code exchange failed (redirect_uri=%s): %s",
+                redirect_uri, resp.status_code,
             )
     if not refresh_token:
         return fail("token_exchange_failed")

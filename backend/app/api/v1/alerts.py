@@ -10,6 +10,7 @@ from sqlalchemy import func, select, update
 
 from app.api.deps import CurrentOrganization, CurrentUser, DbSession
 from app.models.alert import Alert, AlertRule
+from app.models.amazon_account import AmazonAccount
 
 router = APIRouter()
 ALLOWED_CHANNELS = {"email", "webhook"}
@@ -158,6 +159,26 @@ def _as_float(value: Any, field_name: str) -> float:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"{field_name} must be a number",
         ) from exc
+
+
+async def _validate_rule_accounts(
+    db, organization_id: UUID, account_ids: Optional[List[UUID]]
+) -> None:
+    """Reject account ids the caller's organization does not own."""
+    if not account_ids:
+        return
+    result = await db.execute(
+        select(AmazonAccount.id).where(
+            AmazonAccount.organization_id == organization_id,
+            AmazonAccount.id.in_(account_ids),
+        )
+    )
+    found = {row[0] for row in result.all()}
+    if any(account_id not in found for account_id in account_ids):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="One or more account IDs are invalid",
+        )
 
 
 def _validate_rule_payload(
@@ -488,6 +509,7 @@ async def create_alert_rule(
     db: DbSession,
 ):
     """Create a new alert rule."""
+    await _validate_rule_accounts(db, organization.id, rule_in.applies_to_accounts)
     conditions = _validate_rule_payload(
         alert_type=rule_in.alert_type,
         conditions=rule_in.conditions,
@@ -559,6 +581,7 @@ async def update_alert_rule(
     if rule_in.conditions is not None:
         next_conditions = rule_in.conditions
     if rule_in.applies_to_accounts is not None:
+        await _validate_rule_accounts(db, organization.id, rule_in.applies_to_accounts)
         rule.applies_to_accounts = rule_in.applies_to_accounts
     if rule_in.applies_to_asins is not None:
         rule.applies_to_asins = rule_in.applies_to_asins

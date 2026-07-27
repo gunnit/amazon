@@ -71,10 +71,10 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     MARKET_RESEARCH_MAX_COMPETITORS: int = 5
 
-    # Deprecated external market API boundary (not used by Brand Analysis).
-    # These optional values are retained only so older environments keep
-    # booting; the production Brand Analysis path is internal Amazon data
-    # plus Market Research, with generic external yearly uploads as fallback.
+    # Helium 10 (third-party product metrics via their MCP server).
+    # Setting HELIUM10_API_KEY enables gap-filling for non-owned ASINs
+    # (rating, review count, sales estimates); see app/core/helium10.py.
+    # USERNAME/PASSWORD/AUTOMATION_ENABLED are legacy and unused.
     HELIUM10_USERNAME: Optional[str] = None
     HELIUM10_PASSWORD: Optional[str] = None
     HELIUM10_API_BASE_URL: Optional[str] = None
@@ -172,6 +172,7 @@ class Settings(BaseSettings):
 
 # Placeholder defaults that must never survive into production.
 _INSECURE_JWT_DEFAULTS = {"your-jwt-secret-change-in-production"}
+_INSECURE_APP_SECRET_DEFAULTS = {"your-secret-key-change-in-production-min-32-chars"}
 
 
 def validate_production_settings(s: "Settings") -> None:
@@ -193,6 +194,35 @@ def validate_production_settings(s: "Settings") -> None:
             "JWT_SECRET_KEY is using an insecure default or is too short "
             "(min 32 chars). Set a strong JWT_SECRET_KEY before deploying to "
             "production."
+        )
+
+    # Warning, not fatal: nothing reads APP_SECRET_KEY today, and render.yaml
+    # sets SECRET_KEY (a name this config ignores), so production is running
+    # the placeholder. Fix the deploy env before giving this value a consumer.
+    if s.APP_SECRET_KEY in _INSECURE_APP_SECRET_DEFAULTS or len(s.APP_SECRET_KEY) < 32:
+        logger.warning(
+            "APP_SECRET_KEY is using an insecure default or is too short "
+            "(min 32 chars). Set a strong APP_SECRET_KEY in the deploy env."
+        )
+
+    # allow_credentials=True with a wildcard origin would let any site read
+    # authenticated responses.
+    if "*" in s.CORS_ORIGINS:
+        raise RuntimeError(
+            "CORS_ORIGINS must not contain '*' in production: the API sends "
+            "credentials. List the exact frontend origins instead."
+        )
+
+    if s.APP_DEBUG:
+        raise RuntimeError(
+            "APP_DEBUG must be false in production (it exposes /api/docs and "
+            "enables uvicorn reload)."
+        )
+
+    if not s.ENCRYPTION_KEY:
+        raise RuntimeError(
+            "ENCRYPTION_KEY is not set. Amazon credentials cannot be stored or "
+            "read without it."
         )
 
     if "localhost" in s.APP_FRONTEND_URL or "127.0.0.1" in s.APP_FRONTEND_URL:

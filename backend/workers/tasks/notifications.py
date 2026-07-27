@@ -21,6 +21,27 @@ def _build_dedup_key(event_kind: str, account_id=None, asin: Optional[str] = Non
     return f"{event_kind}:{account_id or '-'}:{asin or '-'}"
 
 
+async def _rule_account_ids(db, rule) -> List[UUID]:
+    """Account ids a rule may evaluate: its own org's, never another tenant's.
+
+    `applies_to_accounts` is caller-supplied, and an empty one used to mean
+    "every account on the platform" — both leaked other organizations' data
+    into the rule owner's alerts. Scoping here covers every evaluator.
+    Returns [] when the rule selects nothing, which callers treat as a no-op.
+    """
+    from app.models.amazon_account import AmazonAccount
+
+    result = await db.execute(
+        select(AmazonAccount.id).where(
+            AmazonAccount.organization_id == rule.organization_id
+        )
+    )
+    org_account_ids = set(result.scalars().all())
+    if rule.applies_to_accounts:
+        org_account_ids &= {UUID(str(a)) for a in rule.applies_to_accounts}
+    return list(org_account_ids)
+
+
 def _format_age(timestamp: Optional[datetime], now: Optional[datetime] = None) -> str:
     """Render how long ago a timestamp occurred, or 'never' when missing."""
     if timestamp is None:
@@ -368,11 +389,13 @@ def check_alerts():
         threshold = int(rule.conditions.get("threshold", 10))
         recovery_buffer = max(int(rule.conditions.get("recovery_buffer", 2)), 0)
 
-        latest_date_q = select(func.max(InventoryData.snapshot_date))
-        if rule.applies_to_accounts:
-            latest_date_q = latest_date_q.where(
-                InventoryData.account_id.in_(rule.applies_to_accounts)
-            )
+        account_ids = await _rule_account_ids(db, rule)
+        if not account_ids:
+            return 0
+
+        latest_date_q = select(func.max(InventoryData.snapshot_date)).where(
+            InventoryData.account_id.in_(account_ids)
+        )
         result = await db.execute(latest_date_q)
         latest_date = result.scalar_one_or_none()
         if not latest_date:
@@ -382,9 +405,8 @@ def check_alerts():
             AmazonAccount, AmazonAccount.id == InventoryData.account_id
         ).where(
             InventoryData.snapshot_date == latest_date,
+            InventoryData.account_id.in_(account_ids),
         )
-        if rule.applies_to_accounts:
-            query = query.where(InventoryData.account_id.in_(rule.applies_to_accounts))
         if rule.applies_to_asins:
             query = query.where(InventoryData.asin.in_(rule.applies_to_asins))
 
@@ -432,9 +454,14 @@ def check_alerts():
         """Evaluate sync_failure alerts with delayed, stuck, and failure incidents."""
         conditions = normalize_sync_failure_conditions(rule.conditions)
 
-        query = select(AmazonAccount).where(AmazonAccount.is_active == True)
-        if rule.applies_to_accounts:
-            query = query.where(AmazonAccount.id.in_(rule.applies_to_accounts))
+        account_ids = await _rule_account_ids(db, rule)
+        if not account_ids:
+            return 0
+
+        query = select(AmazonAccount).where(
+            AmazonAccount.is_active == True,
+            AmazonAccount.id.in_(account_ids),
+        )
 
         result = await db.execute(query)
         accounts = result.scalars().all()
@@ -510,14 +537,17 @@ def check_alerts():
         if min_price is None and max_price is None:
             return 0
 
+        account_ids = await _rule_account_ids(db, rule)
+        if not account_ids:
+            return 0
+
         query = select(Product, AmazonAccount.account_name).join(
             AmazonAccount, AmazonAccount.id == Product.account_id
         ).where(
             Product.is_active == True,
             Product.current_price.isnot(None),
+            Product.account_id.in_(account_ids),
         )
-        if rule.applies_to_accounts:
-            query = query.where(Product.account_id.in_(rule.applies_to_accounts))
         if rule.applies_to_asins:
             query = query.where(Product.asin.in_(rule.applies_to_asins))
 
@@ -584,14 +614,17 @@ def check_alerts():
         lookback_days = max(int(rule.conditions.get("lookback_days", 7)), 3)
         min_history_points = max(int(rule.conditions.get("min_history_points", 4)), 3)
 
+        account_ids = await _rule_account_ids(db, rule)
+        if not account_ids:
+            return 0
+
         query = select(Product, AmazonAccount.account_name).join(
             AmazonAccount, AmazonAccount.id == Product.account_id
         ).where(
             Product.is_active == True,
             Product.current_bsr.isnot(None),
+            Product.account_id.in_(account_ids),
         )
-        if rule.applies_to_accounts:
-            query = query.where(Product.account_id.in_(rule.applies_to_accounts))
         if rule.applies_to_asins:
             query = query.where(Product.asin.in_(rule.applies_to_asins))
 

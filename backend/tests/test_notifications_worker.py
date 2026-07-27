@@ -11,6 +11,7 @@ from workers.tasks.notifications import (
     _build_batch_payload,
     _build_dedup_key,
     _format_age,
+    _rule_account_ids,
 )
 
 
@@ -102,3 +103,65 @@ def test_validate_rule_payload_rejects_invalid_bsr_window():
 
     assert exc_info.value.status_code == 422
     assert "min_history_points" in exc_info.value.detail
+
+
+class _FakeScalars:
+    def __init__(self, values):
+        self._values = values
+
+    def all(self):
+        return list(self._values)
+
+
+class _FakeResult:
+    def __init__(self, values):
+        self._values = values
+
+    def scalars(self):
+        return _FakeScalars(self._values)
+
+    def all(self):
+        return [(value,) for value in self._values]
+
+
+class _FakeDb:
+    """Returns the org's accounts for any select; records the statements run."""
+
+    def __init__(self, org_account_ids):
+        self._org_account_ids = org_account_ids
+        self.statements = []
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return _FakeResult(self._org_account_ids)
+
+
+@pytest.mark.asyncio
+async def test_rule_account_ids_ignores_accounts_outside_the_org():
+    own = uuid4()
+    foreign = uuid4()
+    db = _FakeDb([own])
+    rule = SimpleNamespace(organization_id=uuid4(), applies_to_accounts=[own, foreign])
+
+    account_ids = await _rule_account_ids(db, rule)
+
+    assert account_ids == [own]
+
+
+@pytest.mark.asyncio
+async def test_rule_account_ids_without_filter_stays_inside_the_org():
+    own = [uuid4(), uuid4()]
+    db = _FakeDb(own)
+    rule = SimpleNamespace(organization_id=uuid4(), applies_to_accounts=None)
+
+    account_ids = await _rule_account_ids(db, rule)
+
+    assert sorted(account_ids, key=str) == sorted(own, key=str)
+
+
+@pytest.mark.asyncio
+async def test_rule_account_ids_empty_when_only_foreign_accounts_requested():
+    db = _FakeDb([uuid4()])
+    rule = SimpleNamespace(organization_id=uuid4(), applies_to_accounts=[uuid4()])
+
+    assert await _rule_account_ids(db, rule) == []
