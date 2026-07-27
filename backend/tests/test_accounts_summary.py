@@ -38,6 +38,7 @@ sys.modules["app.api.deps"] = deps_stub
 security_stub = types.ModuleType("app.core.security")
 security_stub.encrypt_value = lambda value: value
 security_stub.decrypt_value = lambda value: value
+security_stub.decode_token = lambda token: None
 sys.modules["app.core.security"] = security_stub
 
 exceptions_stub = types.ModuleType("app.core.exceptions")
