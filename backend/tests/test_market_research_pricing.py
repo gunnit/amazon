@@ -490,3 +490,31 @@ def test_seed_market_search_snapshots_preserves_found_price():
     assert snapshots[0]["bsr"] == 123
     assert snapshots[1]["price"] == 18.0
     assert snapshots[2]["price"] is None
+
+
+def test_fetch_product_data_skips_helium10_for_owned_asins(monkeypatch):
+    """Helium 10 is contracted to fill competitor gaps only, never own ASINs."""
+    from app.core import helium10
+
+    calls = []
+    monkeypatch.setattr(
+        helium10, "fill_snapshot_gaps", lambda snapshot, mp: calls.append(snapshot["asin"])
+    )
+
+    class FakeClient:
+        is_vendor = True  # skips the pricing path; irrelevant here
+        marketplace = SimpleNamespace(marketplace_id="APJ6JRA9NG5V4")
+
+        def _catalog_api(self):
+            return SimpleNamespace(
+                get_catalog_item=lambda **_kw: SimpleNamespace(payload={"summaries": []})
+            )
+
+        def _extract_catalog_price_amount(self, _payload):
+            return None
+
+    _fetch_product_data(FakeClient(), "B0OWNED000", enrich_third_party=False)
+    assert calls == []
+
+    _fetch_product_data(FakeClient(), "B0COMPET00")
+    assert calls == ["B0COMPET00"]

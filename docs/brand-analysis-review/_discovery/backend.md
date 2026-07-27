@@ -11,7 +11,7 @@ data-source/capability layer, and the reporting infra they could reuse. All anch
 | Module | Lines | Role |
 |---|---|---|
 | `app/services/brand_analysis_service.py` | 3596 | **MONOLITH.** Parsing, metric calc, provenance/limitation logic, narrative LLM service, the entire PPTX builder, the `BrandAnalysisService` CRUD class, AND the background processor `process_brand_analysis_job`. |
-| `app/services/brand_analysis_sources.py` | 742 | Data-source adapters: `AmazonAccountDataSource` (internal SP-API path), `ManualUploadDataSource`, deprecated `Helium10ApiDataSource`. All yield `ParsedBrandExport`. |
+| `app/services/brand_analysis_sources.py` | 742 | Data-source adapters: `AmazonAccountDataSource` (internal SP-API path) and `ManualUploadDataSource`. Brand Analysis is independent; Helium10/H10 adapters are not part of the product plan. Legacy `helium10*` modes are compatibility aliases only and route to manual upload. All active adapters yield `ParsedBrandExport`. |
 | `app/services/brand_analysis_capabilities.py` | 363 | Capability PROBE of 11 SP-API capabilities; persists `BrandAnalysisCapability` snapshot with TTL cache. |
 | `app/services/brand_analysis_storage.py` | 143 | `BrandAnalysisStorage` db/s3 backend for source files + PPTX artifacts; `StorageRef`. |
 | `app/services/brand_pulse_service.py` | 191 | `BrandPulseService` — composes AnalyticsService primitives into a rolling snapshot. **Overlaps Performance Analytics (see §7).** |

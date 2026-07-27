@@ -1,4 +1,5 @@
 """Market research endpoints."""
+import asyncio
 from datetime import datetime
 import logging
 import time
@@ -8,6 +9,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select as sa_select
 
 from app.api.deps import CurrentUser, CurrentOrganization, DbSession
+from app.core import helium10
 from app.schemas.market_research import (
     MarketResearchCreate,
     MarketResearchResponse,
@@ -553,6 +555,31 @@ async def market_search(
 
             enriched_items.append(enriched)
 
+        # Helium 10 last: fills fields Amazon never returns here (rating,
+        # review_count, sales estimates) and still-missing prices. Amazon
+        # values above are never overwritten.
+        try:
+            filled = await asyncio.to_thread(
+                helium10.fill_market_items,
+                enriched_items,
+                account.marketplace_country,
+            )
+        except Exception as exc:
+            logger.warning("Helium 10 market-search enrichment failed: %s", exc)
+            filled = 0
+        if filled:
+            for enriched in enriched_items:
+                if not enriched.get("helium10_fields"):
+                    continue
+                if enriched.get("price") is not None:
+                    enriched.pop("price_unavailable_reason", None)
+                still_missing = [
+                    field
+                    for field in ("price", "bsr", "review_count", "rating")
+                    if enriched.get(field) is None
+                ]
+                enriched["missing_data"] = still_missing or None
+
         return enriched_items
 
     # Perform the search based on type
@@ -628,6 +655,9 @@ async def market_search(
             bsr=r.get("bsr"),
             review_count=r.get("review_count"),
             rating=r.get("rating"),
+            estimated_monthly_sales=r.get("estimated_monthly_sales"),
+            estimated_revenue=r.get("estimated_revenue"),
+            helium10_fields=r.get("helium10_fields"),
             missing_data=r.get("missing_data") or None,
             price_unreliable=r.get("price_unreliable") or None,
             price_unavailable_reason=r.get("price_unavailable_reason"),

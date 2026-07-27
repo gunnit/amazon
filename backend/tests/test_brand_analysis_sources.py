@@ -249,8 +249,9 @@ def test_amazon_account_data_source_includes_local_brand_asins_without_sales_as_
 
 def test_amazon_account_data_source_discovers_brand_asins_via_market_research_search():
     class FakeClient:
-        def search_catalog_by_keyword(self, query, max_results=80):
+        def search_catalog_by_keyword(self, query, max_results=80, brand_names=None):
             assert query == "Acme"
+            assert brand_names == ["Acme"]
             return [
                 {"asin": "B001", "title": "Acme Knife", "brand": "Acme", "category": "Kitchen"},
                 {"asin": "B003", "title": "Acme Spoon", "brand": "ACME", "category": "Kitchen"},

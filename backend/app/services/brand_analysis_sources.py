@@ -405,7 +405,11 @@ class AmazonAccountDataSource:
             client = await self._build_sp_api_client()
             if client is None:
                 return set()
-            raw_results = client.search_catalog_by_keyword(self.brand_filter, max_results=80)
+            raw_results = client.search_catalog_by_keyword(
+                self.brand_filter,
+                max_results=100,
+                brand_names=[self.brand_filter],
+            )
         except Exception as exc:
             logger.warning("Brand Analysis market discovery failed for %s: %s", self.brand_filter, exc)
             self.discovery_errors.append(str(exc)[:200])
@@ -590,7 +594,8 @@ class AmazonAccountDataSource:
         # _fetch_product_data is synchronous; we run it inline. With a small
         # number of ASINs per analysis this is acceptable; for larger sets a
         # bounded thread pool can be added later without changing this API.
-        catalog = _fetch_product_data(client, asin)
+        # Own-catalog ASINs: SP-API is authoritative, so no Helium 10 fill.
+        catalog = _fetch_product_data(client, asin, enrich_third_party=False)
         if catalog.get("price") is not None:
             try:
                 fee = client.estimate_fba_fee_for_asin(asin, float(catalog["price"]))
@@ -611,15 +616,35 @@ class AmazonAccountDataSource:
             catalog["fee_source"] = "unavailable"
             catalog["fee_confidence"] = "unavailable"
             catalog["fee_limitation"] = "Current price is unavailable, so Product Fees API estimates cannot be requested."
-        try:
-            aplus = client.get_aplus_content_for_asin(asin)
-            catalog.update({key: value for key, value in aplus.items() if key != "raw_payload"})
-        except Exception as exc:
-            logger.info("A+ content lookup unavailable for %s: %s", asin, exc)
-            catalog.setdefault("has_aplus_content", None)
-            catalog.setdefault("aplus_source", "unavailable")
-            catalog.setdefault("aplus_limitation", str(exc)[:300])
+        # The A+ Content API only exposes the connected account's own
+        # documents, so "not found" is meaningful for owned ASINs but says
+        # nothing about competitors' listings — report unknown, not False.
+        if await self._is_owned_asin(asin):
+            try:
+                aplus = client.get_aplus_content_for_asin(asin)
+                catalog.update({key: value for key, value in aplus.items() if key != "raw_payload"})
+            except Exception as exc:
+                logger.info("A+ content lookup unavailable for %s: %s", asin, exc)
+                catalog.setdefault("has_aplus_content", None)
+                catalog.setdefault("aplus_source", "unavailable")
+                catalog.setdefault("aplus_limitation", str(exc)[:300])
+        else:
+            catalog["has_aplus_content"] = None
+            catalog["aplus_source"] = "unavailable"
+            catalog["aplus_limitation"] = (
+                "A+ Content API only exposes this account's own documents; "
+                "presence is unknown for non-owned ASINs."
+            )
         return catalog
+
+    async def _is_owned_asin(self, asin: str) -> bool:
+        result = await self.db.execute(
+            select(Product.id).where(
+                Product.account_id == self.account_id,
+                Product.asin == asin,
+            ).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def _fetch_brand_analytics(self) -> Optional[dict]:
         """Fetch the Brand Analytics search-terms signal once per analysis.

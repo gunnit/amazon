@@ -1707,17 +1707,29 @@ class SPAPIClient:
                 if source_brand and brand and brand.lower() == source_brand.lower():
                     continue
 
+                bsr = None
+                for rank_list in item.get("salesRanks", []):
+                    for rank in rank_list.get("ranks", []):
+                        if rank.get("link") is None:
+                            bsr = rank.get("value")
+                            break
+                    if bsr is not None:
+                        break
+
                 result = {
                     "asin": asin,
                     "title": summary.get("itemName"),
                     "brand": brand or None,
+                    "bsr": bsr,
                     "classifications": item.get("classifications", []),
                     "salesRanks": item.get("salesRanks", []),
                 }
                 results.append(result)
 
-                if len(results) >= max_results:
-                    break
+            # Rank by sales signal before truncating: keyword relevance order
+            # returns lookalike titles; BSR order returns actual competitors.
+            results.sort(key=lambda r: r["bsr"] if r["bsr"] is not None else float("inf"))
+            results = results[:max_results]
 
             logger.info(
                 f"Competitor search for '{keywords[:50]}' returned "
@@ -1740,19 +1752,21 @@ class SPAPIClient:
         self,
         keywords: str,
         max_results: int = 20,
+        brand_names: Optional[List[str]] = None,
     ) -> List[Dict]:
         """Search catalog by keyword/brand and return products with metrics.
 
         Unlike search_competitor_asins, this does NOT filter out any
         specific ASIN or brand — it returns all matching products.
-        Used by Market Tracker 360.
+        Used by Market Tracker 360. ``brand_names`` applies Amazon's own
+        server-side brand filter, which beats client-side substring matching.
         """
         try:
             api = self._catalog_api()
             results = []
             seen_asins = set()
             page_token = None
-            max_pages = max(1, min(5, ((max_results - 1) // 20) + 2))
+            max_pages = max(1, min(6, ((max_results - 1) // 20) + 2))
 
             for _ in range(max_pages):
                 request_kwargs = {
@@ -1761,6 +1775,8 @@ class SPAPIClient:
                     "includedData": ["summaries", "salesRanks", "classifications", "attributes"],
                     "pageSize": min(max_results, 20),
                 }
+                if brand_names:
+                    request_kwargs["brandNames"] = brand_names
                 if page_token:
                     request_kwargs["pageToken"] = page_token
 

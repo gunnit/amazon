@@ -52,6 +52,7 @@ except ImportError:  # pragma: no cover - keeps pure unit tests independent of S
     class SellingApiUnsupportedFormatException(Exception):
         pass
 
+from app.core import helium10
 from app.models.market_research import MarketResearchReport
 from app.models.amazon_account import AmazonAccount
 from app.models.product import Product
@@ -1174,8 +1175,13 @@ def _extract_offers_metadata(payload: Any) -> tuple[Optional[int], Optional[str]
     return sellers_count, buy_box_owner
 
 
-def _fetch_product_data(client, asin: str) -> dict:
-    """Fetch product catalog details and competitive pricing for an ASIN."""
+def _fetch_product_data(client, asin: str, *, enrich_third_party: bool = True) -> dict:
+    """Fetch product catalog details and competitive pricing for an ASIN.
+
+    ``enrich_third_party=False`` for ASINs the connected account owns: Helium 10
+    is contracted to fill competitor gaps only, and the account's own metrics
+    come from SP-API. Skipping owned ASINs also protects the shared 10k/month quota.
+    """
     snapshot = {"asin": asin}
     fetch_errors: list[str] = []
 
@@ -1275,6 +1281,10 @@ def _fetch_product_data(client, asin: str) -> dict:
             if isinstance(entry, dict):
                 items = entry.get("images") or []
                 image_count = max(image_count, len(items))
+                if items and not snapshot.get("main_image"):
+                    link = items[0].get("link") if isinstance(items[0], dict) else None
+                    if link:
+                        snapshot["main_image"] = link
         if image_count:
             snapshot["images_count"] = image_count
 
@@ -1349,5 +1359,14 @@ def _fetch_product_data(client, asin: str) -> dict:
 
     if fetch_errors:
         snapshot["fetch_errors"] = fetch_errors
+
+    # Helium 10 fills what SP-API structurally cannot return for non-owned
+    # ASINs (rating, review_count, sales estimates, last-resort price).
+    # Runs after status so an estimated price never fakes an "active" listing.
+    if enrich_third_party:
+        try:
+            helium10.fill_snapshot_gaps(snapshot, client.marketplace)
+        except Exception as exc:
+            logger.warning("Helium 10 enrichment failed for %s: %s", asin, exc)
 
     return snapshot

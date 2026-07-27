@@ -1649,8 +1649,11 @@ def calculate_brand_metrics(
 
     asins_missing_description = _missing_text_count("description")
     if _has_any(df25, "has_aplus_content"):
-        has_aplus_series = df25["has_aplus_content"].apply(_truthy_content)
-        asins_missing_aplus_content = int(total_asins_2025 - has_aplus_series.sum())
+        # Count missing only among ASINs with a known value: for non-owned
+        # ASINs the A+ API reports unknown (None), not absence.
+        known_aplus = df25["has_aplus_content"].notna()
+        has_aplus_series = df25.loc[known_aplus, "has_aplus_content"].apply(_truthy_content)
+        asins_missing_aplus_content = int(int(known_aplus.sum()) - int(has_aplus_series.sum()))
         aplus_content_available = True
     else:
         asins_missing_aplus_content = _missing_text_count("aplus_content")

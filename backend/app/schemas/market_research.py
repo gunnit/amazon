@@ -49,10 +49,16 @@ class ProductSnapshot(BaseModel):
     bsr: Optional[int] = None
     review_count: Optional[int] = None
     rating: Optional[float] = None
+    main_image: Optional[str] = None
     fetch_errors: Optional[List[str]] = None
     # True when the price is a repeated placeholder/sentinel detected at
     # persist time; the UI must not present it as a real market price.
     price_unreliable: Optional[bool] = None
+    # Helium 10 modeled estimates; ``helium10_fields`` lists which fields
+    # were filled from Helium 10 rather than Amazon.
+    estimated_monthly_sales: Optional[int] = None
+    estimated_revenue: Optional[float] = None
+    helium10_fields: Optional[List[str]] = None
 
 
 class CompetitorSnapshot(ProductSnapshot):
@@ -163,6 +169,9 @@ class MarketSearchResult(BaseModel):
     bsr: Optional[int] = None
     review_count: Optional[int] = None
     rating: Optional[float] = None
+    estimated_monthly_sales: Optional[int] = None
+    estimated_revenue: Optional[float] = None
+    helium10_fields: Optional[List[str]] = None
     missing_data: Optional[List[str]] = None
     price_unreliable: Optional[bool] = None
     price_unavailable_reason: Optional[
