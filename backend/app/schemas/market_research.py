@@ -31,7 +31,7 @@ class MarketResearchCreate(BaseModel):
     """
     source_asin: Optional[str] = Field(default=None, max_length=20)
     account_id: str
-    language: str = Field(default="en", pattern="^(en|it)$")
+    language: str = Field(default="it", pattern="^(en|it)$")
     extra_competitor_asins: Optional[List[str]] = Field(default=None, max_length=5)
     market_competitor_asins: Optional[List[str]] = Field(default=None, max_length=15)
     search_query: Optional[str] = Field(default=None, max_length=200)
@@ -151,7 +151,7 @@ class MarketSearchRequest(BaseModel):
     account_id: str
     search_type: str = Field(..., pattern="^(keyword|brand|asin)$")
     query: str = Field(..., min_length=1, max_length=200)
-    language: str = Field(default="en", pattern="^(en|it)$")
+    language: str = Field(default="it", pattern="^(en|it)$")
 
 
 class MarketSearchResult(BaseModel):

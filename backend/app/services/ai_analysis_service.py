@@ -49,6 +49,22 @@ def _format_metric(value: Optional[float], digits: int = 2) -> str:
     return f"{value:.{digits}f}"
 
 
+def build_lang_instruction(language: str) -> str:
+    """Prompt fragment fixing the output language of user-facing text.
+
+    Explicitly pins JSON keys and enum values (priority, category, confidence)
+    to English so downstream sanitizers never see translated enums.
+    """
+    if language == "it":
+        return (
+            "Write ALL user-facing text values (summaries, titles, rationales, actions, "
+            "expected impacts, strengths, weaknesses, trends, risks, opportunities) in Italian. "
+            "Keep JSON keys and enum values (e.g. priority/category/confidence levels) in English "
+            "exactly as specified in the structure."
+        )
+    return "Write all user-facing text values in English."
+
+
 class AIAnalysisService:
     """Service for generating AI-powered competitive analysis."""
 
@@ -61,13 +77,13 @@ class AIAnalysisService:
         product_data: Dict[str, Any],
         competitor_data: List[Dict[str, Any]],
         category: Optional[str] = None,
-        language: str = "en",
+        language: str = "it",
     ) -> Dict[str, Any]:
         """Generate AI analysis comparing product against competitors.
 
         Returns dict with: strengths, weaknesses, recommendations, overall_score, summary
         """
-        lang_instruction = "Respond entirely in Italian." if language == "it" else "Respond entirely in English."
+        lang_instruction = build_lang_instruction(language)
         avg_price = _avg(_sanitize_prices([comp.get("price") for comp in competitor_data]))
         avg_bsr = _avg([comp.get("bsr") for comp in competitor_data])
         avg_reviews = _avg([comp.get("review_count") for comp in competitor_data])
@@ -195,10 +211,10 @@ class ForecastInsightsAnalysisService:
         self,
         *,
         forecast_data: Dict[str, Any],
-        language: str = "en",
+        language: str = "it",
     ) -> Dict[str, Any]:
         """Generate structured forecast insights."""
-        lang_instruction = "Respond entirely in Italian." if language == "it" else "Respond entirely in English."
+        lang_instruction = build_lang_instruction(language)
         prompt = f"""You are an expert ecommerce forecasting analyst. Review the forecast dataset below and produce executive insights for a business stakeholder.
 
 {lang_instruction}
@@ -282,10 +298,10 @@ class ProductTrendInsightsAnalysisService:
         self,
         *,
         trend_data: Dict[str, Any],
-        language: str = "en",
+        language: str = "it",
     ) -> Dict[str, Any]:
         """Generate structured insights for product trends."""
-        lang_instruction = "Respond entirely in Italian." if language == "it" else "Respond entirely in English."
+        lang_instruction = build_lang_instruction(language)
         prompt = f"""You are an expert ecommerce analyst. Review the product trend dataset below and produce executive insights for a business stakeholder.
 
 {lang_instruction}

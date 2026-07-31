@@ -261,7 +261,13 @@ export function PerProductPerformanceTable({ dateRange, accountIds, enabled }: P
                     {item.ad_spend ? formatCurrency(item.ad_spend) : '—'}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {item.acos != null ? `${item.acos.toFixed(1)}%` : '—'}
+                    {item.ad_spend > 0 && item.ad_sales <= 0 ? (
+                      <span className="text-destructive">{t('reports.acosNoSales')}</span>
+                    ) : item.acos != null ? (
+                      `${item.acos.toFixed(1)}%`
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {item.roas != null ? item.roas.toFixed(2) : '—'}

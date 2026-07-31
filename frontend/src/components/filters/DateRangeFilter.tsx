@@ -94,7 +94,7 @@ export function DateRangeFilter() {
   return (
     <div className="flex items-center gap-2">
       <Select value={datePreset} onValueChange={handlePresetChange}>
-        <SelectTrigger className="w-[170px] h-9 text-sm">
+        <SelectTrigger className="w-[210px] h-9 text-sm">
           <CalendarIcon className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
           <SelectValue>
             {datePreset === 'custom' && !displayLabel

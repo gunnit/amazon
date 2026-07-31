@@ -92,11 +92,20 @@ function CampaignTypeLabel({ type }: { type: string }) {
   )
 }
 
+const CAMPAIGN_STATE_KEYS: Record<string, string> = {
+  enabled: 'advertising.stateEnabled',
+  paused: 'advertising.statePaused',
+  archived: 'advertising.stateArchived',
+}
+
 function CampaignStateBadge({ state }: { state: string }) {
-  const variant = state === 'enabled' ? 'success' : state === 'paused' ? 'secondary' : 'destructive'
+  const { t } = useTranslation()
+  const normalized = state.toLowerCase()
+  const variant = normalized === 'enabled' ? 'success' : normalized === 'paused' ? 'secondary' : 'destructive'
+  const key = CAMPAIGN_STATE_KEYS[normalized]
   return (
     <Badge variant={variant} className="text-[10px]">
-      {state}
+      {key ? t(key) : state}
     </Badge>
   )
 }
@@ -161,9 +170,13 @@ function CampaignTable({
                       </span>
                     </td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">
-                      <span className={cn(Number(c.acos) <= 30 ? 'text-emerald-600' : Number(c.acos) <= 50 ? 'text-amber-600' : 'text-rose-600')}>
-                        {Number(c.acos).toFixed(1)}%
-                      </span>
+                      {Number(c.spend) > 0 && Number(c.sales) === 0 ? (
+                        <span className="text-rose-600">{t('advertising.acosNotAvailable')}</span>
+                      ) : (
+                        <span className={cn(Number(c.acos) <= 30 ? 'text-emerald-600' : Number(c.acos) <= 50 ? 'text-amber-600' : 'text-rose-600')}>
+                          {Number(c.acos).toFixed(1)}%
+                        </span>
+                      )}
                     </td>
                     <td className="py-2.5 text-right tabular-nums">{Number(c.ctr).toFixed(2)}%</td>
                   </tr>

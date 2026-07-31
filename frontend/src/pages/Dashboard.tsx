@@ -38,7 +38,7 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { analyticsApi, accountsApi } from '@/services/api'
-import { formatCurrency, formatLocalizedDate, formatNumber, formatPercent, cn } from '@/lib/utils'
+import { formatCurrency, formatLocalizedDate, formatNumber, formatPercent, formatRatio, cn } from '@/lib/utils'
 import { AREA_FILL, CHART_PRIMARY, CHART_SERIES } from '@/lib/chart-theme'
 import { buildDashboardSearchParams, resolveDashboardScope } from '@/lib/dashboardScope'
 import { granularityForAccountTypes } from '@/lib/granularity'
@@ -77,7 +77,7 @@ function KPICard({
   change?: number | null
   trend?: 'up' | 'down' | 'stable'
   icon: React.ElementType
-  format?: 'number' | 'currency' | 'percent'
+  format?: 'number' | 'currency' | 'percent' | 'ratio'
   currency?: string
   emphasis?: 'primary' | 'secondary'
   className?: string
@@ -88,6 +88,8 @@ function KPICard({
       ? formatCurrency(value, currency)
       : format === 'percent'
       ? `${value.toFixed(1)}%`
+      : format === 'ratio'
+      ? formatRatio(value)
       : formatNumber(value)
 
   const isPrimary = emphasis === 'primary'
@@ -287,14 +289,20 @@ function TrendingProductsList({
                 </div>
                 <div className="text-right">
                   <ProductTrendBadge trendClass={product.trend_class} className="ml-auto" />
-                  <p
-                    className={cn(
-                      'mt-2 text-sm font-semibold',
-                      product.sales_delta_percent >= 0 ? 'text-emerald-600' : 'text-rose-600'
-                    )}
-                  >
-                    {formatPercent(product.sales_delta_percent)}
-                  </p>
+                  {/* The sparkline shows an "insufficient history" placeholder below
+                      2 points; a delta next to it (typically -100%) is noise. */}
+                  {product.recent_sales.length >= 2 && (
+                    <p
+                      className={cn(
+                        'mt-2 text-sm font-semibold',
+                        product.sales_delta_percent >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                      )}
+                    >
+                      {product.sales_delta_percent > 999
+                        ? '>999%'
+                        : formatPercent(product.sales_delta_percent)}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="mt-3 h-12">
@@ -539,6 +547,12 @@ export default function Dashboard() {
     kpis.total_revenue.value === 0 &&
     kpis.total_orders.value === 0 &&
     kpis.total_units.value === 0
+
+  // The previous window ends the day before period_start. When it predates ads
+  // coverage entirely, the "+100%" deltas on ads KPIs are an artifact of the
+  // missing baseline, not a real jump — suppress the change badge.
+  const adsPrevPeriodCovered =
+    !kpis?.ads_data_from || kpis.period_start > kpis.ads_data_from
 
   const revenueTrend = trends?.find((t) => t.metric_name === 'revenue')
   const unitsTrend = trends?.find((t) => t.metric_name === 'units')
@@ -841,8 +855,8 @@ export default function Dashboard() {
           <KPICard
             title={t('dashboard.adSpend')}
             value={kpis?.total_ad_spend.value || 0}
-            change={kpis?.total_ad_spend.change_percent}
-            trend={kpis?.total_ad_spend.trend}
+            change={adsPrevPeriodCovered ? kpis?.total_ad_spend.change_percent : undefined}
+            trend={adsPrevPeriodCovered ? kpis?.total_ad_spend.trend : undefined}
             icon={DollarSign}
             format="currency"
             currency={currency}
@@ -850,16 +864,16 @@ export default function Dashboard() {
           <KPICard
             title="ROAS"
             value={kpis?.roas.value || 0}
-            change={kpis?.roas.change_percent}
-            trend={kpis?.roas.trend}
+            change={adsPrevPeriodCovered ? kpis?.roas.change_percent : undefined}
+            trend={adsPrevPeriodCovered ? kpis?.roas.trend : undefined}
             icon={Target}
-            format="number"
+            format="ratio"
           />
           <KPICard
             title="ACoS"
             value={kpis?.acos.value || 0}
-            change={kpis?.acos.change_percent}
-            trend={kpis?.acos.trend}
+            change={adsPrevPeriodCovered ? kpis?.acos.change_percent : undefined}
+            trend={adsPrevPeriodCovered ? kpis?.acos.trend : undefined}
             icon={Megaphone}
             format="percent"
           />
@@ -872,6 +886,9 @@ export default function Dashboard() {
         comparison={comparisonLoading ? undefined : comparison}
         title={t('comparison.dashboardTitle')}
         description={comparisonDescription}
+        adsCoverage={
+          kpis ? { from: kpis.ads_data_from ?? null, until: kpis.ads_data_until ?? null } : undefined
+        }
       />
 
       {/* Charts */}

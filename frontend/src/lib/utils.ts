@@ -16,6 +16,13 @@ export function formatNumber(value: number): string {
   return new Intl.NumberFormat('it-IT').format(value)
 }
 
+export function formatRatio(value: number): string {
+  return `${new Intl.NumberFormat('it-IT', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)}x`
+}
+
 export function formatPercent(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
 }

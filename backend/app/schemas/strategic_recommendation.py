@@ -50,7 +50,7 @@ class StrategicRecommendationGenerateRequest(BaseModel):
     # `auto` lets the service pick a window that matches the account cadence
     # (daily seller vs monthly vendor); an explicit value overrides it.
     lookback_days: Optional[int] = Field(default=None, ge=7, le=400)
-    language: str = Field(default="en", pattern="^(en|it)$")
+    language: str = Field(default="it", pattern="^(en|it)$")
     account_id: Optional[UUID] = None
     asin: Optional[str] = Field(default=None, min_length=1, max_length=20)
 

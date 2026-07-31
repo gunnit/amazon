@@ -25,6 +25,7 @@ from app.models.market_snapshot import FeeEstimate, PriceSnapshot
 from app.models.product import Product
 from app.models.sales_data import SalesData
 from app.models.strategic_recommendation import StrategicRecommendation
+from app.services.ai_analysis_service import build_lang_instruction
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.services.granularity import Granularity, resolve_granularity
@@ -132,7 +133,7 @@ def _pulse_rec(*, title: str, priority: str, confidence: str, source: str, evide
     }
 
 
-def build_pulse_recommendations(pulse: Dict[str, Any], *, language: str = "en") -> List[Dict[str, Any]]:
+def build_pulse_recommendations(pulse: Dict[str, Any], *, language: str = "it") -> List[Dict[str, Any]]:
     """Deterministic, evidence-backed recommendations from a Brand Pulse snapshot.
 
     Mirrors the AI engine's anti-hallucination discipline: every number is read
@@ -262,10 +263,8 @@ class _StrategicRecAnalysisService:
 
         self.client = anthropic.Anthropic(api_key=api_key)
 
-    def analyze(self, *, snapshot: Dict[str, Any], language: str = "en") -> Dict[str, Any]:
-        lang_instruction = (
-            "Respond entirely in Italian." if language == "it" else "Respond entirely in English."
-        )
+    def analyze(self, *, snapshot: Dict[str, Any], language: str = "it") -> Dict[str, Any]:
+        lang_instruction = build_lang_instruction(language)
         prompt = f"""You are an Amazon marketplace strategist advising a seller on weekly priorities.
 
 {lang_instruction}
@@ -440,7 +439,7 @@ class StrategicRecommendationsService:
         *,
         user_id: Optional[UUID] = None,
         lookback_days: Optional[int] = None,
-        language: str = "en",
+        language: str = "it",
         account_id: Optional[UUID] = None,
         asin: Optional[str] = None,
     ) -> List[StrategicRecommendation]:

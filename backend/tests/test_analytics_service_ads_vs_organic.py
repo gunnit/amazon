@@ -277,6 +277,7 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
     assert result["summary"]["total_sales"]["previous_value"] == 200.0
     assert result["asin_breakdown"][0]["asin"] == "B0AAA"
     assert result["asin_breakdown"][0]["sales_share_pct"] == pytest.approx(52.17, abs=0.01)
+    assert any("7-day attribution" in note for note in result["attribution_notes"])
 
 
 @pytest.mark.asyncio
@@ -404,6 +405,7 @@ async def test_get_ads_vs_organic_applies_asin_filter_and_returns_note():
     assert result["summary"]["total_sales"]["value"] == 90.0
     assert result["summary"]["ad_sales"]["value"] == 40.0
     assert "Sponsored Products" in result["attribution_notes"][0]
+    assert any("7-day attribution" in note for note in result["attribution_notes"])
     assert result["ads_data_from"] == date(2026, 2, 1)
     assert result["ads_data_until"] == date(2026, 3, 5)
 

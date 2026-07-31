@@ -11,7 +11,7 @@ import {
 } from 'recharts'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { cn, formatCurrency, formatDate, formatNumber } from '@/lib/utils'
+import { cn, formatCurrency, formatDate, formatNumber, formatRatio } from '@/lib/utils'
 import { CHART_NEUTRAL, CHART_PRIMARY } from '@/lib/chart-theme'
 import { useTranslation } from '@/i18n'
 import type { ComparisonDailyPoint, ComparisonMetric, ComparisonResponse } from '@/types'
@@ -30,7 +30,7 @@ function formatMetricValue(metric: ComparisonMetric, value: number | null) {
   }
 
   if (metric.format === 'ratio') {
-    return `${value.toFixed(2)}x`
+    return formatRatio(value)
   }
 
   return formatNumber(Math.round(value))
@@ -81,16 +81,58 @@ export function PeriodComparisonCard({
   comparison,
   title,
   description,
+  adsCoverage,
 }: {
   comparison?: ComparisonResponse
   title: string
   description: string
+  /** Ads data coverage from the KPI response; undefined = unknown (no suppression). */
+  adsCoverage?: { from: string | null; until: string | null }
 }) {
-  const { t } = useTranslation()
-  const chartData = (comparison?.daily_series || []).map((point) => ({
-    ...point,
-    day_label: t('comparison.chartDay', { day: point.day_offset + 1 }),
-  }))
+  const { t, language } = useTranslation()
+
+  // The backend pads the aligned series to the full length of the longer
+  // period, filling days without data with zeros. On long presets this drew a
+  // mostly-empty grid, so trim the axis to the populated extent.
+  const rawSeries = comparison?.daily_series || []
+  let firstPopulated = -1
+  let lastPopulated = -1
+  rawSeries.forEach((point, index) => {
+    if ((point.period_1_revenue ?? 0) > 0 || (point.period_2_revenue ?? 0) > 0) {
+      if (firstPopulated === -1) firstPopulated = index
+      lastPopulated = index
+    }
+  })
+  const visibleSeries =
+    firstPopulated === -1 ? rawSeries : rawSeries.slice(firstPopulated, lastPopulated + 1)
+
+  const tickDate = (value: string | null) =>
+    value
+      ? new Date(value + 'T00:00:00').toLocaleDateString(language === 'it' ? 'it-IT' : 'en-US', {
+          day: 'numeric',
+          month: 'short',
+        })
+      : null
+
+  const chartData = visibleSeries.map((point) => {
+    const day_label = t('comparison.chartDay', { day: point.day_offset + 1 })
+    return {
+      ...point,
+      day_label,
+      tick_label: tickDate(point.period_1_date) ?? day_label,
+    }
+  })
+
+  // ROAS/CTR read as a meaningless 0 when neither compared period overlaps the
+  // ads data coverage (or ads are not connected at all): show n/d instead.
+  const adsUntil = adsCoverage?.until ?? '9999-12-31'
+  const periodCoversAds = (period: { start: string; end: string }) =>
+    !!adsCoverage?.from && period.start <= adsUntil && period.end >= adsCoverage.from
+  const noAdsCoverage =
+    adsCoverage !== undefined &&
+    !!comparison &&
+    !periodCoversAds(comparison.period_1) &&
+    !periodCoversAds(comparison.period_2)
 
   return (
     <Card>
@@ -117,9 +159,14 @@ export function PeriodComparisonCard({
           <>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {comparison.metrics.map((metric) => {
-                const unavailableReason = metric.unavailable_reason
-                  ? t(`comparison.unavailable.${metric.unavailable_reason}`)
-                  : t('comparison.unavailable.generic')
+                const isAdsMetricWithoutCoverage =
+                  noAdsCoverage && (metric.metric_name === 'roas' || metric.metric_name === 'ctr')
+                const isAvailable = metric.is_available && !isAdsMetricWithoutCoverage
+                const unavailableReason = isAdsMetricWithoutCoverage
+                  ? t('comparison.unavailable.no_ads_coverage')
+                  : metric.unavailable_reason
+                    ? t(`comparison.unavailable.${metric.unavailable_reason}`)
+                    : t('comparison.unavailable.generic')
 
                 return (
                   <div
@@ -132,14 +179,18 @@ export function PeriodComparisonCard({
 
                     <div className="mt-2 flex items-center justify-between gap-3">
                       <p className="text-3xl font-semibold tracking-tight text-foreground tabular-nums">
-                        {metric.is_available ? formatMetricValue(metric, metric.current_value) : '—'}
+                        {isAvailable
+                          ? formatMetricValue(metric, metric.current_value)
+                          : isAdsMetricWithoutCoverage
+                            ? t('comparison.valueNotAvailable')
+                            : '—'}
                       </p>
-                      {metric.is_available && (
+                      {isAvailable && (
                         <MetricTrend trend={metric.trend} changePercent={metric.change_percent} />
                       )}
                     </div>
 
-                    {metric.is_available ? (
+                    {isAvailable ? (
                       <p className="mt-2 text-xs text-muted-foreground">
                         {t('comparison.vsLabel')}{' '}
                         <span className="font-medium text-foreground/80 tabular-nums">
@@ -165,7 +216,7 @@ export function PeriodComparisonCard({
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="day_label" axisLine={false} tickLine={false} />
+                      <XAxis dataKey="tick_label" axisLine={false} tickLine={false} minTickGap={24} />
                       <YAxis
                         axisLine={false}
                         tickLine={false}

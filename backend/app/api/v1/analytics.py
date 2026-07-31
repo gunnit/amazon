@@ -746,7 +746,7 @@ async def get_ads_vs_organic(
     date_to: date = Query(default=date.today()),
     group_by: str = Query(default="day", pattern="^(day|week|month)$"),
     asin: Optional[str] = Query(default=None),
-    language: str = Query(default="en", pattern="^(en|it)$"),
+    language: str = Query(default="it", pattern="^(en|it)$"),
 ):
     """Get ad-attributed vs organic sales analytics."""
     _validate_period(date_from, date_to, "period")
@@ -853,7 +853,7 @@ async def get_returns_analysis(
     date_to: Optional[date] = Query(default=None),
     asin: Optional[str] = Query(default=None, min_length=1, max_length=20),
     limit: int = Query(default=10, ge=1, le=50),
-    language: str = Query(default="en", pattern="^(en|it)$"),
+    language: str = Query(default="it", pattern="^(en|it)$"),
 ):
     """Get return trends, reasons, and ASIN-level return metrics."""
     date_from, date_to = _resolve_optional_date_range(date_from, date_to)
@@ -1592,7 +1592,7 @@ async def get_product_trends(
         default=None,
         pattern="^(rising_fast|rising|stable|declining|declining_fast)$",
     ),
-    language: str = Query(default="en", pattern="^(en|it)$"),
+    language: str = Query(default="it", pattern="^(en|it)$"),
     limit: int = Query(default=50, ge=1, le=100),
 ):
     """Get ranked product trends and structured insights."""
@@ -1656,7 +1656,7 @@ async def get_product_trend_insights(
         default=None,
         pattern="^(rising_fast|rising|stable|declining|declining_fast)$",
     ),
-    language: str = Query(default="en", pattern="^(en|it)$"),
+    language: str = Query(default="it", pattern="^(en|it)$"),
     limit: int = Query(default=50, ge=1, le=100),
 ):
     """Generate AI-backed trend insights, loaded separately from the trend data.

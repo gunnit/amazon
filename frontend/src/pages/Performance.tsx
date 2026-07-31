@@ -315,6 +315,7 @@ type TrendSortDirection = 'asc' | 'desc'
 type SalesSortKey = 'date' | 'total_units' | 'total_sales' | 'total_orders'
 type SalesSortDirection = 'asc' | 'desc'
 const SALES_PAGE_SIZE = 20
+const PPC_MAX_ROWS = 25
 
 function compareSalesRows(
   left: SalesRow,
@@ -1257,11 +1258,15 @@ function PanoramicaTab({
                               {product.ad_spend > 0 ? (
                                 <div>
                                   <span className="text-sm">{formatCurrency(product.ad_spend)}</span>
-                                  {product.acos != null && (
+                                  {product.ad_sales <= 0 ? (
+                                    <p className="text-xs text-destructive mt-0.5">
+                                      ACoS {t('reports.acosNoSales')}
+                                    </p>
+                                  ) : product.acos != null ? (
                                     <p className="text-xs text-muted-foreground mt-0.5">
                                       ACoS {product.acos.toFixed(1)}%
                                     </p>
-                                  )}
+                                  ) : null}
                                 </div>
                               ) : (
                                 <span className="text-muted-foreground">-</span>
@@ -1787,6 +1792,33 @@ function AdsVsOrganicTab({
 
   const advertisingCurrency = 'EUR'
 
+  // The advertising endpoint returns per-campaign-per-day rows: aggregate per
+  // campaign over the window and derive CTR/ACoS/ROAS from the sums.
+  const campaignTotals = useMemo(() => {
+    const byCampaign = new Map<
+      string,
+      { campaign_id: string; campaign_name: string; impressions: number; clicks: number; cost: number; sales: number }
+    >()
+    for (const item of advertisingData) {
+      const entry = byCampaign.get(item.campaign_id) || {
+        campaign_id: item.campaign_id,
+        campaign_name: item.campaign_name,
+        impressions: 0,
+        clicks: 0,
+        cost: 0,
+        sales: 0,
+      }
+      entry.impressions += Number(item.impressions) || 0
+      entry.clicks += Number(item.clicks) || 0
+      entry.cost += Number(item.cost) || 0
+      entry.sales += Number(item.attributed_sales_7d) || 0
+      byCampaign.set(item.campaign_id, entry)
+    }
+    return Array.from(byCampaign.values()).sort((a, b) => b.cost - a.cost)
+  }, [advertisingData])
+  const visibleCampaigns = campaignTotals.slice(0, PPC_MAX_ROWS)
+  const hasCampaignSales = campaignTotals.some((campaign) => campaign.sales > 0)
+
   const adsEffectiveGroupBy = adsVsOrganicData?.group_by ?? analyticsGroupBy
   const adsChartData = (adsVsOrganicData?.time_series || []).map((point) => ({
     ...point,
@@ -1890,7 +1922,7 @@ function AdsVsOrganicTab({
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+        <Card className={selectedAsin === ALL_ASINS_VALUE ? 'lg:col-span-2' : 'lg:col-span-3'}>
           <CardHeader>
             <CardTitle>{t('analytics.adsVsOrganic')}</CardTitle>
             <CardDescription>
@@ -1952,37 +1984,36 @@ function AdsVsOrganicTab({
           </CardContent>
         </Card>
 
-        {selectedAsin === ALL_ASINS_VALUE && (adsVsOrganicData?.asin_breakdown?.length || 0) > 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('analytics.topAsinSales')}</CardTitle>
-              <CardDescription>{t('analytics.topAsinSalesDesc')}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {(adsVsOrganicData?.breakdown_notes || []).map((note, idx) => (
-                <p key={idx} className="text-xs text-muted-foreground">
-                  {note}
-                </p>
-              ))}
-              <AsinBreakdownList
-                items={(adsVsOrganicData?.asin_breakdown || []).slice(0, 8)}
-                onSelectAsin={setSelectedAsin}
-              />
-            </CardContent>
-          </Card>
-        ) : (
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('analytics.topAsinSales')}</CardTitle>
-              <CardDescription>{t('analytics.topAsinSalesDesc')}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex min-h-[220px] items-center justify-center text-sm text-muted-foreground">
-              {selectedAsin === ALL_ASINS_VALUE
-                ? t('analytics.noAdsVsOrganicData')
-                : t('analytics.asinBreakdownHidden')}
-            </CardContent>
-          </Card>
-        )}
+        {selectedAsin === ALL_ASINS_VALUE &&
+          ((adsVsOrganicData?.asin_breakdown?.length || 0) > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('analytics.topAsinSales')}</CardTitle>
+                <CardDescription>{t('analytics.topAsinSalesDesc')}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(adsVsOrganicData?.breakdown_notes || []).map((note, idx) => (
+                  <p key={idx} className="text-xs text-muted-foreground">
+                    {note}
+                  </p>
+                ))}
+                <AsinBreakdownList
+                  items={(adsVsOrganicData?.asin_breakdown || []).slice(0, 8)}
+                  onSelectAsin={setSelectedAsin}
+                />
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('analytics.topAsinSales')}</CardTitle>
+                <CardDescription>{t('analytics.topAsinSalesDesc')}</CardDescription>
+              </CardHeader>
+              <CardContent className="flex min-h-[220px] items-center justify-center text-sm text-muted-foreground">
+                {t('analytics.noAdsVsOrganicData')}
+              </CardContent>
+            </Card>
+          ))}
       </div>
 
       <Card>
@@ -1999,32 +2030,71 @@ function AdsVsOrganicTab({
             <div className="text-center py-8 text-sm text-destructive">
               {t('advertising.loadError')}
             </div>
-          ) : advertisingData.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-3 px-4 font-medium">{t('reports.campaign')}</th>
-                    <th className="text-right py-3 px-4 font-medium">{t('reports.spend')}</th>
-                    <th className="text-right py-3 px-4 font-medium">{t('reports.impressions')}</th>
-                    <th className="text-right py-3 px-4 font-medium">{t('reports.clicks')}</th>
-                    <th className="text-right py-3 px-4 font-medium">{t('reports.ctr')}</th>
-                    <th className="text-right py-3 px-4 font-medium">{t('reports.acos')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {advertisingData.map((item) => (
-                    <tr key={`${item.campaign_id}-${item.date}`} className="border-b last:border-0">
-                      <td className="py-3 px-4">{item.campaign_name || '-'}</td>
-                      <td className="py-3 px-4 text-right">{formatCurrency(Number(item.cost), advertisingCurrency)}</td>
-                      <td className="py-3 px-4 text-right">{formatNumber(Number(item.impressions))}</td>
-                      <td className="py-3 px-4 text-right">{formatNumber(Number(item.clicks))}</td>
-                      <td className="py-3 px-4 text-right">{Number(item.ctr || 0).toFixed(2)}%</td>
-                      <td className="py-3 px-4 text-right">{Number(item.acos || 0).toFixed(1)}%</td>
+          ) : campaignTotals.length > 0 ? (
+            <div className="space-y-3">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left py-3 px-4 font-medium">{t('reports.campaign')}</th>
+                      <th className="text-right py-3 px-4 font-medium">{t('reports.spend')}</th>
+                      <th className="text-right py-3 px-4 font-medium">{t('reports.impressions')}</th>
+                      <th className="text-right py-3 px-4 font-medium">{t('reports.clicks')}</th>
+                      <th className="text-right py-3 px-4 font-medium">{t('reports.ctr')}</th>
+                      <th className="text-right py-3 px-4 font-medium">{t('reports.acos')}</th>
+                      {hasCampaignSales && (
+                        <th className="text-right py-3 px-4 font-medium">{t('reports.roas')}</th>
+                      )}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {visibleCampaigns.map((campaign) => (
+                      <tr key={campaign.campaign_id} className="border-b last:border-0">
+                        <td className="py-3 px-4">{campaign.campaign_name || '-'}</td>
+                        <td className="py-3 px-4 text-right">{formatCurrency(campaign.cost, advertisingCurrency)}</td>
+                        <td className="py-3 px-4 text-right">{formatNumber(campaign.impressions)}</td>
+                        <td className="py-3 px-4 text-right">{formatNumber(campaign.clicks)}</td>
+                        <td className="py-3 px-4 text-right">
+                          {campaign.impressions > 0
+                            ? `${((campaign.clicks / campaign.impressions) * 100).toFixed(2)}%`
+                            : '-'}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {campaign.sales > 0 ? (
+                            `${((campaign.cost / campaign.sales) * 100).toFixed(1)}%`
+                          ) : campaign.cost > 0 ? (
+                            <span className="text-destructive">{t('reports.acosNoSales')}</span>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        {hasCampaignSales && (
+                          <td className="py-3 px-4 text-right">
+                            {campaign.cost > 0 ? (campaign.sales / campaign.cost).toFixed(2) : '-'}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {campaignTotals.length > PPC_MAX_ROWS && (
+                <p className="text-xs text-muted-foreground">
+                  {t('reports.campaignsShowing', {
+                    shown: visibleCampaigns.length,
+                    total: campaignTotals.length,
+                  })}
+                </p>
+              )}
+            </div>
+          ) : !showNoAdsBanner && adsDataFrom ? (
+            <div className="py-8 text-center text-muted-foreground space-y-1">
+              <p>{t('advertising.noDataInPeriodTitle')}</p>
+              <p className="text-sm">
+                {t('advertising.dataAvailableFrom', {
+                  date: formatLocalizedDate(adsDataFrom, language),
+                })}
+              </p>
             </div>
           ) : (
             <div className="text-center py-8 text-muted-foreground">

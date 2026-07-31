@@ -54,6 +54,7 @@ export default function Login() {
       toast({
         title: t('login.successTitle'),
         description: t('login.successDesc'),
+        duration: 2500,
       })
       navigate('/')
     } catch (error: unknown) {

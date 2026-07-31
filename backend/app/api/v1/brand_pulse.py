@@ -22,7 +22,7 @@ async def get_brand_pulse(
     account_ids: Optional[List[UUID]] = Query(default=None),
     window_days: int = Query(default=30, ge=7, le=90),
     end_date: Optional[date] = Query(default=None),
-    language: str = Query(default="en"),
+    language: str = Query(default="it"),
 ):
     """Rolling brand-intelligence snapshot: sales overview, top/declining ASINs
     and advertising (ACOS/TACOS) for the last ``window_days`` vs the preceding
