@@ -407,7 +407,8 @@ class AdvertisingAPIClient:
     def _campaign_list_payload(self, next_token: str | None = None) -> dict[str, Any]:
         """Build a permissive list payload that returns active and inactive campaigns."""
         payload: dict[str, Any] = {
-            "maxResults": 1000,
+            # SB v4 caps maxResults at 100 (SP allows more); use the common cap.
+            "maxResults": 100,
             "stateFilter": {
                 "include": ["ENABLED", "PAUSED", "ARCHIVED"],
             },
@@ -428,17 +429,21 @@ class AdvertisingAPIClient:
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def list_campaigns(self, profile_id: str) -> list[dict[str, Any]]:
         """Return campaigns across SP, SB, and SD for a profile."""
+        # Paths and media types verified live 2026-07-31: SP/SB list endpoints
+        # return 415 without their versioned Content-Type; SD only has the GET.
         campaign_types = {
             "sponsoredProducts": {
                 "primary_path": "/sp/campaigns/list",
+                "media_type": "application/vnd.spCampaign.v3+json",
                 "legacy_path": "/v2/sp/campaigns",
             },
             "sponsoredBrands": {
-                "primary_path": "/sb/campaigns/list",
+                "primary_path": "/sb/v4/campaigns/list",
+                "media_type": "application/vnd.sbcampaignresource.v4+json",
                 "legacy_path": "/v2/hsa/campaigns",
             },
             "sponsoredDisplay": {
-                "primary_path": "/sd/campaigns/list",
+                "primary_path": None,
                 "legacy_path": "/sd/campaigns",
             },
         }
@@ -447,16 +452,25 @@ class AdvertisingAPIClient:
         for campaign_type, config in campaign_types.items():
             next_token: str | None = None
             while True:
-                try:
-                    response = self._request(
-                        "POST",
-                        config["primary_path"],
-                        profile_id=profile_id,
-                        json_body=self._campaign_list_payload(next_token),
-                    )
-                except AmazonAPIError as exc:
-                    if exc.error_code != "ADVERTISING_REQUEST_FAILED":
-                        raise
+                if config["primary_path"]:
+                    media_type = config["media_type"]
+                    try:
+                        response = self._request(
+                            "POST",
+                            config["primary_path"],
+                            profile_id=profile_id,
+                            json_body=self._campaign_list_payload(next_token),
+                            headers={"Content-Type": media_type, "Accept": media_type},
+                        )
+                    except AmazonAPIError as exc:
+                        if exc.error_code != "ADVERTISING_REQUEST_FAILED":
+                            raise
+                        response = self._request(
+                            "GET",
+                            config["legacy_path"],
+                            profile_id=profile_id,
+                        )
+                else:
                     response = self._request(
                         "GET",
                         config["legacy_path"],
