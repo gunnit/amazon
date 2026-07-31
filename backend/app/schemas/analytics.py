@@ -33,6 +33,8 @@ class DashboardKPIs(BaseModel):
     period_start: date
     period_end: date
     currency: str = "EUR"
+    ads_data_from: Optional[date] = None
+    ads_data_until: Optional[date] = None
 
 
 class TrendDataPoint(BaseModel):
@@ -182,6 +184,8 @@ class AdsVsOrganicResponse(BaseModel):
     granularity: str = "unknown"
     asin: Optional[str] = None
     attribution_notes: List[str] = Field(default_factory=list)
+    ads_data_from: Optional[date] = None
+    ads_data_until: Optional[date] = None
 
 
 class ProductPerformance(BaseModel):
@@ -313,6 +317,8 @@ class AdvertisingInsights(BaseModel):
     top_campaigns: List[Dict[str, Any]]
     underperforming_campaigns: List[Dict[str, Any]]
     recommendations: List[AdvertisingRecommendation]
+    ads_data_from: Optional[date] = None
+    ads_data_until: Optional[date] = None
 
 
 class ProductTrendRecommendation(BaseModel):

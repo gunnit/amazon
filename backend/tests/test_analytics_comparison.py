@@ -94,6 +94,10 @@ analytics = module_from_spec(analytics_spec)
 assert analytics_spec is not None and analytics_spec.loader is not None
 analytics_spec.loader.exec_module(analytics)
 
+# The exec above imported the real app.services.sales_metrics while the bare
+# SalesData stub was in place; evict it so later test files bind the real model.
+sys.modules.pop("app.services.sales_metrics", None)
+
 
 def test_previous_period_uses_same_inclusive_length():
     prev_start, prev_end = analytics._previous_period(date(2026, 3, 1), date(2026, 3, 31))

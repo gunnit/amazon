@@ -45,7 +45,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { accountsApi, analyticsApi, catalogApi, reportsApi } from '@/services/api'
-import { formatChangePercent, formatCurrency, formatNumber } from '@/lib/utils'
+import { formatChangePercent, formatCurrency, formatLocalizedDate, formatNumber } from '@/lib/utils'
 import {
   AREA_FILL,
   BAR_H_FILL,
@@ -1737,7 +1737,7 @@ function AdsVsOrganicTab({
   const { t, language } = useTranslation()
   const { analyticsGroupBy } = useFilterStore()
 
-  const { data: adsVsOrganicData, isLoading: adsVsOrganicLoading } = useQuery<AdsVsOrganicResponse>({
+  const { data: adsVsOrganicData, isLoading: adsVsOrganicLoading, isError: adsVsOrganicError } = useQuery<AdsVsOrganicResponse>({
     queryKey: ['ads-vs-organic', dateRange, trendAccountIds, analyticsGroupBy, selectedAsin, language],
     queryFn: () => analyticsApi.getAdsVsOrganic({
       date_from: dateRange.start,
@@ -1756,7 +1756,7 @@ function AdsVsOrganicTab({
     enabled: active,
   })
 
-  const { data: advertisingData = [], isLoading: advertisingLoading } = useQuery<AdvertisingMetricsItem[]>({
+  const { data: advertisingData = [], isLoading: advertisingLoading, isError: advertisingError } = useQuery<AdvertisingMetricsItem[]>({
     queryKey: ['advertising', dateRange, trendAccountIds],
     queryFn: () => reportsApi.getAdvertising({
       start_date: dateRange.start,
@@ -1772,6 +1772,18 @@ function AdsVsOrganicTab({
   const showNoAdsBanner =
     adsScopedAccounts.length > 0 &&
     adsScopedAccounts.every((account) => resolveAdsState(account) !== 'ok')
+
+  // ads_data_from null = never any ads rows; a window entirely outside the
+  // [ads_data_from, ads_data_until] coverage has none either. Field absent
+  // (older backend) = no notice.
+  const adsDataFrom = adsVsOrganicData?.ads_data_from
+  const adsDataUntil = adsVsOrganicData?.ads_data_until
+  const showNoAdsCoverageNotice =
+    !showNoAdsBanner &&
+    adsVsOrganicData !== undefined &&
+    (adsDataFrom === null ||
+      (typeof adsDataFrom === 'string' && dateRange.end < adsDataFrom) ||
+      (typeof adsDataUntil === 'string' && dateRange.start > adsDataUntil))
 
   const advertisingCurrency = 'EUR'
 
@@ -1798,6 +1810,15 @@ function AdsVsOrganicTab({
     )
   }
 
+  if (adsVsOrganicError) {
+    return (
+      <Alert variant="destructive">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertDescription>{t('advertising.loadError')}</AlertDescription>
+      </Alert>
+    )
+  }
+
   return (
     <div className="space-y-6">
       {showNoAdsBanner && (
@@ -1809,6 +1830,15 @@ function AdsVsOrganicTab({
             <Link to="/accounts" className="font-medium underline">
               {t('advertising.openAccounts')}
             </Link>
+          </AlertDescription>
+        </Alert>
+      )}
+      {showNoAdsCoverageNotice && (
+        <Alert>
+          <AlertDescription>
+            {t('analytics.noAdsCoverage')}
+            {adsDataFrom &&
+              ` ${t('advertising.dataAvailableFrom', { date: formatLocalizedDate(adsDataFrom, language) })}`}
           </AlertDescription>
         </Alert>
       )}
@@ -1965,6 +1995,10 @@ function AdsVsOrganicTab({
             <div className="flex items-center justify-center h-32">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
+          ) : advertisingError ? (
+            <div className="text-center py-8 text-sm text-destructive">
+              {t('advertising.loadError')}
+            </div>
           ) : advertisingData.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -1972,7 +2006,9 @@ function AdsVsOrganicTab({
                   <tr className="border-b">
                     <th className="text-left py-3 px-4 font-medium">{t('reports.campaign')}</th>
                     <th className="text-right py-3 px-4 font-medium">{t('reports.spend')}</th>
+                    <th className="text-right py-3 px-4 font-medium">{t('reports.impressions')}</th>
                     <th className="text-right py-3 px-4 font-medium">{t('reports.clicks')}</th>
+                    <th className="text-right py-3 px-4 font-medium">{t('reports.ctr')}</th>
                     <th className="text-right py-3 px-4 font-medium">{t('reports.acos')}</th>
                   </tr>
                 </thead>
@@ -1981,7 +2017,9 @@ function AdsVsOrganicTab({
                     <tr key={`${item.campaign_id}-${item.date}`} className="border-b last:border-0">
                       <td className="py-3 px-4">{item.campaign_name || '-'}</td>
                       <td className="py-3 px-4 text-right">{formatCurrency(Number(item.cost), advertisingCurrency)}</td>
+                      <td className="py-3 px-4 text-right">{formatNumber(Number(item.impressions))}</td>
                       <td className="py-3 px-4 text-right">{formatNumber(Number(item.clicks))}</td>
+                      <td className="py-3 px-4 text-right">{Number(item.ctr || 0).toFixed(2)}%</td>
                       <td className="py-3 px-4 text-right">{Number(item.acos || 0).toFixed(1)}%</td>
                     </tr>
                   ))}

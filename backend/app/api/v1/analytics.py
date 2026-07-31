@@ -391,6 +391,29 @@ async def _get_advertising_period_metrics(
     }
 
 
+async def _get_ads_coverage(
+    db: DbSession,
+    accounts_query,
+) -> tuple[Optional[date], Optional[date]]:
+    """Min/max advertising metric dates for the scoped accounts, across all time.
+
+    Lets the frontend distinguish "no ads data yet" from "zero ad performance
+    in the selected period".
+    """
+    campaigns_query = select(AdvertisingCampaign.id).where(
+        AdvertisingCampaign.account_id.in_(accounts_query)
+    )
+    row = (
+        await db.execute(
+            select(
+                func.min(AdvertisingMetrics.date).label("ads_from"),
+                func.max(AdvertisingMetrics.date).label("ads_until"),
+            ).where(AdvertisingMetrics.campaign_id.in_(campaigns_query))
+        )
+    ).one()
+    return row.ads_from, row.ads_until
+
+
 def _build_comparison_metric(
     metric_name: str,
     label: str,
@@ -586,10 +609,26 @@ async def get_dashboard_kpis(
     sales_previous = await _get_sales_period_metrics(db, accounts_query, prev_start, prev_end)
     ads_current = await _get_advertising_period_metrics(db, accounts_query, start_date, end_date)
     ads_previous = await _get_advertising_period_metrics(db, accounts_query, prev_start, prev_end)
+    ads_data_from, ads_data_until = await _get_ads_coverage(db, accounts_query)
     ads_available = bool(
         ads_current.get("impressions", 0) or ads_current.get("clicks", 0) or ads_current.get("spend", 0)
     )
-    ads_reason = None if ads_available else "ads_not_connected"
+    if ads_available:
+        ads_reason = None
+    else:
+        # "Not connected" only when no scoped account holds advertising
+        # credentials; otherwise the period simply has no ads data.
+        ads_connected = bool(
+            (
+                await db.execute(
+                    select(func.count(AmazonAccount.id)).where(
+                        AmazonAccount.id.in_(accounts_query),
+                        AmazonAccount.advertising_refresh_token_encrypted.isnot(None),
+                    )
+                )
+            ).scalar()
+        )
+        ads_reason = "no_ads_data_in_period" if ads_connected else "ads_not_connected"
 
     revenue_metric = _build_comparison_metric(
         "revenue", "Revenue", "currency", sales_current["revenue"], sales_previous["revenue"]
@@ -691,6 +730,8 @@ async def get_dashboard_kpis(
         period_start=start_date,
         period_end=end_date,
         currency=currency,
+        ads_data_from=ads_data_from,
+        ads_data_until=ads_data_until,
     )
 
 
@@ -1845,6 +1886,7 @@ async def get_advertising_insights(
         )
     )
     overall = (await db.execute(overall_query)).one()
+    ads_data_from, ads_data_until = await _get_ads_coverage(db, accounts_query)
 
     total_spend = Decimal(str(overall.spend or 0))
     total_sales = Decimal(str(overall.sales or 0))
@@ -1963,6 +2005,8 @@ async def get_advertising_insights(
         top_campaigns=top_campaigns,
         underperforming_campaigns=underperforming_campaigns,
         recommendations=recommendations,
+        ads_data_from=ads_data_from,
+        ads_data_until=ads_data_until,
     )
 
 

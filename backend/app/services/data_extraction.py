@@ -67,6 +67,11 @@ SELLER_BACKFILL_WINDOW_PAUSE_SECONDS = 2.0
 SELLER_BACKFILL_THROTTLE_COOLDOWN_SECONDS = 65.0
 SELLER_BACKFILL_MAX_WINDOW_ATTEMPTS = 3
 
+# Ads Reporting v3 caps each report request at 31 days and serves a different
+# lookback per ad product (days back from today).
+ADS_REPORT_MAX_WINDOW_DAYS = 31
+ADS_LOOKBACK_DAYS = {"sp": 95, "sb": 60, "sd": 65}
+
 
 def _day_windows(
     start_date: date, end_date: date, max_days: int = VENDOR_DAY_WINDOW_MAX_DAYS
@@ -2144,27 +2149,44 @@ class DataExtractionService:
         )
         await self.db.execute(stmt)
 
-    def _request_campaign_reports(
+    async def _run_advertising_reports(
         self,
         client,
         profile_id: str,
+        account: AmazonAccount,
+        campaign_id_map: dict[str, UUID],
         start_date: date,
         end_date: date,
-    ) -> list[tuple[str, str]]:
-        """Request campaign reports for SP, SB, and SD. Returns list of (report_type, report_id)."""
-        report_types = ["sp_campaigns", "sb_campaigns", "sd_campaigns"]
-        requested: list[tuple[str, str]] = []
-        for rt in report_types:
+        report_types: list[str],
+    ) -> tuple[int, list[str]]:
+        """Request and process ad reports over one window.
+
+        Returns (rows upserted, report types that failed). Failures are logged
+        here; the caller decides whether they are fatal."""
+        total = 0
+        failed: list[str] = []
+        for report_type in report_types:
             try:
                 report_id = client.request_report(
                     profile_id=profile_id,
-                    report_type=rt,
+                    report_type=report_type,
                     date_range=(start_date, end_date),
                 )
-                requested.append((rt, report_id))
+                if report_type == "sp_advertised_product":
+                    total += await self._process_asin_report(
+                        client, profile_id, report_id, account, campaign_id_map,
+                    )
+                else:
+                    total += await self._process_campaign_report(
+                        client, profile_id, report_type, report_id, account, campaign_id_map,
+                    )
             except AmazonAPIError as exc:
-                logger.warning("Could not request %s report for profile %s: %s", rt, profile_id, exc)
-        return requested
+                logger.warning(
+                    "Advertising report %s (%s..%s) failed for %s: %s",
+                    report_type, start_date, end_date, account.account_name, exc,
+                )
+                failed.append(report_type)
+        return total, failed
 
     async def _process_campaign_report(
         self,
@@ -2183,11 +2205,7 @@ class DataExtractionService:
         }
         campaign_type = campaign_type_by_report.get(report_type, "sponsoredProducts")
 
-        try:
-            report_payload = client.download_report(profile_id=profile_id, report_id=report_id)
-        except AmazonAPIError as exc:
-            logger.warning("Failed to download %s report: %s", report_type, exc)
-            return 0
+        report_payload = client.download_report(profile_id=profile_id, report_id=report_id)
 
         metric_count = 0
         for row in self._extract_report_rows(report_payload):
@@ -2265,11 +2283,7 @@ class DataExtractionService:
         campaign_id_map: dict[str, UUID],
     ) -> int:
         """Download and process the advertised-product (ASIN-level) report."""
-        try:
-            report_payload = client.download_report(profile_id=profile_id, report_id=report_id)
-        except AmazonAPIError as exc:
-            logger.warning("Failed to download ASIN report: %s", exc)
-            return 0
+        report_payload = client.download_report(profile_id=profile_id, report_id=report_id)
 
         asin_count = 0
         for row in self._extract_report_rows(report_payload):
@@ -2331,8 +2345,15 @@ class DataExtractionService:
 
         return asin_count
 
-    async def sync_advertising(self, account: AmazonAccount, organization=None) -> int:
-        """Sync advertising campaigns and metrics (SP, SB, SD + ASIN-level)."""
+    async def sync_advertising(
+        self,
+        account: AmazonAccount,
+        organization=None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> int:
+        """Sync advertising campaigns and metrics (SP, SB, SD + ASIN-level)
+        over [start_date, end_date], defaulting to the trailing 7 days."""
         if not account.advertising_refresh_token_encrypted:
             logger.info(
                 "Skipping advertising sync for %s: missing refresh token",
@@ -2352,50 +2373,110 @@ class DataExtractionService:
                 return 0
             raise
 
+        if end_date is None:
+            end_date = date.today()
+        if start_date is None:
+            start_date = end_date - timedelta(days=6)
+
+        report_types = ["sp_campaigns", "sb_campaigns", "sd_campaigns", "sp_advertised_product"]
         try:
             campaigns = client.list_campaigns(profile_id)
             await self._sync_advertising_campaigns(account, campaigns)
             await self.db.flush()
 
-            end_date = date.today()
-            start_date = end_date - timedelta(days=6)
-
-            campaign_reports = self._request_campaign_reports(client, profile_id, start_date, end_date)
-
-            asin_report_id = None
-            try:
-                asin_report_id = client.request_report(
-                    profile_id=profile_id,
-                    report_type="sp_advertised_product",
-                    date_range=(start_date, end_date),
-                )
-            except AmazonAPIError as exc:
-                logger.warning("Could not request ASIN report for %s: %s", account.account_name, exc)
-
             campaign_id_map = await self._campaign_ids_by_external_id(account)
-            metric_count = 0
-
-            for report_type, report_id in campaign_reports:
-                metric_count += await self._process_campaign_report(
-                    client, profile_id, report_type, report_id, account, campaign_id_map,
-                )
-
-            asin_count = 0
-            if asin_report_id:
-                asin_count = await self._process_asin_report(
-                    client, profile_id, asin_report_id, account, campaign_id_map,
-                )
+            metric_count, failed = await self._run_advertising_reports(
+                client, profile_id, account, campaign_id_map,
+                start_date, end_date, report_types,
+            )
         finally:
             client.close()
 
+        if failed and len(failed) == len(report_types):
+            # Partial failures are tolerable (upserts are idempotent and the
+            # next sync re-covers the window); all reports failing means no
+            # advertising data landed at all and must surface as a warning.
+            raise AmazonAPIError(
+                f"All advertising reports failed for {account.account_name} "
+                f"({start_date}..{end_date}): {', '.join(failed)}",
+                error_code="ADS_ALL_REPORTS_FAILED",
+            )
+
         await self.db.flush()
         logger.info(
-            "Synced advertising for %s: %d campaign metric rows, %d ASIN metric rows",
+            "Synced advertising for %s (%s..%s): %d metric rows%s",
             account.account_name,
+            start_date,
+            end_date,
             metric_count,
-            asin_count,
+            f", {len(failed)} report(s) failed" if failed else "",
         )
-        return metric_count + asin_count
+        return metric_count
+
+    async def backfill_advertising_history(self, account: AmazonAccount, organization=None) -> int:
+        """Backfill advertising metrics to each ad product's lookback limit.
+
+        Ads Reporting v3 serves ~95 days of Sponsored Products, ~60 of Brands
+        and ~65 of Display, max 31 days per request, so each product is walked
+        in 31-day windows backward from yesterday to its lookback bound.
+        Best-effort per window: failures are logged and skipped (upserts are
+        idempotent and the daily sync re-covers recent windows). Campaigns are
+        synced once up front, not per window."""
+        if not account.advertising_refresh_token_encrypted:
+            logger.info(
+                "Skipping advertising backfill for %s: missing refresh token",
+                account.account_name,
+            )
+            return 0
+
+        try:
+            client, profile_id = self._create_advertising_api_client(account, organization)
+        except AmazonAPIError as exc:
+            if exc.error_code in {
+                "MISSING_ADVERTISING_CLIENT_CREDENTIALS",
+                "MISSING_ADVERTISING_REFRESH_TOKEN",
+                "MISSING_ADVERTISING_PROFILE",
+            }:
+                logger.info("Skipping advertising backfill for %s: %s", account.account_name, exc)
+                return 0
+            raise
+
+        report_types_by_product = {
+            "sp": ["sp_campaigns", "sp_advertised_product"],
+            "sb": ["sb_campaigns"],
+            "sd": ["sd_campaigns"],
+        }
+        total = 0
+        windows_failed = 0
+        try:
+            campaigns = client.list_campaigns(profile_id)
+            await self._sync_advertising_campaigns(account, campaigns)
+            await self.db.flush()
+            campaign_id_map = await self._campaign_ids_by_external_id(account)
+
+            end_date = date.today() - timedelta(days=1)
+            for product, report_types in report_types_by_product.items():
+                # ponytail: -1 keeps the oldest window inside the retention limit
+                # even if Amazon counts it exclusive of today
+                start_date = date.today() - timedelta(days=ADS_LOOKBACK_DAYS[product] - 1)
+                windows = _day_windows(start_date, end_date, max_days=ADS_REPORT_MAX_WINDOW_DAYS)
+                for window_start, window_end in reversed(windows):
+                    count, failed = await self._run_advertising_reports(
+                        client, profile_id, account, campaign_id_map,
+                        window_start, window_end, report_types,
+                    )
+                    total += count
+                    if failed:
+                        windows_failed += 1
+                    await self.db.commit()
+        finally:
+            client.close()
+
+        logger.info(
+            "Advertising history backfill for %s: %d rows, %d window(s) with failures",
+            account.account_name, total, windows_failed,
+        )
+        return total
 
     async def sync_advertising_data(self, account: AmazonAccount, organization=None) -> int:
         """Backward-compatible alias for advertising sync."""

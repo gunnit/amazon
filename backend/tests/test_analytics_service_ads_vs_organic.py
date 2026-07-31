@@ -44,6 +44,8 @@ sales_module.SalesData = _TableProxy(
     "ordered_product_sales",
     "units_ordered",
     "total_order_items",
+    "shipped_revenue",
+    "shipped_units",
 )
 sys.modules["app.models.sales_data"] = sales_module
 
@@ -142,6 +144,7 @@ for module_name in (
     "app.models.amazon_account",
     "app.services.data_extraction",
     "app.services.granularity",
+    "app.services.sales_metrics",
 ):
     sys.modules.pop(module_name, None)
 
@@ -155,6 +158,9 @@ class FakeResult:
 
     def first(self):
         return self._rows[0] if self._rows else None
+
+    def one(self):
+        return self._rows[0]
 
     def scalars(self):
         return SimpleNamespace(all=lambda: self._rows)
@@ -180,6 +186,23 @@ def _ads_row(account_id, bucket_date: date, ad_sales: float):
     return SimpleNamespace(account_id=account_id, bucket_date=bucket_date, ad_sales=ad_sales)
 
 
+def _bucket_ads_row(bucket_date: date, ad_sales: float):
+    return SimpleNamespace(bucket_date=bucket_date, ad_sales=ad_sales)
+
+
+def _seller_snapshot_row(account_id, snapshot_date: date, asin_sales: float, snapshot_sales: float):
+    return SimpleNamespace(
+        account_id=account_id,
+        date=snapshot_date,
+        asin_sales=asin_sales,
+        snapshot_sales=snapshot_sales,
+    )
+
+
+def _coverage_row(ads_from=None, ads_until=None):
+    return SimpleNamespace(ads_from=ads_from, ads_until=ads_until)
+
+
 def _asin_row(asin: str, title: str, total_sales: float):
     return SimpleNamespace(asin=asin, title=title, total_sales=total_sales)
 
@@ -198,7 +221,10 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
     account_b = uuid4()
     session = FakeAsyncSession(
         [
-            [AccountType.SELLER, AccountType.SELLER],
+            [
+                _account_row(account_a, AccountType.SELLER),
+                _account_row(account_b, AccountType.SELLER),
+            ],
             [
                 _sales_row(account_a, date(2026, 3, 1), 100),
                 _sales_row(account_b, date(2026, 3, 1), 50),
@@ -219,6 +245,7 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
                 _ads_row(account_b, date(2026, 2, 27), 10),
                 _ads_row(account_a, date(2026, 2, 28), 10),
             ],
+            [_coverage_row(date(2026, 1, 15), date(2026, 3, 2))],
             [_account_row(account_a), _account_row(account_b)],
             [
                 _asin_row("B0AAA", "Alpha", 120),
@@ -235,7 +262,9 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
         date_to=date(2026, 3, 2),
     )
 
-    assert session.execute_calls == 8
+    assert session.execute_calls == 9
+    assert result["ads_data_from"] == date(2026, 1, 15)
+    assert result["ads_data_until"] == date(2026, 3, 2)
     assert [point["date"] for point in result["time_series"]] == [date(2026, 3, 1), date(2026, 3, 2)]
     assert result["time_series"][0]["total_sales"] == 150.0
     assert result["time_series"][0]["ad_sales"] == 35.0
@@ -255,11 +284,12 @@ async def test_get_ads_vs_organic_defaults_missing_ads_to_zero():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
-            [AccountType.SELLER],
+            [_account_row(account_id, AccountType.SELLER)],
             [_sales_row(account_id, date(2026, 3, 5), 100)],
             [],
             [],
             [],
+            [_coverage_row()],
             [],
         ]
     )
@@ -276,6 +306,8 @@ async def test_get_ads_vs_organic_defaults_missing_ads_to_zero():
     assert point["ad_sales"] == 0.0
     assert point["organic_sales"] == 100.0
     assert point["organic_share_pct"] == 100.0
+    assert result["ads_data_from"] is None
+    assert result["ads_data_until"] is None
 
 
 @pytest.mark.asyncio
@@ -283,7 +315,7 @@ async def test_get_ads_vs_organic_supports_week_grouping():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
-            [AccountType.SELLER],
+            [_account_row(account_id, AccountType.SELLER)],
             [
                 _sales_row(account_id, date(2026, 3, 2), 120),
                 _sales_row(account_id, date(2026, 3, 9), 80),
@@ -294,6 +326,7 @@ async def test_get_ads_vs_organic_supports_week_grouping():
             ],
             [],
             [],
+            [_coverage_row()],
             [],
         ]
     )
@@ -315,7 +348,7 @@ async def test_get_ads_vs_organic_supports_month_grouping():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
-            [AccountType.SELLER],
+            [_account_row(account_id, AccountType.SELLER)],
             [
                 _sales_row(account_id, date(2026, 3, 1), 100),
                 _sales_row(account_id, date(2026, 4, 1), 200),
@@ -326,6 +359,7 @@ async def test_get_ads_vs_organic_supports_month_grouping():
             ],
             [],
             [],
+            [_coverage_row()],
             [],
         ]
     )
@@ -347,11 +381,12 @@ async def test_get_ads_vs_organic_applies_asin_filter_and_returns_note():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
-            [AccountType.SELLER],
-            [_sales_row(account_id, date(2026, 3, 5), 90)],
-            [_ads_row(account_id, date(2026, 3, 5), 40)],
+            [_account_row(account_id, AccountType.SELLER)],
+            [_seller_snapshot_row(account_id, date(2026, 3, 5), 90, 90)],
+            [_bucket_ads_row(date(2026, 3, 5), 40)],
             [],
             [],
+            [_coverage_row(date(2026, 2, 1), date(2026, 3, 5))],
         ]
     )
 
@@ -363,11 +398,14 @@ async def test_get_ads_vs_organic_applies_asin_filter_and_returns_note():
         asin="B0TESTASIN",
     )
 
-    assert session.execute_calls == 5
+    assert session.execute_calls == 6
     assert result["asin"] == "B0TESTASIN"
     assert result["asin_breakdown"] is None
     assert result["summary"]["total_sales"]["value"] == 90.0
-    assert result["attribution_notes"]
+    assert result["summary"]["ad_sales"]["value"] == 40.0
+    assert "Sponsored Products" in result["attribution_notes"][0]
+    assert result["ads_data_from"] == date(2026, 2, 1)
+    assert result["ads_data_until"] == date(2026, 3, 5)
 
 
 @pytest.mark.asyncio
@@ -375,11 +413,12 @@ async def test_get_ads_vs_organic_normalizes_asin_filter():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
-            [AccountType.SELLER],
-            [_sales_row(account_id, date(2026, 3, 6), 25)],
-            [_ads_row(account_id, date(2026, 3, 6), 5)],
+            [_account_row(account_id, AccountType.SELLER)],
+            [_seller_snapshot_row(account_id, date(2026, 3, 6), 25, 25)],
+            [_bucket_ads_row(date(2026, 3, 6), 5)],
             [],
             [],
+            [_coverage_row()],
         ]
     )
 
@@ -391,10 +430,71 @@ async def test_get_ads_vs_organic_normalizes_asin_filter():
         asin="  b0mixed123  ",
     )
 
-    assert session.execute_calls == 5
+    assert session.execute_calls == 6
     assert result["asin"] == "B0MIXED123"
     assert result["asin_breakdown"] is None
     assert result["summary"]["ad_sales"]["value"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_asin_filter_uses_latest_full_snapshot_for_sellers():
+    account_id = uuid4()
+    session = FakeAsyncSession(
+        [
+            [_account_row(account_id, AccountType.SELLER)],
+            [
+                _seller_snapshot_row(account_id, date(2026, 3, 3), 50, 1000),
+                _seller_snapshot_row(account_id, date(2026, 3, 6), 80, 2000),
+            ],
+            [_bucket_ads_row(date(2026, 3, 2), 30)],
+            [],
+            [],
+            [_coverage_row()],
+        ]
+    )
+
+    service = AnalyticsService(session)  # type: ignore[arg-type]
+    result = await service.get_ads_vs_organic(
+        account_ids=[account_id],
+        date_from=date(2026, 3, 2),
+        date_to=date(2026, 3, 8),
+        group_by="week",
+        asin="B0TESTASIN",
+    )
+
+    point = result["time_series"][0]
+    # Snapshot at 2026-03-06 is the most complete; summing both would give 130.
+    assert point["total_sales"] == 80.0
+    assert point["ad_sales"] == 30.0
+    assert result["summary"]["total_sales"]["value"] == 80.0
+
+
+@pytest.mark.asyncio
+async def test_asin_filter_sums_vendor_rows_and_uses_by_asin_ads():
+    account_id = uuid4()
+    session = FakeAsyncSession(
+        [
+            [_account_row(account_id, AccountType.VENDOR)],
+            [SimpleNamespace(bucket_date=date(2026, 3, 1), total_sales=70)],
+            [_bucket_ads_row(date(2026, 3, 1), 45)],
+            [],
+            [],
+            [_coverage_row()],
+        ]
+    )
+
+    service = AnalyticsService(session)  # type: ignore[arg-type]
+    result = await service.get_ads_vs_organic(
+        account_ids=[account_id],
+        date_from=date(2026, 3, 1),
+        date_to=date(2026, 3, 31),
+        asin="B0TESTASIN",
+    )
+
+    assert result["group_by"] == "month"
+    point = result["time_series"][0]
+    assert point["total_sales"] == 70.0
+    assert point["ad_sales"] == 45.0
 
 
 @pytest.mark.asyncio
@@ -402,11 +502,12 @@ async def test_get_ads_vs_organic_clamps_organic_sales_when_ads_exceed_total():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
-            [AccountType.SELLER],
+            [_account_row(account_id, AccountType.SELLER)],
             [_sales_row(account_id, date(2026, 3, 8), 50)],
             [_ads_row(account_id, date(2026, 3, 8), 80)],
             [],
             [],
+            [_coverage_row()],
             [],
         ]
     )

@@ -41,6 +41,14 @@ export function formatDate(date: string | Date): string {
   })
 }
 
+export function formatLocalizedDate(date: string, language: string): string {
+  return new Date(date + 'T00:00:00').toLocaleDateString(language === 'it' ? 'it-IT' : 'en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
 export function downloadBlob(blob: Blob, filename: string) {
   const url = window.URL.createObjectURL(blob)
   const anchor = document.createElement('a')

@@ -20,7 +20,7 @@ import { FilterBar, DateRangeFilter, AccountFilter } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
 import { accountsApi, analyticsApi } from '@/services/api'
-import { formatCurrency, formatNumber, cn } from '@/lib/utils'
+import { formatCurrency, formatLocalizedDate, formatNumber, cn } from '@/lib/utils'
 import type {
   AdsConnectionState,
   AdvertisingInsights,
@@ -114,6 +114,7 @@ function CampaignTable({
   icon: React.ElementType
   emptyMessage: string
 }) {
+  const { t } = useTranslation()
   return (
     <Card>
       <CardHeader>
@@ -132,11 +133,13 @@ function CampaignTable({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
-                  <th className="pb-2 pr-4 font-medium">Campaign</th>
-                  <th className="pb-2 pr-4 font-medium">Type</th>
-                  <th className="pb-2 pr-4 font-medium">Status</th>
-                  <th className="pb-2 pr-4 font-medium text-right">Spend</th>
-                  <th className="pb-2 pr-4 font-medium text-right">Sales</th>
+                  <th className="pb-2 pr-4 font-medium">{t('reports.campaign')}</th>
+                  <th className="pb-2 pr-4 font-medium">{t('reports.context.type')}</th>
+                  <th className="pb-2 pr-4 font-medium">{t('reports.status')}</th>
+                  <th className="pb-2 pr-4 font-medium text-right">{t('reports.spend')}</th>
+                  <th className="pb-2 pr-4 font-medium text-right">{t('reports.sales')}</th>
+                  <th className="pb-2 pr-4 font-medium text-right">{t('reports.impressions')}</th>
+                  <th className="pb-2 pr-4 font-medium text-right">{t('reports.clicks')}</th>
                   <th className="pb-2 pr-4 font-medium text-right">ROAS</th>
                   <th className="pb-2 pr-4 font-medium text-right">ACoS</th>
                   <th className="pb-2 font-medium text-right">CTR</th>
@@ -150,6 +153,8 @@ function CampaignTable({
                     <td className="py-2.5 pr-4"><CampaignStateBadge state={c.state} /></td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">{formatCurrency(Number(c.spend))}</td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">{formatCurrency(Number(c.sales))}</td>
+                    <td className="py-2.5 pr-4 text-right tabular-nums">{formatNumber(Number(c.impressions))}</td>
+                    <td className="py-2.5 pr-4 text-right tabular-nums">{formatNumber(Number(c.clicks))}</td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">
                       <span className={cn(Number(c.roas) >= 1 ? 'text-emerald-600' : 'text-rose-600')}>
                         {Number(c.roas).toFixed(2)}
@@ -173,11 +178,11 @@ function CampaignTable({
 }
 
 export default function Advertising() {
-  const { t } = useTranslation()
+  const { t, language } = useTranslation()
   const { datePreset, customStartDate, customEndDate, accountIds, resetDashboard } = useFilterStore()
   const dateRange = getFilterDateRange({ datePreset, customStartDate, customEndDate })
 
-  const { data, isLoading } = useQuery<AdvertisingInsights>({
+  const { data, isLoading, isError } = useQuery<AdvertisingInsights>({
     queryKey: ['advertising-insights', dateRange, accountIds],
     queryFn: () => analyticsApi.getAdvertisingInsights({
       start_date: dateRange.start,
@@ -206,6 +211,10 @@ export default function Advertising() {
   // Nothing connected and nothing to show: explain we're waiting on Amazon Ads
   // API approval instead of rendering zeroed KPIs and empty tables.
   const showAdsAwaitingState = !hasAdsData && okAdsAccounts === 0
+  // Credentials are fine but no rows yet: either the first sync hasn't landed,
+  // or data exists outside the selected window (ads_data_from tells us which).
+  const showFirstSyncState = !hasAdsData && okAdsAccounts > 0
+  const adsDataFrom = data?.ads_data_from
 
   if (isLoading) {
     return (
@@ -253,7 +262,12 @@ export default function Advertising() {
         </Alert>
       )}
 
-      {showAdsAwaitingState ? (
+      {isError ? (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{t('advertising.loadError')}</AlertDescription>
+        </Alert>
+      ) : showAdsAwaitingState ? (
         <EmptyState
           icon={Megaphone}
           title={t('advertising.awaitingApprovalTitle')}
@@ -263,6 +277,17 @@ export default function Advertising() {
             <Link to="/accounts" className="text-sm font-medium underline">
               {t('advertising.openAccounts')}
             </Link>
+          }
+        />
+      ) : showFirstSyncState ? (
+        <EmptyState
+          icon={Megaphone}
+          title={adsDataFrom === null ? t('advertising.firstSyncTitle') : t('advertising.noDataInPeriodTitle')}
+          description={adsDataFrom === null ? t('advertising.firstSyncDesc') : t('advertising.noDataInPeriodDesc')}
+          nextStep={
+            adsDataFrom
+              ? t('advertising.dataAvailableFrom', { date: formatLocalizedDate(adsDataFrom, language) })
+              : undefined
           }
         />
       ) : (

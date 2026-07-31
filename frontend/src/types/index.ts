@@ -293,6 +293,8 @@ export interface DashboardKPIs {
   period_start: string
   period_end: string
   currency: string
+  ads_data_from?: string | null
+  ads_data_until?: string | null
 }
 
 export interface TodayMetrics {
@@ -392,6 +394,8 @@ export interface AdsVsOrganicResponse {
   granularity: 'daily' | 'monthly' | 'mixed' | 'unknown'
   asin: string | null
   attribution_notes: string[]
+  ads_data_from?: string | null
+  ads_data_until?: string | null
 }
 
 export interface TopPerformerData {
@@ -673,6 +677,8 @@ export interface AdvertisingInsights {
   top_campaigns: CampaignInsight[]
   underperforming_campaigns: CampaignInsight[]
   recommendations: AdvertisingRecommendation[]
+  ads_data_from?: string | null
+  ads_data_until?: string | null
 }
 
 export type ScheduledReportType = 'sales' | 'inventory' | 'advertising'

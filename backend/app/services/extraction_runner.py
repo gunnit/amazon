@@ -276,6 +276,52 @@ async def _backfill_history_extras(
                 logger.exception("History backfill (%s) failed for %s", label, account_name)
 
 
+async def _backfill_ads_history(account_id: UUID, session_factory) -> None:
+    """Best-effort advertising history backfill, isolated like the other
+    history extras. Runs for any account with an Ads token — sellers, vendors,
+    and ads-only accounts — and never touches the last_backfill_* status."""
+    async with session_factory() as db:
+        result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
+        account = result.scalar_one_or_none()
+        if account is None or not account.advertising_refresh_token_encrypted:
+            return
+        account_name = account.account_name
+        # Resume sweeps re-enter this path; skip when coverage already reaches
+        # the Ads retention bound so we don't re-request every report window.
+        from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
+        from app.services.data_extraction import ADS_LOOKBACK_DAYS
+
+        oldest = (
+            await db.execute(
+                select(func.min(AdvertisingMetrics.date))
+                .join(AdvertisingCampaign, AdvertisingMetrics.campaign_id == AdvertisingCampaign.id)
+                .where(AdvertisingCampaign.account_id == account_id)
+            )
+        ).scalar()
+        bound = date.today() - timedelta(days=max(ADS_LOOKBACK_DAYS.values()) - 7)
+        if oldest is not None and oldest <= bound:
+            logger.info(
+                "Skipping advertising history backfill for %s: coverage starts %s",
+                account_name, oldest,
+            )
+            return
+        service = DataExtractionService(db)
+        try:
+            organization = await service._load_organization(account)
+            count = await service.backfill_advertising_history(account, organization)
+            await db.commit()
+            logger.info(
+                "History backfill (advertising) completed for %s: %d records",
+                account_name, count,
+            )
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            logger.exception("History backfill (advertising) failed for %s", account_name)
+
+
 async def _run_sales_backfill(
     account_id: UUID, session_factory, start_date: date, end_date: date
 ) -> None:
@@ -319,10 +365,16 @@ async def _run_sales_backfill(
                 pass
             await _mark_backfill_failed(account_id, session_factory, exc)
             logger.exception("Historical sales backfill failed for %s", account_id)
-            return
+            sales_ok = False
+        else:
+            sales_ok = True
 
-    if not is_vendor:
+    if sales_ok and not is_vendor:
         await _backfill_history_extras(account_id, session_factory, start_date, end_date)
+    # Ads history is independent of the sales window (own API, own lookback
+    # caps) and must run even when the sales backfill failed — e.g. ads-only
+    # accounts that have no SP-API token at all.
+    await _backfill_ads_history(account_id, session_factory)
 
 
 async def _initial_sync_one(account_id: UUID, backfill_months: int, session_factory) -> None:

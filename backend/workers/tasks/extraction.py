@@ -280,7 +280,13 @@ def sync_advertising_data(account_id: str):
 
             service = DataExtractionService(db)
             organization = await service._load_organization(account)
-            count = await service.sync_advertising(account, organization)
+            try:
+                count = await service.sync_advertising(account, organization)
+            except AmazonAPIError as exc:
+                # keep the campaign upserts that landed before the reports failed
+                await db.commit()
+                logger.warning("Advertising sync for %s failed: %s", account_id, exc)
+                return {"records": 0, "error": str(exc)}
             await db.commit()
             return {"records": count}
 

@@ -38,7 +38,7 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { analyticsApi, accountsApi } from '@/services/api'
-import { formatCurrency, formatNumber, formatPercent, cn } from '@/lib/utils'
+import { formatCurrency, formatLocalizedDate, formatNumber, formatPercent, cn } from '@/lib/utils'
 import { AREA_FILL, CHART_PRIMARY, CHART_SERIES } from '@/lib/chart-theme'
 import { buildDashboardSearchParams, resolveDashboardScope } from '@/lib/dashboardScope'
 import { granularityForAccountTypes } from '@/lib/granularity'
@@ -318,7 +318,7 @@ function TrendingProductsList({
 }
 
 export default function Dashboard() {
-  const { t } = useTranslation()
+  const { t, language } = useTranslation()
   const { toast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedAccountId = searchParams.get('account')
@@ -816,15 +816,26 @@ export default function Dashboard() {
 
       {/* Advertising KPIs */}
       {kpis?.roas?.is_available === false ? (
-        <Alert variant="warning">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>
-            {t('advertising.notConnected')}{' '}
-            <Link to="/accounts" className="font-medium underline">
-              {t('advertising.openAccounts')}
-            </Link>
-          </AlertDescription>
-        </Alert>
+        kpis.roas.unavailable_reason === 'no_ads_data_in_period' ? (
+          <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/30 px-4 py-3 text-sm">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <p className="text-muted-foreground">
+              {t('advertising.connectedNoData')}
+              {kpis.ads_data_from &&
+                ` ${t('advertising.dataAvailableFrom', { date: formatLocalizedDate(kpis.ads_data_from, language) })}`}
+            </p>
+          </div>
+        ) : (
+          <Alert variant="warning">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              {t('advertising.notConnected')}{' '}
+              <Link to="/accounts" className="font-medium underline">
+                {t('advertising.openAccounts')}
+              </Link>
+            </AlertDescription>
+          </Alert>
+        )
       ) : (
         <div className="grid gap-4 md:grid-cols-3">
           <KPICard
