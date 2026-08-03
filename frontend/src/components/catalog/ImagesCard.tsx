@@ -12,6 +12,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { imagesApi, type ProductImage, type UploadImagesResponse } from '@/services/api'
+import { apiErrorDetail } from '@/lib/apiError'
 import { AccountPicker } from './AccountPicker'
 import { ConfirmDialog } from './ConfirmDialog'
 import type { TabProps } from './types'
@@ -66,11 +67,8 @@ export function ImagesCard(props: TabProps) {
       queryClient.invalidateQueries({ queryKey: ['catalog', 'images', accountId, asin] })
     },
     onError: (err: unknown) => {
-      const message =
-        err && typeof err === 'object' && 'response' in err
-          ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
-          : 'Error'
-      toast({ variant: 'destructive', title: 'Error', description: String(message) })
+      const message = apiErrorDetail(err, t)
+      toast({ variant: 'destructive', title: t('common.error'), description: message })
     },
   })
 
@@ -80,11 +78,8 @@ export function ImagesCard(props: TabProps) {
       queryClient.invalidateQueries({ queryKey: ['catalog', 'images', accountId, asin] })
     },
     onError: (err: unknown) => {
-      const message =
-        err && typeof err === 'object' && 'response' in err
-          ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
-          : 'Error'
-      toast({ variant: 'destructive', title: 'Error', description: String(message) })
+      const message = apiErrorDetail(err, t)
+      toast({ variant: 'destructive', title: t('common.error'), description: message })
     },
   })
 

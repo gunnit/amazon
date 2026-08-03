@@ -18,6 +18,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/store/authStore'
 import { authApi, exportsApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
+import { apiErrorDetail } from '@/lib/apiError'
 import { GoogleSheetsIntegration } from '@/components/settings/GoogleSheetsIntegration'
 import { cn } from '@/lib/utils'
 import { eyebrow, fieldInput, ghostButton, inkButton, tabTrigger } from '@/lib/editorial'
@@ -167,9 +168,7 @@ export default function Settings() {
       useAuthStore.getState().setUser(updatedUser)
       toast({ title: t('settings.profileUpdated') })
     } catch (error: unknown) {
-      const message =
-        (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        t('settings.profileFailed')
+      const message = apiErrorDetail(error, t) || t('settings.profileFailed')
       toast({
         variant: 'destructive',
         title: message,
@@ -186,9 +185,7 @@ export default function Settings() {
       useAuthStore.getState().setOrganization(updated)
       toast({ title: t('settings.orgUpdated') })
     } catch (error: unknown) {
-      const message =
-        (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        t('settings.orgUpdateFailed')
+      const message = apiErrorDetail(error, t) || t('settings.orgUpdateFailed')
       toast({
         variant: 'destructive',
         title: message,
@@ -233,9 +230,7 @@ export default function Settings() {
       setPasswords({ currentPassword: '', newPassword: '', confirmPassword: '' })
       toast({ title: t('settings.passwordChanged') })
     } catch (error: unknown) {
-      const message =
-        (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        t('settings.passwordFailed')
+      const message = apiErrorDetail(error, t) || t('settings.passwordFailed')
       toast({ variant: 'destructive', title: message })
     } finally {
       setIsSaving(false)

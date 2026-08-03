@@ -7,6 +7,7 @@ const en: Record<string, string> = {
   'common.reset': 'Reset',
   'common.clear': 'Clear',
   'common.loading': 'Loading...',
+  'common.error': 'Error',
   'common.email': 'Email',
   'common.password': 'Password',
   'common.revenue': 'Revenue',
@@ -438,6 +439,25 @@ const en: Record<string, string> = {
   'reports.asin': 'ASIN',
   'reports.sku': 'SKU',
   'reports.product': 'Product',
+
+  // Backend HTTPException details mapped by lib/apiError.ts
+  'apiError.accountNotFound': 'Account not found, or it does not belong to the organization.',
+  'apiError.productNotFound': 'Product not found.',
+  'apiError.reportNotFound': 'Report not found.',
+  'apiError.competitorNotFound': 'Competitor not found.',
+  'apiError.competitorDuplicate': 'This competitor is already tracked.',
+  'apiError.invalidAsin': 'Invalid ASIN format.',
+  'apiError.reportNotCompleted': 'Only completed reports can be refreshed.',
+  'apiError.reportNoCompetitors': 'The report has no competitor data to refresh.',
+  'apiError.artifactNotReady': 'The report file is not ready yet.',
+  'apiError.missingCredentials': 'Amazon credentials are missing for this account.',
+  'apiError.missingAdsCredentials': 'Amazon Ads credentials are required for this account.',
+  'apiError.invalidDateRange': 'The start date must be on or before the end date.',
+  'apiError.rateLimited': 'Amazon rate-limited the request; try again in a few seconds.',
+  'apiError.noFiles': 'No files uploaded.',
+  'apiError.emailTaken': 'This email is already registered.',
+  'apiError.imageStorageUnavailable': 'Image management is unavailable: storage is not configured.',
+  'apiError.sellerOnly': 'This feature is available for Seller Central accounts only.',
 
   // Job progress steps (backend English literals mapped by lib/progressSteps.ts)
   'progress.queued': 'Queued',

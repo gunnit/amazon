@@ -13,6 +13,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { catalogApi } from '@/services/api'
+import { apiErrorDetail } from '@/lib/apiError'
 import { AccountPicker } from './AccountPicker'
 import { ConfirmDialog } from './ConfirmDialog'
 import type { AvailabilityResult, TabProps } from './types'
@@ -53,14 +54,11 @@ export function AvailabilityCard(props: TabProps) {
       toast({ title: t('catalog.availability.enabled') })
     },
     onError: (err: unknown) => {
-      const message =
-        err && typeof err === 'object' && 'response' in err
-          ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
-          : 'Error'
+      const message = apiErrorDetail(err, t)
       toast({
         variant: 'destructive',
         title: t('catalog.availability.errorTitle'),
-        description: String(message),
+        description: message,
       })
     },
   })
@@ -72,14 +70,11 @@ export function AvailabilityCard(props: TabProps) {
       toast({ title: t('catalog.availability.disabled') })
     },
     onError: (err: unknown) => {
-      const message =
-        err && typeof err === 'object' && 'response' in err
-          ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
-          : 'Error'
+      const message = apiErrorDetail(err, t)
       toast({
         variant: 'destructive',
         title: t('catalog.availability.errorTitle'),
-        description: String(message),
+        description: message,
       })
     },
   })

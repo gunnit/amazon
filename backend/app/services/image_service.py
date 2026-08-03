@@ -28,6 +28,12 @@ from app.services.catalog_service import CatalogOperationError
 
 logger = logging.getLogger(__name__)
 
+# Storage failures (missing credentials, bucket errors) reach the client as a
+# toast; the boto message leaks bucket/credential internals and is English, so
+# only the cause is logged and the client gets a stable message.
+IMAGE_STORAGE_UNAVAILABLE = "Image storage is unavailable"
+
+
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB per Amazon's spec
 MAX_ALTERNATE_IMAGES = 8
@@ -99,7 +105,7 @@ class ImageService:
             self._s3.put_object(**put_kwargs)
         except (BotoCoreError, ClientError) as exc:
             logger.exception("Failed to upload image to S3: %s", key)
-            raise CatalogOperationError(f"S3 upload failed: {exc}") from exc
+            raise CatalogOperationError(IMAGE_STORAGE_UNAVAILABLE) from exc
         return key
 
     def _list_keys(self, organization_id: UUID, account_id: UUID, asin: str) -> List[str]:
@@ -108,7 +114,7 @@ class ImageService:
             response = self._s3.list_objects_v2(Bucket=settings.AWS_S3_BUCKET, Prefix=prefix)
         except (BotoCoreError, ClientError) as exc:
             logger.exception("Failed to list S3 objects for %s", prefix)
-            raise CatalogOperationError(f"S3 list failed: {exc}") from exc
+            raise CatalogOperationError(IMAGE_STORAGE_UNAVAILABLE) from exc
         return [obj["Key"] for obj in response.get("Contents", [])]
 
     def _delete_key(self, key: str) -> None:
@@ -116,7 +122,7 @@ class ImageService:
             self._s3.delete_object(Bucket=settings.AWS_S3_BUCKET, Key=key)
         except (BotoCoreError, ClientError) as exc:
             logger.exception("Failed to delete S3 object: %s", key)
-            raise CatalogOperationError(f"S3 delete failed: {exc}") from exc
+            raise CatalogOperationError(IMAGE_STORAGE_UNAVAILABLE) from exc
 
     # ------------------------------------------------------------------
     # DB helpers (mirrors CatalogService patterns)

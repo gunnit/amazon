@@ -32,6 +32,7 @@ import {
 import { useToast } from '@/components/ui/use-toast'
 import { accountsApi, catalogApi, recommendationsApi, type StrategicRecommendation } from '@/services/api'
 import { useTranslation } from '@/i18n'
+import { apiErrorDetail } from '@/lib/apiError'
 import type { AmazonAccount, Product } from '@/types'
 
 const CATEGORIES: StrategicRecommendation['category'][] = [
@@ -210,10 +211,11 @@ export default function Recommendations() {
         setAiUnavailable(true)
         return
       }
-      const message = err && typeof err === 'object' && 'response' in err
-        ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
-        : 'Error'
-      toast({ variant: 'destructive', title: 'Error', description: String(message) })
+      toast({
+        variant: 'destructive',
+        title: t('common.error'),
+        description: apiErrorDetail(err, t),
+      })
     },
   })
 

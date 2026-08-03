@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import axios from 'axios'
 import { AlertTriangle, Download, History, Loader2, Mail, Pencil, Play, Plus, Trash2 } from 'lucide-react'
 
 import { useAuthStore } from '@/store/authStore'
@@ -17,6 +16,7 @@ import type {
 import { downloadBlob, formatDate } from '@/lib/utils'
 import { translateProgressStep } from '@/lib/progressSteps'
 import { useTranslation } from '@/i18n'
+import { apiErrorDetail } from '@/lib/apiError'
 import { useToast } from '@/components/ui/use-toast'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -250,11 +250,10 @@ export function ScheduledReportsPanel() {
       toast({ title: t('scheduledReports.saved') })
     },
     onError: (error) => {
-      const detail = axios.isAxiosError(error) ? error.response?.data?.detail : null
       toast({
         variant: 'destructive',
         title: t('scheduledReports.saveFailed'),
-        description: typeof detail === 'string' ? detail : t('scheduledReports.saveFailedDesc'),
+        description: apiErrorDetail(error, t) ?? t('scheduledReports.saveFailedDesc'),
       })
     },
   })

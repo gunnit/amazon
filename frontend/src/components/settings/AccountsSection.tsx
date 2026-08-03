@@ -54,6 +54,7 @@ import { cn, formatDate } from '@/lib/utils'
 import { isPlaceholderAccountName } from '@/lib/accountNaming'
 import { accountsApi, authApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
+import { apiErrorDetail } from '@/lib/apiError'
 import type {
   AccountSummary,
   AccountType,
@@ -303,11 +304,10 @@ function AccountDialog({
       toast({ title: t('accounts.adsProfilesLoaded') })
     },
     onError: (error: unknown) => {
-      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       toast({
         variant: 'destructive',
         title: t('accounts.adsProfilesFailed'),
-        description: detail,
+        description: apiErrorDetail(error, t),
       })
     },
   })
@@ -553,8 +553,7 @@ function ConnectAmazonDialog({
       window.location.href = consent_url
     },
     onError: (error: unknown) => {
-      const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      toast({ variant: 'destructive', title: t('accounts.oauthStartFailed'), description: detail })
+      toast({ variant: 'destructive', title: t('accounts.oauthStartFailed'), description: apiErrorDetail(error, t) })
     },
   })
 

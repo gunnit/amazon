@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { catalogApi } from '@/services/api'
+import { apiErrorDetail } from '@/lib/apiError'
 import { AccountPicker } from './AccountPicker'
 import { BulkResultTable } from './BulkResultTable'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -77,14 +78,11 @@ export function PricesCard(props: TabProps) {
       })
     },
     onError: (err: unknown) => {
-      const message =
-        err && typeof err === 'object' && 'response' in err
-          ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Error')
-          : 'Error'
+      const message = apiErrorDetail(err, t)
       toast({
         variant: 'destructive',
         title: t('catalog.prices.errorTitle'),
-        description: String(message),
+        description: message,
       })
     },
   })

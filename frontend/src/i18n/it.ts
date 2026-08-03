@@ -7,6 +7,7 @@ const it: Record<string, string> = {
   'common.reset': 'Reimposta',
   'common.clear': 'Cancella',
   'common.loading': 'Caricamento...',
+  'common.error': 'Errore',
   'common.email': 'Email',
   'common.password': 'Password',
   'common.revenue': 'Fatturato',
@@ -438,6 +439,25 @@ const it: Record<string, string> = {
   'reports.asin': 'ASIN',
   'reports.sku': 'SKU',
   'reports.product': 'Prodotto',
+
+  // Backend HTTPException details mapped by lib/apiError.ts
+  'apiError.accountNotFound': 'Account non trovato o non appartenente all\'organizzazione.',
+  'apiError.productNotFound': 'Prodotto non trovato.',
+  'apiError.reportNotFound': 'Report non trovato.',
+  'apiError.competitorNotFound': 'Competitor non trovato.',
+  'apiError.competitorDuplicate': 'Questo competitor è già monitorato.',
+  'apiError.invalidAsin': 'Formato ASIN non valido.',
+  'apiError.reportNotCompleted': 'Solo i report completati possono essere aggiornati.',
+  'apiError.reportNoCompetitors': 'Il report non contiene dati competitor da aggiornare.',
+  'apiError.artifactNotReady': 'Il file del report non è ancora pronto.',
+  'apiError.missingCredentials': 'Credenziali Amazon mancanti per questo account.',
+  'apiError.missingAdsCredentials': 'Servono credenziali Amazon Ads per questo account.',
+  'apiError.invalidDateRange': 'La data di inizio deve essere precedente o uguale alla data di fine.',
+  'apiError.rateLimited': 'Amazon ha limitato le richieste: riprova tra qualche secondo.',
+  'apiError.noFiles': 'Nessun file caricato.',
+  'apiError.emailTaken': 'Questa email è già registrata.',
+  'apiError.imageStorageUnavailable': 'Gestione immagini non disponibile: archiviazione non configurata.',
+  'apiError.sellerOnly': 'Funzione disponibile solo per gli account Seller Central.',
 
   // Job progress steps (backend English literals mapped by lib/progressSteps.ts)
   'progress.queued': 'In coda',

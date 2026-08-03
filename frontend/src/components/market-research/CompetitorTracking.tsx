@@ -27,6 +27,7 @@ import { CHART_PRIMARY } from '@/lib/chart-theme'
 import { formatEur } from '@/lib/market-research'
 import { formatDate, formatNumber } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
+import { apiErrorDetail } from '@/lib/apiError'
 import CompetitorTable from './CompetitorTable'
 import type {
   CompetitorHistoryResponse,
@@ -161,7 +162,7 @@ export default function CompetitorTracking({ selectedAccount, products }: Compet
         title: isConflict
           ? t('competitorTracking.alreadyTracked')
           : t('competitorTracking.addFailed'),
-        description: isConflict ? undefined : err?.response?.data?.detail,
+        description: isConflict ? undefined : apiErrorDetail(err, t),
       })
     },
   })
