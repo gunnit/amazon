@@ -1934,6 +1934,29 @@ class SPAPIClient:
         logger.info(f"Vendor sales report returned data keys: {list(report_data.keys()) if isinstance(report_data, dict) else 'non-dict'}")
         return report_data if isinstance(report_data, dict) else {}
 
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_vendor_inventory_report(
+        self,
+        start_date: date,
+        end_date: date,
+        distributor_view: str = "MANUFACTURING",
+    ) -> Dict[str, Any]:
+        """Get vendor inventory data via GET_VENDOR_INVENTORY_REPORT.
+
+        The WEEK period only accepts whole Sunday→Saturday windows; anything
+        else ends FATAL with "prohibited date range" (verified live 2026-08-01)."""
+        report_data = self.request_and_download_report(
+            report_type="GET_VENDOR_INVENTORY_REPORT",
+            start_date=start_date,
+            end_date=end_date,
+            report_options={
+                "reportPeriod": "WEEK",
+                "sellingProgram": "RETAIL",
+                "distributorView": distributor_view,
+            },
+        )
+        return self._report_json_payload(report_data)
+
     # ------------------------------------------------------------------
     # Brand Analytics (Brand Registry) — search terms + market basket
     # ------------------------------------------------------------------

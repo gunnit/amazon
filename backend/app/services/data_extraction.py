@@ -43,6 +43,14 @@ VENDOR_SALES_FALLBACK_MESSAGE = (
 # reporting period is never requested.
 VENDOR_REPORT_LAG_DAYS = 4
 
+
+def vendor_inventory_week(today: date) -> tuple[date, date]:
+    """Last complete Sunday→Saturday week; GET_VENDOR_INVENTORY_REPORT with
+    reportPeriod=WEEK rejects any other window as a prohibited date range."""
+    days_back = (today.weekday() - 5) % 7 or 7
+    end = today - timedelta(days=days_back)
+    return end - timedelta(days=6), end
+
 # Pause between windows during a historical backfill to avoid throttling the
 # vendor sales report API with rapid back-to-back requests.
 VENDOR_BACKFILL_WINDOW_PAUSE_SECONDS = 3.0
@@ -528,7 +536,11 @@ class DataExtractionService:
                         warning_messages.append(VENDOR_SALES_FALLBACK_MESSAGE)
                         warning_codes.append(VENDOR_SALES_FALLBACK_WARNING)
                     await self._touch_sync(account)
-                    inventory_count = 0  # Vendors don't use FBA inventory
+                    inventory_count = await _run_optional_step(
+                        "Inventory",
+                        lambda: self.sync_vendor_inventory(account, organization),
+                    )
+                    await self._touch_sync(account)
                     orders_count = 0
                     returns_count = 0
                     advertising_count = await _run_optional_step(
@@ -1768,6 +1780,49 @@ class DataExtractionService:
     async def sync_inventory_data(self, account: AmazonAccount, organization=None) -> int:
         """Backward-compatible alias for inventory sync."""
         return await self.sync_inventory(account, organization)
+
+    async def sync_vendor_inventory(self, account: AmazonAccount, organization=None) -> int:
+        """Sync vendor inventory from GET_VENDOR_INVENTORY_REPORT.
+
+        One snapshot per ASIN for the last complete Sunday→Saturday week,
+        stored on the week's end date. FBA-shaped columns are reused with the
+        closest vendor semantics: fulfillable = sellable on-hand units,
+        reserved = unsellable on-hand units, inbound working = open PO units.
+        """
+        client = self._create_sp_api_client(account, organization)
+        week_start, week_end = vendor_inventory_week(date.today())
+        payload = client.get_vendor_inventory_report(week_start, week_end)
+        rows = payload.get("inventoryByAsin") or []
+
+        count = 0
+        for row in rows:
+            asin = (row.get("asin") or "").strip()
+            if not asin:
+                continue
+            sellable = int(row.get("sellableOnHandInventoryUnits") or 0)
+            unsellable = int(row.get("unsellableOnHandInventoryUnits") or 0)
+            open_po = int(row.get("openPurchaseOrderUnits") or 0)
+            await self._upsert_inventory_record({
+                "account_id": account.id,
+                "snapshot_date": week_end,
+                "asin": asin,
+                "sku": None,
+                "fnsku": None,
+                "afn_fulfillable_quantity": sellable,
+                "afn_inbound_working_quantity": open_po,
+                "afn_inbound_shipped_quantity": 0,
+                "afn_reserved_quantity": unsellable,
+                "afn_total_quantity": sellable + unsellable,
+                "mfn_fulfillable_quantity": 0,
+            })
+            count += 1
+
+        await self.db.flush()
+        logger.info(
+            "Synced %d vendor inventory rows for %s (week %s..%s)",
+            count, account.account_name, week_start, week_end,
+        )
+        return count
 
     # ---- Products ----
 

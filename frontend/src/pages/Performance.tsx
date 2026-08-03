@@ -2132,8 +2132,7 @@ function InventarioTab({ active, accountIds }: TabProps) {
     accountIds.length > 0
       ? inventoryAccounts.filter((account) => accountIds.includes(account.id))
       : inventoryAccounts
-  const sellerInventoryAccounts = scopedInventoryAccounts.filter((account) => account.account_type === 'seller')
-  const inventoryErrorAccounts = sellerInventoryAccounts.filter(
+  const inventoryErrorAccounts = scopedInventoryAccounts.filter(
     (account) =>
       account.sync_error_message &&
       account.sync_error_message.toLowerCase().includes('inventory'),
@@ -2141,11 +2140,9 @@ function InventarioTab({ active, accountIds }: TabProps) {
   const inventoryEmptyMessage =
     inventoryErrorAccounts.length > 0
       ? t('reports.inventoryUnavailable')
-      : scopedInventoryAccounts.length > 0 && sellerInventoryAccounts.length === 0
-      ? t('reports.inventorySellerOnly')
       : reportsLowStockOnly
       ? t('reports.noLowStock')
-      : sellerInventoryAccounts.length > 0
+      : scopedInventoryAccounts.length > 0
       ? t('reports.inventoryUnavailableGeneric')
       : t('reports.noInventory')
   const inventoryDetailMessage =
