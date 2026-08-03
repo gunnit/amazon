@@ -38,7 +38,7 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { analyticsApi, accountsApi } from '@/services/api'
-import { formatCurrency, formatLocalizedDate, formatNumber, formatPercent, formatRatio, formatTrendPercent, cn } from '@/lib/utils'
+import { formatCurrency, formatDecimal, formatLocalizedDate, formatNumber, formatPercent, formatRatio, formatTrendPercent, cn } from '@/lib/utils'
 import { AREA_FILL, CHART_PRIMARY, CHART_SERIES } from '@/lib/chart-theme'
 import { buildDashboardSearchParams, resolveDashboardScope } from '@/lib/dashboardScope'
 import { granularityForAccountTypes } from '@/lib/granularity'
@@ -87,7 +87,7 @@ function KPICard({
     format === 'currency'
       ? formatCurrency(value, currency)
       : format === 'percent'
-      ? `${value.toFixed(1)}%`
+      ? `${formatDecimal(value, 1)}%`
       : format === 'ratio'
       ? formatRatio(value)
       : formatNumber(value)

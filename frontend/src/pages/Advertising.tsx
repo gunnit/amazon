@@ -169,12 +169,14 @@ function CampaignTable({
                     <td className="py-2.5 pr-4 text-right tabular-nums">{formatNumber(Number(c.impressions))}</td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">{formatNumber(Number(c.clicks))}</td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">
-                      {delivered ? (
+                      {!delivered ? (
+                        '-'
+                      ) : Number(c.sales) === 0 ? (
+                        <span className="text-rose-600">{t('advertising.acosNotAvailable')}</span>
+                      ) : (
                         <span className={cn(Number(c.roas) >= 1 ? 'text-emerald-600' : 'text-rose-600')}>
                           {formatDecimal(Number(c.roas))}
                         </span>
-                      ) : (
-                        '-'
                       )}
                     </td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">

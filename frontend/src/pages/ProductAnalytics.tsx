@@ -471,7 +471,9 @@ export default function ProductAnalytics() {
                     <div className="rounded-lg border p-4">
                       <p className="text-sm text-muted-foreground">{t('analytics.returns.topReason')}</p>
                       <p className="mt-2 text-2xl font-bold">
-                        {returnsData?.summary.top_reason && returnsData.summary.top_reason !== 'Unknown'
+                        {!returnsData?.summary.total_returns
+                          ? '—'
+                          : returnsData.summary.top_reason && returnsData.summary.top_reason !== 'Unknown'
                           ? returnsData.summary.top_reason
                           : t('analytics.returns.unknownReason')}
                       </p>
