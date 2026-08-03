@@ -12,6 +12,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Calendar } from '@/components/ui/calendar'
 import { useFilterStore } from '@/store/filterStore'
+import { formatLocalizedDate } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 import type { DatePreset } from '@/store/filterStore'
 import type { DateRange } from 'react-day-picker'
@@ -36,7 +37,7 @@ export function DateRangeFilter() {
   // than seeding it with the already-applied range) guarantees the first click
   // starts a new range instead of extending the previous one.
   const [pendingRange, setPendingRange] = useState<DateRange | undefined>(undefined)
-  const { t } = useTranslation()
+  const { t, language } = useTranslation()
 
   const openCalendar = () => {
     setPendingRange(undefined)
@@ -83,7 +84,7 @@ export function DateRangeFilter() {
 
   const displayLabel =
     datePreset === 'custom' && customStartDate && customEndDate
-      ? `${format(new Date(customStartDate + 'T00:00:00'), 'MMM d, yyyy')} - ${format(new Date(customEndDate + 'T00:00:00'), 'MMM d, yyyy')}`
+      ? `${formatLocalizedDate(customStartDate, language)} - ${formatLocalizedDate(customEndDate, language)}`
       : undefined
 
   const calendarFrom = pendingRange?.from

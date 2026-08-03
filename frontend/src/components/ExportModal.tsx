@@ -25,7 +25,7 @@ import { Calendar } from '@/components/ui/calendar'
 import { useToast } from '@/components/ui/use-toast'
 import { accountsApi, exportsApi } from '@/services/api'
 import { GoogleSheetsExportButton } from '@/components/GoogleSheetsExportButton'
-import { downloadBlob } from '@/lib/utils'
+import { downloadBlob, formatLocalizedDate } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 import type { AmazonAccount } from '@/types'
 import type { DateRange } from 'react-day-picker'
@@ -310,7 +310,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
 
   const dateDisplayLabel =
     datePreset === 'custom' && customStartDate && customEndDate
-      ? `${format(new Date(customStartDate + 'T00:00:00'), 'MMM d')} - ${format(new Date(customEndDate + 'T00:00:00'), 'MMM d')}`
+      ? `${formatLocalizedDate(customStartDate, uiLanguage)} - ${formatLocalizedDate(customEndDate, uiLanguage)}`
       : undefined
   const dateRange = computeDateRange(datePreset, customStartDate, customEndDate)
 
@@ -440,7 +440,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
               <PopoverTrigger asChild>
                 <Button variant="outline" size="sm" className="w-full h-9 text-xs">
                   {customStartDate && customEndDate
-                    ? `${format(new Date(customStartDate + 'T00:00:00'), 'MMM d, yyyy')} - ${format(new Date(customEndDate + 'T00:00:00'), 'MMM d, yyyy')}`
+                    ? `${formatLocalizedDate(customStartDate, uiLanguage)} - ${formatLocalizedDate(customEndDate, uiLanguage)}`
                     : t('filter.pickDates')}
                 </Button>
               </PopoverTrigger>

@@ -11,7 +11,7 @@ import {
 } from 'recharts'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { cn, formatCurrency, formatDate, formatNumber, formatRatio } from '@/lib/utils'
+import { cn, formatCurrency, formatDate, formatDecimal, formatNumber, formatRatio } from '@/lib/utils'
 import { CHART_NEUTRAL, CHART_PRIMARY } from '@/lib/chart-theme'
 import { useTranslation } from '@/i18n'
 import type { ComparisonDailyPoint, ComparisonMetric, ComparisonResponse } from '@/types'
@@ -26,7 +26,7 @@ function formatMetricValue(metric: ComparisonMetric, value: number | null) {
   }
 
   if (metric.format === 'percent') {
-    return `${value.toFixed(1)}%`
+    return `${formatDecimal(value, 1)}%`
   }
 
   if (metric.format === 'ratio') {
@@ -64,7 +64,7 @@ function MetricTrend({
       )}
     >
       <Icon className="h-3.5 w-3.5" />
-      {Math.abs(changePercent).toFixed(1)}%
+      {formatDecimal(Math.abs(changePercent), 1)}%
     </span>
   )
 }

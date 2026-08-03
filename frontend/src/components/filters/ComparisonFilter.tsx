@@ -14,6 +14,7 @@ import { Calendar } from '@/components/ui/calendar'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useFilterStore } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
+import { formatLocalizedDate } from '@/lib/utils'
 import type { ComparisonMode, ComparisonPreset } from '@/store/filterStore'
 import type { DateRange } from 'react-day-picker'
 
@@ -39,7 +40,7 @@ function ComparisonDateRangeButton({
   range: DraftRange | null
   onChange: (range: DraftRange) => void
 }) {
-  const { t } = useTranslation()
+  const { t, language } = useTranslation()
   const [open, setOpen] = useState(false)
   // Track in-progress selection so the first click "sticks" before the user
   // picks the closing date. Without this, react-day-picker fires onSelect
@@ -76,7 +77,7 @@ function ComparisonDateRangeButton({
         <Button variant="outline" size="sm" className="h-9 min-w-[185px] justify-start text-xs">
           <CalendarRange className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
           {range
-            ? `${label}: ${format(new Date(range.start + 'T00:00:00'), 'MMM d, yyyy')} - ${format(new Date(range.end + 'T00:00:00'), 'MMM d, yyyy')}`
+            ? `${label}: ${formatLocalizedDate(range.start, language)} - ${formatLocalizedDate(range.end, language)}`
             : `${label}: ${t('filter.pickDates')}`}
         </Button>
       </PopoverTrigger>

@@ -541,6 +541,7 @@ const en: Record<string, string> = {
   'scheduledReports.dayOfMonth': 'Day of Month',
   'scheduledReports.time': 'Time',
   'scheduledReports.timezone': 'Timezone',
+  'scheduledReports.notScheduled': 'Not scheduled',
   'scheduledReports.accounts': 'Accounts',
   'scheduledReports.accountsHint': 'Leave all accounts unselected to deliver an org-wide report.',
   'scheduledReports.recipientsLabel': 'Recipients',

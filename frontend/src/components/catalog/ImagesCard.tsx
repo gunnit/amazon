@@ -233,7 +233,7 @@ export function ImagesCard(props: TabProps) {
         <ConfirmDialog
           open={confirmOpen}
           onOpenChange={setConfirmOpen}
-          title={t('catalog.images.confirmPushTitle')}
+          title={t('catalog.images.confirmPushTitle', { n: stagedFiles.length })}
           description={t('catalog.images.confirmPushBody', {
             n: stagedFiles.length,
             asin,

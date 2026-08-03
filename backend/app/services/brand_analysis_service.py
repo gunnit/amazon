@@ -3054,17 +3054,26 @@ def _emit_terminal_notification_factory(session_factory):
     the job.
     """
 
-    async def _emit(*, organization_id, account_id, brand_name: str, status: str) -> None:
+    async def _emit(*, organization_id, account_id, brand_name: str, status: str, language: str = "it") -> None:
         from app.models.alert import Alert
 
+        it = str(language or "").lower().startswith("it")
         if status in {"completed", "completed_with_limitations"}:
             alert_type = BRAND_ANALYSIS_READY_ALERT_TYPE
             severity = "info"
-            message = f"Brand analysis for {brand_name} is ready."
+            message = (
+                f"L'analisi brand per {brand_name} è pronta."
+                if it
+                else f"Brand analysis for {brand_name} is ready."
+            )
         elif status == "failed":
             alert_type = BRAND_ANALYSIS_FAILED_ALERT_TYPE
             severity = "critical"
-            message = f"Brand analysis for {brand_name} failed."
+            message = (
+                f"L'analisi brand per {brand_name} non è riuscita."
+                if it
+                else f"Brand analysis for {brand_name} failed."
+            )
         else:
             return
 
@@ -3581,6 +3590,7 @@ def process_brand_analysis_job(job_id: str) -> None:
                     account_id=job.account_id,
                     brand_name=job.brand_name,
                     status=job.status,
+                    language=job.language,
                 )
             except Exception as exc:
                 logger.exception("Brand analysis job %s failed", job_id)
@@ -3604,6 +3614,7 @@ def process_brand_analysis_job(job_id: str) -> None:
                                 "account_id": failed_job.account_id,
                                 "brand_name": failed_job.brand_name,
                                 "status": "failed",
+                                "language": failed_job.language,
                             }
                         failed_job.progress_pct = 100
                         failed_job.completed_at = datetime.utcnow()

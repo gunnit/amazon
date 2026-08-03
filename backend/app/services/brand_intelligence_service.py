@@ -961,7 +961,7 @@ async def _emit_ready_alert(
 
     alert_type = BRAND_INTELLIGENCE_READY_ALERT_TYPE
     dedup_key = f"{alert_type}:{report_id}"
-    message = f"Weekly Brand Intelligence for {brand_label} is ready."
+    message = f"Il report settimanale di Brand Intelligence per {brand_label} è pronto."
     now = datetime.utcnow()
 
     async with db_session.AsyncSessionLocal() as ndb:
