@@ -12,8 +12,15 @@ function orderedSections(report: BrandIntelligenceReport) {
   )
 }
 
+const STALE_AFTER_DAYS = 14
+const FALLBACK_MODEL = 'deterministic-fallback'
+
 export function ReportReader({ report }: { report: BrandIntelligenceReport }) {
   const { t } = useTranslation()
+  const ageDays = report.generated_at
+    ? (Date.now() - new Date(report.generated_at).getTime()) / 86_400_000
+    : 0
+  const isStale = ageDays > STALE_AFTER_DAYS
   // Filter empty sections here so the editorial numbering stays contiguous.
   const sections = orderedSections(report).filter(
     (section) => section.narrative || section.items.length > 0,
@@ -29,6 +36,16 @@ export function ReportReader({ report }: { report: BrandIntelligenceReport }) {
 
       {/* Colophon */}
       <footer className="border-t-2 border-foreground pt-4">
+        {isStale ? (
+          <p className="max-w-3xl text-xs leading-5 text-amber-700 dark:text-amber-400">
+            {t('brandIntelligence.footer.stale', { days: Math.round(ageDays) })}
+          </p>
+        ) : null}
+        {report.model === FALLBACK_MODEL ? (
+          <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
+            {t('brandIntelligence.footer.fallbackNotice')}
+          </p>
+        ) : null}
         {report.coverage_note ? (
           <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
             {report.coverage_note}
@@ -43,7 +60,11 @@ export function ReportReader({ report }: { report: BrandIntelligenceReport }) {
           {report.model ? (
             <>
               <span aria-hidden="true">·</span>
-              <span>{t('brandIntelligence.footer.model', { model: report.model })}</span>
+              <span>
+                {report.model === FALLBACK_MODEL
+                  ? t('brandIntelligence.footer.modelFallback')
+                  : t('brandIntelligence.footer.model', { model: report.model })}
+              </span>
             </>
           ) : null}
           <span aria-hidden="true" className="text-foreground">

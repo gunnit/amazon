@@ -615,8 +615,8 @@ export const analyticsApi = {
 
 // Forecasts API
 export const forecastsApi = {
-  list: async (): Promise<Forecast[]> => {
-    const response = await api.get('/forecasts')
+  list: async (account_ids?: string[]): Promise<Forecast[]> => {
+    const response = await api.get('/forecasts', { params: { account_ids } })
     return response.data
   },
 

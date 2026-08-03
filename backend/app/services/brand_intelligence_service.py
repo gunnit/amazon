@@ -49,15 +49,20 @@ ANTHROPIC_MODEL = "claude-sonnet-4-6"
 FALLBACK_MODEL = "deterministic-fallback"
 
 # Section taxonomy is fixed by the API contract; the frontend renders by key.
+# The client-facing platform is Italian; the report is generated in Italian.
 SECTION_DEFS: List[Tuple[str, str]] = [
-    ("market_category", "Market & Category"),
-    ("brand_evolution", "Brand Evolution"),
-    ("competitor_activity", "Competitor Activity"),
-    ("opportunities", "Opportunities"),
-    ("risks", "Risks"),
-    ("product_trends", "Product Trends"),
-    ("strategic_recommendations", "Strategic Recommendations"),
+    ("market_category", "Mercato e Categoria"),
+    ("brand_evolution", "Evoluzione del Brand"),
+    ("competitor_activity", "Attività Competitor"),
+    ("opportunities", "Opportunità"),
+    ("risks", "Rischi"),
+    ("product_trends", "Trend Prodotto"),
+    ("strategic_recommendations", "Raccomandazioni Strategiche"),
 ]
+
+SOURCE_INTERNAL_SALES = "Vendite interne (Amazon)"
+SOURCE_INTERNAL_ADS = "Pubblicità interna (Amazon Ads)"
+SOURCE_COVERAGE_GAP = "Dato non disponibile"
 SECTION_KEYS = [key for key, _ in SECTION_DEFS]
 
 BRAND_INTELLIGENCE_READY_ALERT_TYPE = "brand_intelligence_ready"
@@ -398,31 +403,35 @@ def diff_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 # Pipeline stage 3: generate (LLM with deterministic fallback)
 # --------------------------------------------------------------------------
 def _fmt_eur(value: Any) -> str:
-    return f"EUR {_round(value):,.2f}"
+    formatted = f"{_round(value):,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+    return f"{formatted} €"
 
 
 def _fmt_pct(value: Any) -> str:
     if value is None:
-        return "new"
-    return f"{float(value):+.1f}%"
+        return "nuovo"
+    return f"{float(value):+.1f}%".replace(".", ",")
 
 
 def build_exec_summary(brand_label: str, diff: Dict[str, Any]) -> Dict[str, Any]:
     kpis_diff = diff.get("kpis") or {}
     rev = kpis_diff.get("revenue") or {}
     rev_delta = rev.get("delta_percent")
-    direction = "up" if (rev_delta or 0) > 0 else ("down" if (rev_delta or 0) < 0 else "flat")
+    direction = (
+        "in crescita" if (rev_delta or 0) > 0
+        else ("in calo" if (rev_delta or 0) < 0 else "stabile")
+    )
     headline = (
-        f"{brand_label}: revenue {direction} {_fmt_pct(rev_delta)} week-over-week "
-        f"to {_fmt_eur(rev.get('current'))}."
+        f"{brand_label}: fatturato {direction} {_fmt_pct(rev_delta)} rispetto alla settimana "
+        f"precedente, a {_fmt_eur(rev.get('current'))}."
     )
 
     cards: List[Dict[str, Any]] = []
     labels = {
-        "revenue": "Revenue",
-        "units": "Units",
-        "orders": "Orders",
-        "average_order_value": "AOV",
+        "revenue": "Fatturato",
+        "units": "Unità",
+        "orders": "Ordini",
+        "average_order_value": "Valore medio ordine",
     }
     for key, label in labels.items():
         block = kpis_diff.get(key) or {}
@@ -472,17 +481,17 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     # market_category
     sections["market_category"] = {
         "narrative": (
-            f"Catalog activity moved from {active.get('previous', 0)} to "
-            f"{active.get('current', 0)} active ASINs week-over-week. First-party "
-            f"market-share signals are not connected, so this view is limited to "
-            f"the brand's own performance."
+            f"Gli ASIN attivi passano da {active.get('previous', 0)} a "
+            f"{active.get('current', 0)} rispetto alla settimana precedente. I segnali di "
+            f"quota di mercato non sono collegati, quindi la vista è limitata alla "
+            f"performance del brand."
         ),
         "items": [
             item(
-                "Active catalog breadth",
-                f"{active.get('current', 0)} ASINs sold this week vs "
-                f"{active.get('previous', 0)} last week.",
-                "Internal sales (Amazon)",
+                "Ampiezza del catalogo attivo",
+                f"{active.get('current', 0)} ASIN venduti questa settimana contro "
+                f"{active.get('previous', 0)} la settimana precedente.",
+                SOURCE_INTERNAL_SALES,
                 "high",
                 f"active_asins current={active.get('current', 0)}, previous={active.get('previous', 0)}",
             )
@@ -492,23 +501,24 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     # brand_evolution
     sections["brand_evolution"] = {
         "narrative": (
-            f"Revenue is {_fmt_pct(rev.get('delta_percent'))} w/w at "
-            f"{_fmt_eur(rev.get('current'))}; units {_fmt_pct(units.get('delta_percent'))} and "
-            f"AOV {_fmt_pct(aov.get('delta_percent'))}."
+            f"Il fatturato è {_fmt_pct(rev.get('delta_percent'))} a "
+            f"{_fmt_eur(rev.get('current'))}; unità {_fmt_pct(units.get('delta_percent'))} e "
+            f"valore medio ordine {_fmt_pct(aov.get('delta_percent'))}."
         ),
         "items": [
             item(
-                "Revenue movement",
-                f"{_fmt_eur(rev.get('current'))} this week ({_fmt_pct(rev.get('delta_percent'))} vs "
-                f"{_fmt_eur(rev.get('previous'))} last week).",
-                "Internal sales (Amazon)",
+                "Andamento del fatturato",
+                f"{_fmt_eur(rev.get('current'))} questa settimana ({_fmt_pct(rev.get('delta_percent'))} "
+                f"contro {_fmt_eur(rev.get('previous'))} la settimana precedente).",
+                SOURCE_INTERNAL_SALES,
                 "high",
                 f"revenue current={rev.get('current')}, previous={rev.get('previous')}",
             ),
             item(
-                "Order economics",
-                f"AOV {_fmt_eur(aov.get('current'))} ({_fmt_pct(aov.get('delta_percent'))} w/w).",
-                "Internal sales (Amazon)",
+                "Economia dell'ordine",
+                f"Valore medio ordine {_fmt_eur(aov.get('current'))} "
+                f"({_fmt_pct(aov.get('delta_percent'))} settimana su settimana).",
+                SOURCE_INTERNAL_SALES,
                 "high",
                 f"average_order_value current={aov.get('current')}, previous={aov.get('previous')}",
             ),
@@ -518,8 +528,8 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     # competitor_activity — gracefully omitted when no competitor data is wired.
     sections["competitor_activity"] = {
         "narrative": (
-            "No competitor tracking data is connected for this account this week, "
-            "so competitor moves cannot be reported."
+            "Nessun dato di monitoraggio competitor è collegato a questo account per la "
+            "settimana in corso, quindi non è possibile riportare le mosse dei competitor."
         ),
         "items": [],
     }
@@ -529,10 +539,10 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     for row in gainers[:3]:
         opp_items.append(
             item(
-                f"Scale {row['asin']}",
-                f"{row.get('title') or row['asin']} grew {_fmt_pct(row.get('change_percent'))} to "
-                f"{_fmt_eur(row.get('revenue'))}; protect momentum with ad headroom.",
-                "Internal sales (Amazon)",
+                f"Scala {row['asin']}",
+                f"{row.get('title') or row['asin']} è cresciuto {_fmt_pct(row.get('change_percent'))} "
+                f"fino a {_fmt_eur(row.get('revenue'))}; sostieni lo slancio con budget pubblicitario.",
+                SOURCE_INTERNAL_SALES,
                 "medium",
                 f"asin={row['asin']} revenue {row.get('previous_revenue')}→{row.get('revenue')}",
             )
@@ -540,10 +550,10 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     for row in new_asins[:2]:
         opp_items.append(
             item(
-                f"New entrant {row['asin']}",
-                f"{row.get('title') or row['asin']} sold {_fmt_eur(row.get('revenue'))} in its "
-                f"first tracked week.",
-                "Internal sales (Amazon)",
+                f"Nuovo ingresso {row['asin']}",
+                f"{row.get('title') or row['asin']} ha venduto {_fmt_eur(row.get('revenue'))} nella "
+                f"prima settimana monitorata.",
+                SOURCE_INTERNAL_SALES,
                 "medium",
                 f"asin={row['asin']} appeared this week",
             )
@@ -551,18 +561,20 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     if ads.get("is_available") and (ads.get("acos") or 0) > 0 and (ads.get("acos") or 0) < 20:
         opp_items.append(
             item(
-                "Advertising headroom",
-                f"ACOS is {ads.get('acos')}% with ROAS {ads.get('roas')}x — efficient enough to "
-                f"increase spend on top movers.",
-                "Internal advertising (Amazon Ads)",
+                "Margine pubblicitario",
+                f"ACOS al {ads.get('acos')}% con ROAS {ads.get('roas')}x — abbastanza efficiente "
+                f"da aumentare la spesa sui prodotti in crescita.",
+                SOURCE_INTERNAL_ADS,
                 "medium",
                 f"acos={ads.get('acos')}, roas={ads.get('roas')}",
             )
         )
     sections["opportunities"] = {
         "narrative": (
-            "Growth ASINs and under-leveraged ad efficiency are the clearest "
-            "openings this week." if opp_items else "No standout growth signals this week."
+            "Gli ASIN in crescita e l'efficienza pubblicitaria non sfruttata sono le "
+            "opportunità più chiare della settimana."
+            if opp_items
+            else "Nessun segnale di crescita rilevante questa settimana."
         ),
         "items": opp_items,
     }
@@ -572,10 +584,10 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     for row in decliners[:3]:
         risk_items.append(
             item(
-                f"Decline on {row['asin']}",
-                f"{row.get('title') or row['asin']} fell {_fmt_pct(row.get('change_percent'))} to "
-                f"{_fmt_eur(row.get('revenue'))} ({row.get('trend_class', 'declining')}).",
-                "Internal sales (Amazon)",
+                f"Calo su {row['asin']}",
+                f"{row.get('title') or row['asin']} è sceso {_fmt_pct(row.get('change_percent'))} "
+                f"a {_fmt_eur(row.get('revenue'))}.",
+                SOURCE_INTERNAL_SALES,
                 "high",
                 f"asin={row['asin']} revenue {row.get('previous_revenue')}→{row.get('revenue')}",
             )
@@ -583,18 +595,18 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     if (rev.get("delta_percent") or 0) < DECLINE_THRESHOLD_PCT:
         risk_items.append(
             item(
-                "Overall revenue softening",
-                f"Total revenue down {_fmt_pct(rev.get('delta_percent'))} w/w.",
-                "Internal sales (Amazon)",
+                "Fatturato complessivo in flessione",
+                f"Fatturato totale {_fmt_pct(rev.get('delta_percent'))} settimana su settimana.",
+                SOURCE_INTERNAL_SALES,
                 "high",
                 f"revenue delta={rev.get('delta_percent')}%",
             )
         )
     sections["risks"] = {
         "narrative": (
-            "Fast decliners and overall softening are the main downside risks."
+            "I prodotti in forte calo e la flessione complessiva sono i principali rischi."
             if risk_items
-            else "No material downside movers this week."
+            else "Nessun rischio rilevante in calo questa settimana."
         ),
         "items": risk_items,
     }
@@ -604,9 +616,10 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     for row in gainers[:3]:
         trend_items.append(
             item(
-                f"{row['asin']} accelerating",
-                f"{row.get('title') or row['asin']} {_fmt_pct(row.get('change_percent'))} w/w.",
-                "Internal sales (Amazon)",
+                f"{row['asin']} in accelerazione",
+                f"{row.get('title') or row['asin']} {_fmt_pct(row.get('change_percent'))} "
+                f"settimana su settimana.",
+                SOURCE_INTERNAL_SALES,
                 "high",
                 f"asin={row['asin']} {row.get('previous_revenue')}→{row.get('revenue')}",
             )
@@ -614,18 +627,19 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     for row in decliners[:3]:
         trend_items.append(
             item(
-                f"{row['asin']} cooling",
-                f"{row.get('title') or row['asin']} {_fmt_pct(row.get('change_percent'))} w/w.",
-                "Internal sales (Amazon)",
+                f"{row['asin']} in rallentamento",
+                f"{row.get('title') or row['asin']} {_fmt_pct(row.get('change_percent'))} "
+                f"settimana su settimana.",
+                SOURCE_INTERNAL_SALES,
                 "high",
                 f"asin={row['asin']} {row.get('previous_revenue')}→{row.get('revenue')}",
             )
         )
     sections["product_trends"] = {
         "narrative": (
-            "Movers below are ranked by week-over-week revenue change."
+            "I prodotti sotto sono ordinati per variazione di fatturato settimana su settimana."
             if trend_items
-            else "No significant per-ASIN movement this week."
+            else "Nessun movimento significativo per ASIN questa settimana."
         ),
         "items": trend_items,
     }
@@ -636,10 +650,10 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
         top = decliners[0]
         rec_items.append(
             item(
-                f"Stabilize {top['asin']}",
-                f"Review pricing, Buy Box and content for {top.get('title') or top['asin']} "
-                f"({_fmt_pct(top.get('change_percent'))} w/w).",
-                "Internal sales (Amazon)",
+                f"Stabilizza {top['asin']}",
+                f"Rivedi prezzo, Buy Box e contenuti di {top.get('title') or top['asin']} "
+                f"({_fmt_pct(top.get('change_percent'))} settimana su settimana).",
+                SOURCE_INTERNAL_SALES,
                 "high",
                 f"asin={top['asin']} change={top.get('change_percent')}%",
             )
@@ -648,9 +662,10 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
         top = gainers[0]
         rec_items.append(
             item(
-                f"Double down on {top['asin']}",
-                f"Reallocate ad budget to {top.get('title') or top['asin']} while demand is rising.",
-                "Internal sales (Amazon)",
+                f"Punta su {top['asin']}",
+                f"Sposta budget pubblicitario su {top.get('title') or top['asin']} "
+                f"finché la domanda è in crescita.",
+                SOURCE_INTERNAL_SALES,
                 "medium",
                 f"asin={top['asin']} change={top.get('change_percent')}%",
             )
@@ -658,10 +673,10 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     if not ads.get("is_available"):
         rec_items.append(
             item(
-                "Connect advertising data",
-                "No ad data covers this week; connect Amazon Ads to unlock ACOS/TACOS and "
-                "ad-driven recommendations.",
-                "Coverage gap",
+                "Collega i dati pubblicitari",
+                "Nessun dato pubblicitario copre questa settimana; collega Amazon Ads per "
+                "sbloccare ACOS/TACOS e le raccomandazioni basate sulle campagne.",
+                SOURCE_COVERAGE_GAP,
                 "high",
                 "ads.is_available=false",
             )
@@ -669,15 +684,16 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
     if not rec_items:
         rec_items.append(
             item(
-                "Maintain coverage and content quality",
-                "No urgent movers this week; keep catalog coverage and content health steady.",
-                "Internal sales (Amazon)",
+                "Mantieni copertura e qualità dei contenuti",
+                "Nessuna urgenza questa settimana; mantieni stabile la copertura di catalogo "
+                "e la qualità delle schede prodotto.",
+                SOURCE_INTERNAL_SALES,
                 "medium",
                 "no decliners or gainers exceeded thresholds",
             )
         )
     sections["strategic_recommendations"] = {
-        "narrative": "Prioritized, evidence-backed actions for the coming week.",
+        "narrative": "Azioni prioritarie e supportate da evidenze per la settimana entrante.",
         "items": rec_items[:5],
     }
 
@@ -704,6 +720,8 @@ def _llm_sections(brand_label: str, diff: Dict[str, Any], api_key: str) -> Optio
         section_list = "\n".join(f'  - "{k}": {t}' for k, t in SECTION_DEFS)
         prompt = f"""You are an Amazon brand strategy analyst writing a weekly brand-intelligence briefing for "{brand_label}".
 
+Write ALL prose (titles, narratives, item titles, details, sources) in ITALIAN. Use Italian number formatting (comma as decimal separator) and the euro sign after the amount.
+
 All numbers are already computed. Do NOT calculate, infer, invent, round or change any number.
 Use ONLY these week-over-week deltas (JSON):
 {json.dumps(diff, ensure_ascii=False, indent=2)}
@@ -711,7 +729,7 @@ Use ONLY these week-over-week deltas (JSON):
 Rules:
 - Never invent competitor revenue, market size or search/market share.
 - If a section has no supporting data, write a one-sentence narrative that says the data is not connected and return an empty items list for it — do not fabricate.
-- Every item MUST carry: source (where the claim comes from, e.g. "Internal sales (Amazon)"), confidence ("high"|"medium"|"low"), and evidence (the exact metric path/values backing it).
+- Every item MUST carry: source (where the claim comes from, e.g. "{SOURCE_INTERNAL_SALES}"), confidence ("high"|"medium"|"low"), and evidence (the exact metric path/values backing it).
 
 Return ONLY valid JSON: an object with a "sections" array. Produce exactly these sections in this order, each with key, title, narrative, items:
 {section_list}
@@ -753,7 +771,7 @@ def _validate_sections(sections: Any) -> List[Dict[str, Any]]:
                 {
                     "title": str(raw.get("title", "")),
                     "detail": str(raw.get("detail", "")),
-                    "source": str(raw.get("source", "Internal sales (Amazon)")),
+                    "source": str(raw.get("source", SOURCE_INTERNAL_SALES)),
                     "confidence": str(raw.get("confidence", "medium")),
                     "evidence": str(raw.get("evidence", "")),
                 }
@@ -788,7 +806,10 @@ def generate_intelligence(
         sections = build_fallback_sections(brand_label, diff)
     coverage_note = None
     if not (diff.get("ads") or {}).get("is_available"):
-        coverage_note = "Advertising data is not connected for this period; ad-related sections are limited."
+        coverage_note = (
+            "I dati pubblicitari non sono collegati per questo periodo: le sezioni "
+            "che dipendono dalle campagne sono limitate."
+        )
     return (
         {"exec_summary": exec_summary, "sections": sections, "coverage_note": coverage_note},
         model,

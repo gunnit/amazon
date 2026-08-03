@@ -266,16 +266,22 @@ async def test_declining_fast_creates_warning_alert():
         organization_id=organization_id,
         start_date=date(2026, 3, 18),
         end_date=date(2026, 3, 31),
+        language="it",
         limit=5,
     )
 
     created_rule = next(obj for obj in session.added if isinstance(obj, AlertRule))
     created_alert = next(obj for obj in session.added if isinstance(obj, Alert))
     assert created_rule.alert_type == "product_trend"
+    assert created_rule.name == "Avvisi automatici trend prodotto"
     assert created_alert.event_kind == TREND_ALERT_EVENT_KIND
     assert created_alert.severity == "warning"
     assert created_alert.asin == "B0ALERT"
     assert created_alert.details["trend_class"] == "declining_fast"
+    # The client-facing message follows the caller's language, and quotes the
+    # window actually compared (not a hardcoded 7 days).
+    assert "è in forte calo" in created_alert.message
+    assert "7 giorni precedenti" in created_alert.message
     assert session.commits == 1
 
 

@@ -15,6 +15,7 @@ import type {
   ScheduledReportType,
 } from '@/types'
 import { downloadBlob, formatDate } from '@/lib/utils'
+import { translateProgressStep } from '@/lib/progressSteps'
 import { useTranslation } from '@/i18n'
 import { useToast } from '@/components/ui/use-toast'
 import { Button } from '@/components/ui/button'
@@ -135,9 +136,9 @@ function getTimezoneOptions(currentTimezone: string) {
 
 const DISPLAY_TIMEZONE = 'Europe/Rome'
 
-function formatTimestamp(value: string | null) {
+function formatTimestamp(value: string | null, locale: string) {
   if (!value) return '—'
-  return new Date(value).toLocaleString(undefined, { timeZone: DISPLAY_TIMEZONE })
+  return new Date(value).toLocaleString(locale, { timeZone: DISPLAY_TIMEZONE })
 }
 
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline'
@@ -160,7 +161,8 @@ function deliveryBadgeVariant(status: string | null): BadgeVariant {
 }
 
 export function ScheduledReportsPanel() {
-  const { t } = useTranslation()
+  const { t, language } = useTranslation()
+  const locale = language === 'it' ? 'it-IT' : 'en-US'
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const organization = useAuthStore((state) => state.organization)
@@ -191,6 +193,9 @@ export function ScheduledReportsPanel() {
     queryKey: ['reports-email-status'],
     queryFn: () => reportsApi.getEmailStatus(),
   })
+  // Promising a "next run" the scheduler will never fire is worse than saying
+  // nothing — the banner above already uses this same signal.
+  const schedulerActive = emailStatus?.worker_available !== false
 
   const { data: accounts = [] } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -374,12 +379,19 @@ export function ScheduledReportsPanel() {
                         <Badge variant="secondary">{t(`scheduledReports.${schedule.frequency}`)}</Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        {schedule.report_types.join(', ')} · {schedule.recipients.length} {t('scheduledReports.recipients')}
+                        {schedule.report_types
+                          .map((rt) => t(`googleSheets.dataType.${rt}`))
+                          .join(', ')}{' '}
+                        · {schedule.recipients.length} {t('scheduledReports.recipients')}
                       </p>
                       <div className="grid gap-1 text-sm text-muted-foreground sm:grid-cols-2">
-                        <span>{t('scheduledReports.nextRun')}: {formatTimestamp(schedule.next_run_at)}</span>
-                        <span>{t('scheduledReports.lastRun')}: {formatTimestamp(schedule.last_run_at)}</span>
-                        <span>{t('scheduledReports.timezone')}: {schedule.timezone}</span>
+                        <span>
+                          {t('scheduledReports.nextRun')}:{' '}
+                          {schedulerActive
+                            ? formatTimestamp(schedule.next_run_at, locale)
+                            : t('scheduledReports.notScheduled')}
+                        </span>
+                        <span>{t('scheduledReports.lastRun')}: {formatTimestamp(schedule.last_run_at, locale)}</span>
                         <span>{t('scheduledReports.accountsCount', { n: schedule.account_ids.length || accounts.length })}</span>
                       </div>
                       <p className="text-xs text-muted-foreground">
@@ -749,7 +761,7 @@ export function ScheduledReportsPanel() {
                         <Badge variant={deliveryBadgeVariant(run.delivery_status)}>
                           {t('scheduledReports.delivery.label')}: {t(`scheduledReports.delivery.${run.delivery_status}`)}
                         </Badge>
-                        <span className="text-sm text-muted-foreground">{formatTimestamp(run.triggered_at)}</span>
+                        <span className="text-sm text-muted-foreground">{formatTimestamp(run.triggered_at, locale)}</span>
                       </div>
                       <p className="text-sm text-muted-foreground">
                         {formatDate(run.period_start)} - {formatDate(run.period_end)}
@@ -769,7 +781,7 @@ export function ScheduledReportsPanel() {
                           {run.error_message}
                         </p>
                       ) : (
-                        <p className="text-sm text-muted-foreground">{run.progress_step || '—'}</p>
+                        <p className="text-sm text-muted-foreground">{translateProgressStep(run.progress_step, t)}</p>
                       )}
                     </div>
                     {run.download_ready ? (

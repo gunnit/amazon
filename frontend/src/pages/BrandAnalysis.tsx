@@ -42,6 +42,8 @@ import { useToast } from '@/components/ui/use-toast'
 import { cn, formatDate } from '@/lib/utils'
 import { eyebrow, fieldInput, ghostButton, inkButton, monoTag, tabTrigger } from '@/lib/editorial'
 import { useTranslation } from '@/i18n'
+import { translateProgressStep } from '@/lib/progressSteps'
+import { useFilterStore } from '@/store/filterStore'
 import { ReportTable, type ReportColumn } from '@/components/shared/ReportTable'
 import { SectionMark } from '@/components/shared/SectionMark'
 import { BrandOverviewCharts } from '@/components/brand-analysis/BrandOverviewCharts'
@@ -310,13 +312,14 @@ function KpiTile({
 
 
 export default function BrandAnalysis() {
-  const { t } = useTranslation()
+  const { t, language: uiLanguage } = useTranslation()
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { accountIds } = useFilterStore()
 
   const [brandName, setBrandName] = useState('')
   const [selectedAccount, setSelectedAccount] = useState<string>('none')
-  const [language, setLanguage] = useState<'en' | 'it'>('en')
+  const [language, setLanguage] = useState<'en' | 'it'>(uiLanguage)
   const [dataSource, setDataSource] = useState<DataSource>('internal')
   const [marketType, setMarketType] = useState<'brand' | 'asin'>('brand')
   const [asinText, setAsinText] = useState('')
@@ -336,9 +339,16 @@ export default function BrandAnalysis() {
     if (accounts.length === 0) {
       setDataSource((prev) => (prev === 'internal' ? 'manual' : prev))
     } else if (selectedAccount === 'none') {
-      setSelectedAccount(accounts[0].id)
+      setSelectedAccount(accountIds[0] || accounts[0].id)
     }
-  }, [accounts, selectedAccount])
+  }, [accounts, selectedAccount, accountIds])
+
+  // Follow the global account switcher.
+  useEffect(() => {
+    if (accountIds.length > 0) {
+      setSelectedAccount(accountIds[0])
+    }
+  }, [accountIds])
 
   const selectedAccountObj = useMemo(
     () => accounts?.find((account) => account.id === selectedAccount) || null,
@@ -828,18 +838,23 @@ export default function BrandAnalysis() {
       width: '18%',
       hideOnMobile: true,
       cardLabel: t('brandAnalysis.progress.title'),
-      cell: (job) => (
-        <div className="flex items-center gap-2">
-          <Progress
-            value={job.progress_pct}
-            aria-label={t('brandAnalysis.history.progressLabel', { pct: job.progress_pct })}
-            className="h-1 w-20"
-          />
-          <span className="font-mono text-xs tabular-nums text-muted-foreground">
-            {job.progress_pct}%
-          </span>
-        </div>
-      ),
+      cell: (job) => {
+        // A failed job that shows a full blue bar reads as "finished".
+        const failed = job.status === 'failed' || job.status === 'cancelled'
+        return (
+          <div className="flex items-center gap-2">
+            <Progress
+              value={failed ? 100 : job.progress_pct}
+              aria-label={t('brandAnalysis.history.progressLabel', { pct: job.progress_pct })}
+              className="h-1 w-20"
+              indicatorClassName={failed ? 'bg-rose-500' : undefined}
+            />
+            <span className="font-mono text-xs tabular-nums text-muted-foreground">
+              {failed ? '—' : `${job.progress_pct}%`}
+            </span>
+          </div>
+        )
+      },
     },
     {
       id: 'completed',
@@ -1073,7 +1088,11 @@ export default function BrandAnalysis() {
                   {selectedJob?.brand_name || selectedJobFromList?.brand_name}
                 </h3>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  {selectedJob?.progress_step || t(`brandAnalysis.mode.${selectedJobDataSource}.help`)}
+                  {translateProgressStep(
+                    selectedJob?.progress_step,
+                    t,
+                    t(`brandAnalysis.mode.${selectedJobDataSource}.help`),
+                  )}
                 </p>
               </div>
 

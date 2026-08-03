@@ -58,7 +58,12 @@ def _forecast_export_job_to_response(job: ForecastExportJob) -> ForecastExportJo
 
 
 async def _latest_forecasts(db, account_ids: List[UUID]) -> List[Forecast]:
-    """Fetch the most recent forecast per account in scope (already-computed)."""
+    """Fetch the most recent forecast per account in scope (already-computed).
+
+    Account-level forecasts (``asin IS NULL``) win over per-ASIN ones even when
+    older: presenting one ASIN's number as the account forecast reads as a
+    collapse of the whole account.
+    """
     if not account_ids:
         return []
     rows = (
@@ -70,26 +75,56 @@ async def _latest_forecasts(db, account_ids: List[UUID]) -> List[Forecast]:
     ).scalars().all()
     latest: Dict[UUID, Forecast] = {}
     for fc in rows:
-        latest.setdefault(fc.account_id, fc)
+        current = latest.get(fc.account_id)
+        if current is None or (current.asin is not None and fc.asin is None):
+            latest[fc.account_id] = fc
     return list(latest.values())
 
 
+def _prediction_end_date(predictions: list) -> Optional[date]:
+    """Last date covered by a stored prediction series, if the series carries one."""
+    dates = []
+    for point in predictions:
+        raw = point.get("date") if isinstance(point, dict) else None
+        if isinstance(raw, str):
+            try:
+                dates.append(date.fromisoformat(raw[:10]))
+            except ValueError:
+                continue
+        elif isinstance(raw, date):
+            dates.append(raw)
+    return max(dates) if dates else None
+
+
 def _forecast_summary_lines(forecasts: List[Forecast], L, money, format_int) -> List[str]:
-    """Summarize stored forecast predictions into one bullet per account."""
+    """Summarize stored forecast predictions into one bullet per account.
+
+    Forecasts whose window already ended are dropped — a deck must not label a
+    past window as "the next 90 days".
+    """
+    today = date.today()
     lines: List[str] = []
     for fc in forecasts:
         predictions = fc.predictions or []
         values = [float(p.get("value") or 0) for p in predictions if isinstance(p, dict)]
         if not values:
             continue
+        last_date = _prediction_end_date(predictions)
+        if last_date and last_date < today:
+            continue
         total = sum(values)
         horizon = fc.forecast_horizon_days or len(values)
         ftype = (fc.forecast_type or "sales").lower()
         total_label = money(total) if ftype in ("sales", "revenue") else format_int(total)
+        scope_en = f"ASIN {fc.asin}" if fc.asin else "account"
+        scope_it = f"ASIN {fc.asin}" if fc.asin else "account"
+        generated = fc.generated_at.date().isoformat() if fc.generated_at else "—"
         lines.append(
             L(
-                f"{horizon}-day {ftype} forecast: {total_label} total ({fc.model_used or 'model'}).",
-                f"Previsione {ftype} a {horizon} giorni: {total_label} totale ({fc.model_used or 'modello'}).",
+                f"{horizon}-day {ftype} forecast ({scope_en}): {total_label} total "
+                f"({fc.model_used or 'model'}, generated {generated}).",
+                f"Previsione {ftype} a {horizon} giorni ({scope_it}): {total_label} totale "
+                f"({fc.model_used or 'modello'}, generata il {generated}).",
             )
         )
     return lines
@@ -273,7 +308,8 @@ class _PowerPointBuilder:
 
         chart_data = CategoryChartData()
         chart_data.categories = [
-            r["report_date"].isoformat() if hasattr(r["report_date"], "isoformat")
+            r["report_date"].strftime("%d/%m/%Y")
+            if hasattr(r["report_date"], "strftime")
             else str(r["report_date"])
             for r in trend_rows
         ]
@@ -758,7 +794,7 @@ async def export_to_powerpoint(
     language: str = Query(default="it", regex="^(en|it)$"),
 ):
     """Generate an Italian, European-formatted PowerPoint deck."""
-    from app.services.export_service import format_money_eu, format_int_eu
+    from app.services.export_service import format_money_eu, format_int_eu, format_ratio_eu
 
     # Pick a trend grain that yields more than one column for the selected range.
     # A hardcoded 'month' collapses to a single bar on short/single-month windows.
@@ -783,6 +819,21 @@ async def export_to_powerpoint(
         if row.get("currency"):
             currency = row["currency"]
             break
+
+    # Seller accounts can store a trailing-window aggregate on every date, so the
+    # per-ASIN rows sum far above the account total taken from the sentinel row.
+    # Publishing both in one deck contradicts itself, so drop the ASIN table
+    # instead of shipping numbers that cannot both be true.
+    product_revenue_total = sum(float(r.get("revenue") or 0) for r in product_rows)
+    summary_revenue = float(summary.get("revenue") or 0)
+    products_reconciled = (
+        summary_revenue <= 0 or product_revenue_total <= summary_revenue * 1.05
+    )
+
+    # Vendor "orders" is sales_data.total_order_items — ordered items, not order
+    # count — so the seller-only labels (orders, AOV) are wrong for a vendor deck.
+    account_types = {getattr(a.account_type, "value", a.account_type) for a in scoped_accounts}
+    vendor_only = bool(account_types) and account_types == {"vendor"}
 
     is_it = language == "it"
 
@@ -812,8 +863,12 @@ async def export_to_powerpoint(
         period_caption=L("Period", "Periodo"),
         source_caption=L("Data source", "Fonte dati"),
         source_value=L(
-            "Amazon SP-API — confirmed daily sales",
-            "Amazon SP-API — vendite giornaliere confermate",
+            "Amazon Vendor Central API — confirmed shipped sales"
+            if vendor_only
+            else "Amazon SP-API — confirmed daily sales",
+            "API Amazon Vendor Central — vendite spedite confermate"
+            if vendor_only
+            else "Amazon SP-API — vendite giornaliere confermate",
         ),
         footer=L("Generated by Inthezon", "Generato da Inthezon"),
     )
@@ -826,14 +881,20 @@ async def export_to_powerpoint(
                 f"Fatturato confermato di {money(summary['revenue'])} nel periodo selezionato.",
             ),
             L(
-                f"{format_int_eu(summary['units'])} units sold across {format_int_eu(summary['orders'])} orders.",
-                f"{format_int_eu(summary['units'])} unità vendute su {format_int_eu(summary['orders'])} ordini.",
+                f"{format_int_eu(summary['units'])} units sold across "
+                f"{format_int_eu(summary['orders'])} "
+                f"{'ordered items' if vendor_only else 'orders'}.",
+                f"{format_int_eu(summary['units'])} unità vendute su "
+                f"{format_int_eu(summary['orders'])} "
+                f"{'articoli ordinati' if vendor_only else 'ordini'}.",
             ),
             L(
-                f"Average order value of {money(summary['average_order_value'])} "
-                f"and {format_int_eu(summary['active_asins'])} active ASINs.",
-                f"Valore medio ordine di {money(summary['average_order_value'])} "
-                f"e {format_int_eu(summary['active_asins'])} ASIN attivi.",
+                f"{format_int_eu(summary['active_asins'])} "
+                f"{'active ASIN' if summary['active_asins'] == 1 else 'active ASINs'} "
+                f"sold in the period.",
+                f"{format_int_eu(summary['active_asins'])} "
+                f"{'ASIN attivo' if summary['active_asins'] == 1 else 'ASIN attivi'} "
+                f"nel periodo.",
             ),
         ],
         scope_label=scope_label,
@@ -847,11 +908,25 @@ async def export_to_powerpoint(
         kpis=[
             (L("Total Revenue", "Fatturato Totale"), money(summary["revenue"])),
             (L("Units Sold", "Unità Vendute"), format_int_eu(summary["units"])),
-            (L("Total Orders", "Ordini Totali"), format_int_eu(summary["orders"])),
-            (L("Avg. Order Value", "Valore Medio Ordine"), money(summary["average_order_value"])),
+            (
+                L("Ordered Items", "Articoli Ordinati")
+                if vendor_only
+                else L("Total Orders", "Ordini Totali"),
+                format_int_eu(summary["orders"]),
+            ),
             (L("Avg. Selling Price", "Prezzo Medio Vendita"), money(summary["average_selling_price"])),
             (L("Active ASINs", "ASIN Attivi"), format_int_eu(summary["active_asins"])),
-        ],
+        ]
+        + (
+            []
+            if vendor_only
+            else [
+                (
+                    L("Avg. Order Value", "Valore Medio Ordine"),
+                    money(summary["average_order_value"]),
+                )
+            ]
+        ),
     )
 
     if trend_rows:
@@ -863,7 +938,19 @@ async def export_to_powerpoint(
         )
 
     # Top products — paginated across two slides (top ~20 ASINs).
-    if product_rows:
+    if product_rows and not products_reconciled:
+        builder.bullets_slide(
+            title=L("Top Products", "Prodotti Principali"),
+            subtitle=scope_subtitle,
+            lines=[],
+            empty_message=L(
+                "Per-ASIN sales do not reconcile with the account total for this "
+                "period; the breakdown is withheld pending verification.",
+                "I dati per ASIN non risultano riconciliati con il totale account "
+                "per questo periodo: il dettaglio è omesso, in verifica.",
+            ),
+        )
+    elif product_rows:
         product_headers = [
             L("ASIN", "ASIN"),
             L("Product", "Prodotto"),
@@ -894,6 +981,7 @@ async def export_to_powerpoint(
 
     # Inventory — latest snapshot in scope, otherwise an empty-state line.
     inventory_rows: list = []
+    snapshot_date = None
     if scoped_account_ids:
         snapshot_date = await export_service._latest_snapshot_date(scoped_account_ids)
         if snapshot_date is not None:
@@ -901,9 +989,20 @@ async def export_to_powerpoint(
                 scoped_account_ids, snapshot_date, language
             )
     inventory_sorted = sorted(inventory_rows, key=lambda r: r["total_available"])[:15]
+    # The snapshot is always the latest one, never the report period, and the
+    # table is the 15 lowest-availability ASINs — say both instead of implying
+    # the period's stock and a complete list.
+    inventory_subtitle = (
+        L(
+            f"Snapshot as of {snapshot_date.isoformat()} · 15 lowest-availability ASINs · {scope_label}",
+            f"Snapshot al {snapshot_date.isoformat()} · 15 ASIN con minore disponibilità · {scope_label}",
+        )
+        if snapshot_date is not None
+        else scope_subtitle
+    )
     builder.section_slide(
         title=L("Inventory", "Inventario"),
-        subtitle=scope_subtitle,
+        subtitle=inventory_subtitle,
         headers=[
             L("ASIN", "ASIN"),
             L("Product", "Prodotto"),
@@ -914,7 +1013,7 @@ async def export_to_powerpoint(
         rows=[
             (
                 r["asin"],
-                (r["title"] or "")[:36],
+                (r["title"] or r["asin"])[:36],
                 format_int_eu(r["total_available"]),
                 format_int_eu(r["inbound_total"]),
                 r["stock_status"],
@@ -932,6 +1031,12 @@ async def export_to_powerpoint(
     ads_rollup = await export_service._advertising_rollup_rows(
         scoped_account_ids, start_date, end_date
     )
+    # A table of all-zero rows reads as delivered-but-terrible; it is neither.
+    ads_rollup = [
+        r
+        for r in ads_rollup
+        if float(r.get("spend") or 0) > 0 or float(r.get("attributed_sales_7d") or 0) > 0
+    ]
     builder.section_slide(
         title=L("Advertising", "Advertising"),
         subtitle=scope_subtitle,
@@ -947,14 +1052,14 @@ async def export_to_powerpoint(
                 (r["campaign_name"] or r["campaign_id"])[:40],
                 money(r["spend"]),
                 money(r["attributed_sales_7d"]),
-                f"{format_int_eu(r['acos'])}%",
-                f"{r['roas']:.2f}",
+                format_ratio_eu(r["acos"], 1) + "%",
+                format_ratio_eu(r["roas"], 2),
             )
             for r in ads_rollup[:12]
         ],
         empty_message=L(
-            "Advertising data is not connected yet (Amazon Ads pending authorization).",
-            "Dati advertising non ancora collegati (autorizzazione Amazon Ads in attesa).",
+            "No advertising delivery in the selected period.",
+            "Nessuna spesa pubblicitaria nel periodo selezionato.",
         ),
         right_align_from=1,
     )
@@ -977,7 +1082,14 @@ async def export_to_powerpoint(
     rec_lines: list = []
     try:
         rec_service = StrategicRecommendationsService(db)
-        recs = await rec_service.list_recommendations(organization.id, limit=6)
+        scope_ids = set(scoped_account_ids)
+        # list_recommendations is org-wide; without this filter another account's
+        # recommendations print under this deck's scope header.
+        recs = [
+            r
+            for r in await rec_service.list_recommendations(organization.id, limit=50)
+            if r.account_id is None or r.account_id in scope_ids
+        ][:6]
         rec_lines = [
             f"[{r.category}] {r.title}" + (f" — {r.expected_impact}" if r.expected_impact else "")
             for r in recs

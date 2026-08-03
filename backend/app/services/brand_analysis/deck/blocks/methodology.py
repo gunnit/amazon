@@ -23,12 +23,12 @@ def _first_sentence(text: str) -> str:
     return head.rstrip(".") + "." if head else text
 
 
-_PROVENANCE_LABELS = {
-    "total_revenue_2025": "Total revenue 2025",
-    "total_revenue_2024": "Total revenue 2024",
-    "yoy_percent": "YoY %",
-    "weighted_average_rating": "Weighted average rating",
-    "market_revenue_share": "Market revenue share",
+_PROVENANCE_LABEL_KEYS = {
+    "total_revenue_2025": "prov_total_revenue_2025",
+    "total_revenue_2024": "prov_total_revenue_2024",
+    "yoy_percent": "prov_yoy_percent",
+    "weighted_average_rating": "prov_weighted_average_rating",
+    "market_revenue_share": "prov_market_revenue_share",
 }
 
 
@@ -60,15 +60,17 @@ class MethodologyAppendixBlock(BaseBlock):
             entry = registry.get(key)
             if not entry:
                 continue
-            rows.append([_PROVENANCE_LABELS.get(key, key.replace("_", " ").capitalize()),
-                         str(entry.get("quality") or fmt.EMPTY).upper(),
+            label_key = _PROVENANCE_LABEL_KEYS.get(key)
+            quality = str(entry.get("quality") or "").strip().lower()
+            rows.append([ctx.t(label_key) if label_key else key.replace("_", " ").capitalize(),
+                         ctx.t(f"quality_{quality}") if quality else fmt.EMPTY,
                          fmt.truncate(str(entry.get("source") or fmt.EMPTY), 48)])
         if rows and all(row[2] == fmt.EMPTY for row in rows):
             rows = [row[:2] for row in rows]
             headers = [ctx.t("method_metric"), ctx.t("method_quality")]
             widths = [8.61, 4.0]
         else:
-            headers = [ctx.t("method_metric"), ctx.t("method_quality"), "Source"]
+            headers = [ctx.t("method_metric"), ctx.t("method_quality"), ctx.t("method_source")]
             widths = [3.5, 2.0, 7.11]
         if rows:
             deck.text(slide, DeckTheme.MARGIN, 4.3, DeckTheme.content_w(), 0.3,

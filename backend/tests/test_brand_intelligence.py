@@ -154,7 +154,12 @@ def test_fallback_generate_produces_all_sections_with_provenance():
     # exec_summary headline + KPI cards present.
     exec_summary = intelligence["exec_summary"]
     assert exec_summary["headline"]
-    assert {c["label"] for c in exec_summary["kpis"]} == {"Revenue", "Units", "Orders", "AOV"}
+    assert {c["label"] for c in exec_summary["kpis"]} == {
+        "Fatturato",
+        "Unità",
+        "Ordini",
+        "Valore medio ordine",
+    }
 
     # The decliner B002 surfaces as a risk; the gainer B001 as an opportunity/trend.
     risks = next(s for s in sections if s["key"] == "risks")
@@ -209,7 +214,7 @@ def test_coverage_note_set_when_ads_missing():
     assert intelligence["coverage_note"]
     # And a "connect advertising" recommendation is surfaced.
     recs = next(s for s in intelligence["sections"] if s["key"] == "strategic_recommendations")
-    assert any("Connect advertising data" == i["title"] for i in recs["items"])
+    assert any("Collega i dati pubblicitari" == i["title"] for i in recs["items"])
 
 
 def test_resolve_week_period_is_full_week_before_reference():
@@ -229,7 +234,7 @@ def test_compute_next_weekly_run_is_in_future_and_correct_weekday():
 def test_exec_summary_headline_reports_direction():
     _, diff = _build_diff()
     summary = build_exec_summary("ZWILLING", diff)
-    assert "up" in summary["headline"]  # revenue grew 20%
+    assert "in crescita" in summary["headline"]  # revenue grew 20%
     assert "ZWILLING" in summary["headline"]
 
 

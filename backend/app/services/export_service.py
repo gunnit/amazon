@@ -369,6 +369,12 @@ def format_int_eu(value: float) -> str:
     return f"{int(round(value)):,}".replace(",", ".")
 
 
+def format_ratio_eu(value: float, digits: int = 2) -> str:
+    """Format a ratio/percentage with the Italian decimal comma (3,56)."""
+    formatted = f"{float(value or 0):,.{digits}f}"
+    return formatted.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
 class ExportService:
     """Service for exporting data to various formats."""
 
@@ -443,33 +449,6 @@ class ExportService:
 
         output = io.BytesIO()
         wb.save(output)
-        output.seek(0)
-
-        return output.getvalue()
-
-    async def generate_powerpoint_report(
-        self,
-        account_ids: list[UUID],
-        start_date: date,
-        end_date: date,
-        template: str = "default",
-    ) -> bytes:
-        """Generate PowerPoint presentation."""
-        from pptx import Presentation
-        from pptx.util import Inches, Pt
-
-        prs = Presentation()
-
-        title_slide_layout = prs.slide_layouts[0]
-        slide = prs.slides.add_slide(title_slide_layout)
-        title = slide.shapes.title
-        subtitle = slide.placeholders[1]
-
-        title.text = "Amazon Performance Report"
-        subtitle.text = f"{start_date} to {end_date}"
-
-        output = io.BytesIO()
-        prs.save(output)
         output.seek(0)
 
         return output.getvalue()
@@ -1428,16 +1407,23 @@ class ExportService:
         )
         totals_row = (await self.db.execute(totals_query)).one()
 
-        active_asins_query = (
-            select(func.count(func.distinct(SalesData.asin)))
+        # "Active" must mean sold, not merely present: a catalogued ASIN with zero
+        # units all period is not an active ASIN.
+        sold_asins_subq = (
+            select(SalesData.asin)
             .where(
                 SalesData.account_id.in_(account_ids),
                 SalesData.asin != DAILY_TOTAL_ASIN,
                 SalesData.date >= start_date,
                 SalesData.date <= end_date,
             )
+            .group_by(SalesData.asin)
+            .having(func.sum(display_units_expr()) > 0)
+            .subquery()
         )
-        active_asins = (await self.db.execute(active_asins_query)).scalar() or 0
+        active_asins = (
+            await self.db.execute(select(func.count()).select_from(sold_asins_subq))
+        ).scalar() or 0
 
         revenue = _round(_as_float(totals_row.revenue))
         units = _as_int(totals_row.units)

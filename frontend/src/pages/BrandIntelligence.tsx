@@ -17,6 +17,7 @@ import { accountsApi, brandIntelligenceApi } from '@/services/api'
 import { cn, formatDate } from '@/lib/utils'
 import { eyebrow, fieldInput, inkButton } from '@/lib/editorial'
 import { useTranslation } from '@/i18n'
+import { useFilterStore } from '@/store/filterStore'
 import type {
   BrandIntelligenceReportListItem,
   BrandIntelligenceStatus,
@@ -60,12 +61,21 @@ export default function BrandIntelligence() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
+  const { accountIds } = useFilterStore()
   const [accountId, setAccountId] = useState('')
   // Which report is open: the latest report, or a specific report id from history.
   const [selectedReportId, setSelectedReportId] = useState<string>(LATEST)
 
   const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: () => accountsApi.list() })
-  const effectiveAccountId = accountId || accounts?.[0]?.id || ''
+  const effectiveAccountId = accountId || accountIds[0] || accounts?.[0]?.id || ''
+
+  // Follow the global account switcher instead of silently pinning the first
+  // account — otherwise the reader shows another brand's report.
+  useEffect(() => {
+    if (accountIds.length > 0) {
+      setAccountId(accountIds[0])
+    }
+  }, [accountIds])
 
   // Reset the open report when the account changes.
   useEffect(() => {

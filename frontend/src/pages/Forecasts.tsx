@@ -54,7 +54,9 @@ import { forecastsApi, accountsApi, exportsApi } from '@/services/api'
 import { formatCurrency, formatDate, downloadBlob } from '@/lib/utils'
 import { CHART_PRIMARY } from '@/lib/chart-theme'
 import { useTranslation } from '@/i18n'
+import { translateProgressStep } from '@/lib/progressSteps'
 import { useLanguageStore } from '@/store/languageStore'
+import { useFilterStore } from '@/store/filterStore'
 import type {
   Forecast,
   ForecastConfidenceLevel,
@@ -62,6 +64,10 @@ import type {
   ForecastExportJob,
   ForecastProductOption,
 } from '@/types'
+
+function monthsKey(months: number): string {
+  return months === 1 ? 'forecasts.byAsin.monthsValueOne' : 'forecasts.byAsin.monthsValue'
+}
 
 const ALL_ASINS_VALUE = '__all_asins__'
 
@@ -449,7 +455,7 @@ function ForecastExportModal({
             )}
             <p><span className="font-medium text-foreground">{t('forecasts.model')}:</span> {forecast.model_used}</p>
             <p><span className="font-medium text-foreground">{t('forecasts.horizonLabel')}:</span> {isMonthlyForecast(forecast)
-              ? t('forecasts.byAsin.monthsValue', { months: Math.max(1, Math.round((forecast.horizon_days ?? 30) / 30)) })
+              ? t(monthsKey(Math.max(1, Math.round((forecast.horizon_days ?? 30) / 30))), { months: Math.max(1, Math.round((forecast.horizon_days ?? 30) / 30)) })
               : t('forecasts.byAsin.daysValue', { days: forecast.horizon_days })}</p>
             <p><span className="font-medium text-foreground">{t('forecasts.predictedTotal')}:</span> {formatCurrency(forecast.predictions.reduce((s, p) => s + p.predicted_value, 0))}</p>
           </div>
@@ -460,7 +466,7 @@ function ForecastExportModal({
                 <div>
                   <p className="text-sm font-medium">{t('forecasts.exportProgressTitle')}</p>
                   <p className="text-xs text-muted-foreground">
-                    {packageStatusQuery.data?.progress_step || t('forecasts.exportProgressDesc')}
+                    {translateProgressStep(packageStatusQuery.data?.progress_step, t, t('forecasts.exportProgressDesc'))}
                   </p>
                 </div>
                 <div className="text-sm font-medium">{progressValue}%</div>
@@ -507,15 +513,24 @@ export default function Forecasts() {
   const [showAllPredictions, setShowAllPredictions] = useState(false)
   const [showConfidenceBands, setShowConfidenceBands] = useState(true)
   const [pastedAsin, setPastedAsin] = useState('')
+  const { accountIds: globalAccountIds } = useFilterStore()
 
   const { data: accounts } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
     queryFn: () => accountsApi.list(),
   })
 
+  // Follow the global account switcher so the page never shows another
+  // account's forecasts under the selected one.
+  useEffect(() => {
+    if (globalAccountIds.length > 0 && globalAccountIds[0] !== selectedAccount) {
+      setSelectedAccount(globalAccountIds[0])
+    }
+  }, [globalAccountIds])
+
   const { data: forecasts, isLoading } = useQuery<Forecast[]>({
-    queryKey: ['forecasts'],
-    queryFn: () => forecastsApi.list(),
+    queryKey: ['forecasts', globalAccountIds],
+    queryFn: () => forecastsApi.list(globalAccountIds.length > 0 ? globalAccountIds : undefined),
   })
 
   const { data: products, isLoading: productsLoading } = useQuery<ForecastProductOption[]>({
@@ -1265,13 +1280,13 @@ export default function Forecasts() {
                     <span className="text-muted-foreground">{t('forecasts.horizonLabel')}</span>
                     <span>
                       {isMonthly
-                        ? t('forecasts.byAsin.monthsValue', { months: monthsCount })
+                        ? t(monthsKey(monthsCount), { months: monthsCount })
                         : t('forecasts.byAsin.daysValue', { days: latestForecast.horizon_days })}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">{t('forecasts.type')}</span>
-                    <span className="capitalize">{latestForecast.forecast_type}</span>
+                    <span>{t(`forecasts.type.${latestForecast.forecast_type}`)}</span>
                   </div>
                 </div>
               </CardContent>
@@ -1292,7 +1307,7 @@ export default function Forecasts() {
                 </div>
                 <p className="text-sm text-muted-foreground mt-1">
                   {isMonthly
-                    ? t('forecasts.nextMonths', { months: monthsCount })
+                    ? t(monthsCount === 1 ? 'forecasts.nextMonthsOne' : 'forecasts.nextMonths', { months: monthsCount })
                     : t('forecasts.nextDays', { days: latestForecast.horizon_days })}
                 </p>
               </CardContent>
@@ -1420,7 +1435,7 @@ function PerAsinForecastTable({
                     <TableCell className="max-w-[280px] truncate">{title ?? '—'}</TableCell>
                     <TableCell className="text-right">
                       {isMonthlyForecast(forecast)
-                        ? t('forecasts.byAsin.monthsValue', {
+                        ? t(monthsKey(Math.max(1, Math.round((forecast.horizon_days ?? 30) / 30))), {
                             months: Math.max(1, Math.round((forecast.horizon_days ?? 30) / 30)),
                           })
                         : t('forecasts.byAsin.daysValue', { days: forecast.horizon_days })}

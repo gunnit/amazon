@@ -88,6 +88,9 @@ const marketplaces = [
 
 function connectionState(account: AmazonAccount): StatusFilter {
   if (account.sync_status === 'error') return 'error'
+  // A populated error message with a "success" status means part of the sync
+  // failed (typically inventory); green would contradict the Performance tab.
+  if (account.sync_error_message) return 'partial'
   if (account.has_refresh_token && account.has_advertising_refresh_token && account.advertising_profile_id) {
     return 'connected'
   }
@@ -105,8 +108,19 @@ function resolveAdsState(account: AmazonAccount): AdsConnectionState {
   return 'ok'
 }
 
-function StatusBadge({ status }: { status: SyncStatus }) {
+function StatusBadge({ status, hasWarning = false }: { status: SyncStatus; hasWarning?: boolean }) {
   const { t } = useTranslation()
+  if (status === 'success' && hasWarning) {
+    return (
+      <Badge
+        variant="outline"
+        className="gap-1 whitespace-nowrap border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400"
+      >
+        <AlertTriangle className="h-3 w-3" />
+        {t('accounts.status.syncedWithWarnings')}
+      </Badge>
+    )
+  }
   const config = {
     success: { label: t('accounts.status.synced'), icon: Check, className: 'bg-emerald-500 text-white' },
     syncing: { label: t('accounts.status.syncing'), icon: Loader2, className: 'bg-blue-500 text-white' },
@@ -840,6 +854,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
             <CardTitle className="text-base">{t('accounts.connectedAccounts')}</CardTitle>
           </CardHeader>
           <CardContent>
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -897,7 +912,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                     <TableCell><AdsStateBadge account={account} /></TableCell>
                     <TableCell className="font-mono text-xs">{account.advertising_profile_id || '-'}</TableCell>
                     <TableCell>{account.last_sync_at ? formatDate(account.last_sync_at) : t('common.never')}</TableCell>
-                    <TableCell><StatusBadge status={account.sync_status} /></TableCell>
+                    <TableCell><StatusBadge status={account.sync_status} hasWarning={!!account.sync_error_message} /></TableCell>
                     <TableCell><BackfillBadge account={account} /></TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
@@ -935,6 +950,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                 })}
               </TableBody>
             </Table>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -955,7 +971,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                 )}
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.advertisingProfile')}</span><span className="font-mono">{detailsAccount.advertising_profile_id || '-'}</span></div>
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.lastSync')}</span><span>{detailsAccount.last_sync_at ? formatDate(detailsAccount.last_sync_at) : t('common.never')}</span></div>
-                <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.syncStatus')}</span><StatusBadge status={detailsAccount.sync_status} /></div>
+                <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.syncStatus')}</span><StatusBadge status={detailsAccount.sync_status} hasWarning={!!detailsAccount.sync_error_message} /></div>
                 <div className="flex justify-between gap-4"><span className="text-muted-foreground">{t('accounts.backfill.column')}</span><BackfillBadge account={detailsAccount} /></div>
                 {detailsAccount.last_backfill_range_start && detailsAccount.last_backfill_range_end && (
                   <div className="flex justify-between gap-4">

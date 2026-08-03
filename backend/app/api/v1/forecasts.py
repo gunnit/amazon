@@ -99,9 +99,9 @@ async def list_forecasts(
     current_user: CurrentUser,
     organization: CurrentOrganization,
     db: DbSession,
-    account_ids: Optional[List[UUID]] = None,
-    forecast_type: Optional[str] = None,
-    limit: int = 20,
+    account_ids: Optional[List[UUID]] = Query(default=None),
+    forecast_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
 ):
     """List available forecasts."""
     accounts_query = select(AmazonAccount.id).where(

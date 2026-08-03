@@ -404,6 +404,7 @@ class ProductTrendSummary(BaseModel):
 class ProductTrendsResponse(BaseModel):
     """Product trends response."""
     summary: ProductTrendSummary
+    comparison_window_days: int
     rising_products: List[ProductTrendItem]
     declining_products: List[ProductTrendItem]
     products: List[ProductTrendItem]

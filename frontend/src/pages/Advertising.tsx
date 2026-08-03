@@ -20,7 +20,7 @@ import { FilterBar, DateRangeFilter, AccountFilter } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
 import { accountsApi, analyticsApi } from '@/services/api'
-import { formatCurrency, formatLocalizedDate, formatNumber, cn } from '@/lib/utils'
+import { formatCurrency, formatDecimal, formatLocalizedDate, formatNumber, cn } from '@/lib/utils'
 import type {
   AdsConnectionState,
   AdvertisingInsights,
@@ -155,7 +155,11 @@ function CampaignTable({
                 </tr>
               </thead>
               <tbody>
-                {campaigns.map((c) => (
+                {campaigns.map((c) => {
+                  // Zero delivery: ratios are undefined, so colouring them
+                  // green/red asserts a performance judgement that isn't there.
+                  const delivered = Number(c.spend) > 0 || Number(c.sales) > 0
+                  return (
                   <tr key={c.campaign_id} className="border-b border-border/40 last:border-0">
                     <td className="py-2.5 pr-4 font-medium max-w-[200px] truncate">{c.campaign_name}</td>
                     <td className="py-2.5 pr-4"><CampaignTypeLabel type={c.campaign_type} /></td>
@@ -165,22 +169,31 @@ function CampaignTable({
                     <td className="py-2.5 pr-4 text-right tabular-nums">{formatNumber(Number(c.impressions))}</td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">{formatNumber(Number(c.clicks))}</td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">
-                      <span className={cn(Number(c.roas) >= 1 ? 'text-emerald-600' : 'text-rose-600')}>
-                        {Number(c.roas).toFixed(2)}
-                      </span>
+                      {delivered ? (
+                        <span className={cn(Number(c.roas) >= 1 ? 'text-emerald-600' : 'text-rose-600')}>
+                          {formatDecimal(Number(c.roas))}
+                        </span>
+                      ) : (
+                        '-'
+                      )}
                     </td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">
-                      {Number(c.spend) > 0 && Number(c.sales) === 0 ? (
+                      {!delivered ? (
+                        '-'
+                      ) : Number(c.sales) === 0 ? (
                         <span className="text-rose-600">{t('advertising.acosNotAvailable')}</span>
                       ) : (
                         <span className={cn(Number(c.acos) <= 30 ? 'text-emerald-600' : Number(c.acos) <= 50 ? 'text-amber-600' : 'text-rose-600')}>
-                          {Number(c.acos).toFixed(1)}%
+                          {formatDecimal(Number(c.acos), 1)}%
                         </span>
                       )}
                     </td>
-                    <td className="py-2.5 text-right tabular-nums">{Number(c.ctr).toFixed(2)}%</td>
+                    <td className="py-2.5 text-right tabular-nums">
+                      {Number(c.impressions) > 0 ? `${formatDecimal(Number(c.ctr), 2)}%` : '-'}
+                    </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -228,6 +241,10 @@ export default function Advertising() {
   // or data exists outside the selected window (ads_data_from tells us which).
   const showFirstSyncState = !hasAdsData && okAdsAccounts > 0
   const adsDataFrom = data?.ads_data_from
+  // Ranking campaigns that never served as "best performing" is misleading.
+  const deliveredTopCampaigns = (data?.top_campaigns || []).filter(
+    (c) => Number(c.spend) > 0 || Number(c.sales) > 0 || Number(c.impressions) > 0
+  )
 
   if (isLoading) {
     return (
@@ -242,7 +259,9 @@ export default function Advertising() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">{t('advertising.title')}</h1>
-          <p className="text-muted-foreground">{t('advertising.subtitle')}</p>
+          <p className="text-muted-foreground">
+            {accountIds.length > 0 ? t('advertising.subtitleAccount') : t('advertising.subtitle')}
+          </p>
         </div>
         <FilterBar onReset={resetDashboard}>
           <DateRangeFilter />
@@ -309,9 +328,9 @@ export default function Advertising() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <MetricCard label={t('advertising.totalSpend')} value={formatCurrency(data?.total_spend || 0)} icon={DollarSign} />
         <MetricCard label={t('advertising.adSales')} value={formatCurrency(data?.total_sales || 0)} icon={ShoppingCart} />
-        <MetricCard label="ROAS" value={Number(data?.overall_roas || 0).toFixed(2)} icon={Target} />
-        <MetricCard label="ACoS" value={`${Number(data?.overall_acos || 0).toFixed(1)}%`} icon={Megaphone} />
-        <MetricCard label="CTR" value={`${Number(data?.overall_ctr || 0).toFixed(2)}%`} icon={MousePointerClick} />
+        <MetricCard label="ROAS" value={formatDecimal(Number(data?.overall_roas || 0))} icon={Target} />
+        <MetricCard label="ACoS" value={`${formatDecimal(Number(data?.overall_acos || 0), 1)}%`} icon={Megaphone} />
+        <MetricCard label="CTR" value={`${formatDecimal(Number(data?.overall_ctr || 0), 2)}%`} icon={MousePointerClick} />
         <MetricCard label={t('advertising.impressions')} value={formatNumber(data?.total_impressions || 0)} icon={Eye} />
       </div>
 
@@ -340,11 +359,11 @@ export default function Advertising() {
       {/* Campaign Tables */}
       <div className="grid gap-6 lg:grid-cols-1">
         <CampaignTable
-          campaigns={data?.top_campaigns || []}
+          campaigns={deliveredTopCampaigns}
           title={t('advertising.topCampaigns')}
           description={t('advertising.topCampaignsDesc')}
           icon={TrendingUp}
-          emptyMessage={t('advertising.noCampaigns')}
+          emptyMessage={t('advertising.noCampaignDelivery')}
         />
         <CampaignTable
           campaigns={data?.underperforming_campaigns || []}

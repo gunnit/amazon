@@ -45,7 +45,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { accountsApi, analyticsApi, catalogApi, reportsApi } from '@/services/api'
-import { formatChangePercent, formatCurrency, formatLocalizedDate, formatNumber } from '@/lib/utils'
+import { formatChangePercent, formatCurrency, formatLocalizedDate, formatNumber, formatTrendPercent } from '@/lib/utils'
 import {
   AREA_FILL,
   BAR_H_FILL,
@@ -515,6 +515,8 @@ function PanoramicaTab({
       setSelectedTrendAsin(trendAsinFilter)
     }
   }, [trendAsinFilter])
+
+  const trendWindowDays = productTrends?.comparison_window_days ?? 7
 
   const sortedTrendProducts = useMemo(() => {
     return [...(productTrends?.products || [])].sort((left, right) =>
@@ -1038,7 +1040,7 @@ function PanoramicaTab({
               </ResponsiveContainer>
             ) : (
               <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                {t('analytics.ordersByHourDesc')}
+                {t('analytics.ordersByHourEmpty')}
               </div>
             )}
           </div>
@@ -1210,7 +1212,7 @@ function PanoramicaTab({
                               onClick={() => handleTrendSort('sales_delta_percent')}
                               className="flex items-center gap-2 font-semibold"
                             >
-                              {t('analytics.tableSalesDelta')}
+                              {t('analytics.tableSalesDelta', { n: trendWindowDays })}
                               <ArrowUpDown className="h-3.5 w-3.5" />
                             </button>
                           </th>
@@ -1248,7 +1250,7 @@ function PanoramicaTab({
                               <ProductTrendBadge trendClass={product.trend_class} />
                             </td>
                             <td className="px-4 py-3 font-semibold">
-                              {formatChangePercent(product.sales_delta_percent)}
+                              {formatTrendPercent(product.sales_delta_percent)}
                             </td>
                             <td className="px-4 py-3">
                               {product.trend_score > 0 ? '+' : ''}
@@ -1339,9 +1341,9 @@ function PanoramicaTab({
 
                         <div className="grid gap-3 sm:grid-cols-2">
                           <div className="rounded-lg border p-3">
-                            <p className="text-xs text-muted-foreground">{t('analytics.tableSalesDelta')}</p>
+                            <p className="text-xs text-muted-foreground">{t('analytics.tableSalesDelta', { n: trendWindowDays })}</p>
                             <p className="mt-2 text-xl font-semibold">
-                              {formatChangePercent(selectedTrendProduct.sales_delta_percent)}
+                              {formatTrendPercent(selectedTrendProduct.sales_delta_percent)}
                             </p>
                           </div>
                           <div className="rounded-lg border p-3">
@@ -1352,13 +1354,13 @@ function PanoramicaTab({
                             </p>
                           </div>
                           <div className="rounded-lg border p-3">
-                            <p className="text-xs text-muted-foreground">{t('analytics.current7DaySales')}</p>
+                            <p className="text-xs text-muted-foreground">{t('analytics.current7DaySales', { n: trendWindowDays })}</p>
                             <p className="mt-2 text-xl font-semibold">
                               {formatCurrency(selectedTrendProduct.current_revenue)}
                             </p>
                           </div>
                           <div className="rounded-lg border p-3">
-                            <p className="text-xs text-muted-foreground">{t('analytics.previous7DaySales')}</p>
+                            <p className="text-xs text-muted-foreground">{t('analytics.previous7DaySales', { n: trendWindowDays })}</p>
                             <p className="mt-2 text-xl font-semibold">
                               {formatCurrency(selectedTrendProduct.previous_revenue)}
                             </p>
@@ -1407,7 +1409,7 @@ function PanoramicaTab({
         <TrendInsightsCard
           insights={productTrendInsights?.insights ?? productTrends.insights}
           generatedWithAi={productTrendInsights?.generated_with_ai ?? false}
-          aiAvailable={productTrends.ai_available}
+          aiAvailable={productTrendInsights?.ai_available ?? productTrends.ai_available}
           loading={
             productTrends.summary.eligible_products > 0 &&
             !productTrendInsights &&
@@ -1486,7 +1488,10 @@ function ResiTab({ active, dateRange, accountIds }: TabProps) {
         <div className="rounded-lg border p-4">
           <p className="text-sm text-muted-foreground">{t('analytics.returns.topReason')}</p>
           <p className="mt-2 text-2xl font-bold">
-            {returnsAnalytics?.summary.top_reason && returnsAnalytics.summary.top_reason !== 'Unknown'
+            {!returnsAnalytics?.summary.total_returns
+              ? '—'
+              : returnsAnalytics.summary.top_reason &&
+                returnsAnalytics.summary.top_reason !== 'Unknown'
               ? returnsAnalytics.summary.top_reason
               : t('analytics.returns.unknownReason')}
           </p>
@@ -2145,10 +2150,19 @@ function InventarioTab({ active, accountIds }: TabProps) {
       : scopedInventoryAccounts.length > 0
       ? t('reports.inventoryUnavailableGeneric')
       : t('reports.noInventory')
+  // The raw SP-API string leaks merchant/report IDs and is English; the full
+  // text stays available in Impostazioni > dettagli account.
   const inventoryDetailMessage =
     inventoryErrorAccounts.length > 0
       ? inventoryErrorAccounts
-          .map((account) => `${account.account_name}: ${account.sync_error_message}`)
+          .map((account) =>
+            t(
+              /not registered in marketplace/i.test(account.sync_error_message || '')
+                ? 'reports.inventoryErrorNotRegistered'
+                : 'reports.inventoryErrorNoData',
+              { account: account.account_name }
+            )
+          )
           .join(' ')
       : null
 
@@ -2156,7 +2170,9 @@ function InventarioTab({ active, accountIds }: TabProps) {
     <Card>
       <CardHeader>
         <CardTitle>{t('reports.inventoryStatus')}</CardTitle>
-        <CardDescription>{t('reports.inventoryDesc')}</CardDescription>
+        <CardDescription>
+          {accountIds.length > 0 ? t('reports.inventoryDescAccount') : t('reports.inventoryDesc')}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {inventoryLoading || inventoryAccountsLoading ? (
@@ -2169,7 +2185,7 @@ function InventarioTab({ active, accountIds }: TabProps) {
               <thead>
                 <tr className="border-b">
                   <th className="text-left py-3 px-4 font-medium">{t('reports.asin')}</th>
-                  <th className="text-left py-3 px-4 font-medium">{t('reports.sku')}</th>
+                  <th className="text-left py-3 px-4 font-medium">{t('reports.product')}</th>
                   <th className="text-right py-3 px-4 font-medium">{t('reports.onHand')}</th>
                   <th className="text-right py-3 px-4 font-medium">{t('reports.inbound')}</th>
                 </tr>
@@ -2178,7 +2194,7 @@ function InventarioTab({ active, accountIds }: TabProps) {
                 {inventoryData.map((item) => (
                   <tr key={`${item.snapshot_date}-${item.asin}`} className="border-b last:border-0">
                     <td className="py-3 px-4 font-mono text-sm">{item.asin}</td>
-                    <td className="py-3 px-4">{item.sku || '-'}</td>
+                    <td className="py-3 px-4">{item.title || item.sku || '-'}</td>
                     <td className="py-3 px-4 text-right">
                       {formatNumber(item.afn_fulfillable_quantity + item.mfn_fulfillable_quantity)}
                     </td>

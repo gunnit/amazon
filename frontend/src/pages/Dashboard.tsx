@@ -38,7 +38,7 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { analyticsApi, accountsApi } from '@/services/api'
-import { formatCurrency, formatLocalizedDate, formatNumber, formatPercent, formatRatio, cn } from '@/lib/utils'
+import { formatCurrency, formatLocalizedDate, formatNumber, formatPercent, formatRatio, formatTrendPercent, cn } from '@/lib/utils'
 import { AREA_FILL, CHART_PRIMARY, CHART_SERIES } from '@/lib/chart-theme'
 import { buildDashboardSearchParams, resolveDashboardScope } from '@/lib/dashboardScope'
 import { granularityForAccountTypes } from '@/lib/granularity'
@@ -298,9 +298,7 @@ function TrendingProductsList({
                         product.sales_delta_percent >= 0 ? 'text-emerald-600' : 'text-rose-600'
                       )}
                     >
-                      {product.sales_delta_percent > 999
-                        ? '>999%'
-                        : formatPercent(product.sales_delta_percent)}
+                      {formatTrendPercent(product.sales_delta_percent)}
                     </p>
                   )}
                 </div>
@@ -457,10 +455,11 @@ export default function Dashboard() {
   })
 
   const { data: trendingProducts, isLoading: trendingProductsLoading } = useQuery<ProductTrendsResponse>({
-    queryKey: ['dashboard-product-trends', dateRange.end, effectiveAccountIds],
+    queryKey: ['dashboard-product-trends', dateRange.end, effectiveAccountIds, language],
     queryFn: () => analyticsApi.getProductTrends({
       start_date: dateRange.start,
       end_date: dateRange.end,
+      language,
       account_id: scope.mode === 'account' ? scope.accountId : undefined,
       account_ids: scope.mode === 'account'
         ? undefined
@@ -602,25 +601,34 @@ export default function Dashboard() {
   const revenueComposed = mergeSeries(sellerRevenue, vendorRevenue)
   const unitsComposed = mergeSeries(sellerUnits, vendorUnits)
 
+  const chartLocale = language === 'it' ? 'it-IT' : 'en-US'
   const tickFormatter = (value: string) =>
-    new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  const labelFormatter = (label: string) => new Date(label + 'T00:00:00').toLocaleDateString()
+    new Date(value + 'T00:00:00').toLocaleDateString(chartLocale, { month: 'short', day: 'numeric' })
+  const labelFormatter = (label: string) =>
+    new Date(label + 'T00:00:00').toLocaleDateString(chartLocale)
   // Vendor points are monthly (date = first of month); show month/year so the
   // bars don't read as a single day's sale on a daily-formatted axis.
   const monthTickFormatter = (value: string) =>
-    new Date(value + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+    new Date(value + 'T00:00:00').toLocaleDateString(chartLocale, { month: 'short', year: '2-digit' })
   const monthLabelFormatter = (label: string) =>
-    new Date(label + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    new Date(label + 'T00:00:00').toLocaleDateString(chartLocale, { month: 'long', year: 'numeric' })
 
   const currency = kpis?.currency || 'EUR'
-  const compactCurrency = new Intl.NumberFormat('en-US', {
+  const compactCurrency = new Intl.NumberFormat(chartLocale, {
     style: 'currency',
     currency,
     notation: 'compact',
     maximumFractionDigits: 1,
   })
 
-  const days = datePreset === 'custom' ? t('common.selectedPeriod') : t('common.lastNDays', { n: datePreset })
+  // Presets are not all numeric ('12m', 'ytd', 'lastyear') — feeding them into
+  // "{n} giorni" produced "ultimi 12m giorni".
+  const days =
+    datePreset === 'custom'
+      ? t('common.selectedPeriod')
+      : /^\d+$/.test(datePreset)
+        ? t('common.lastNDays', { n: datePreset })
+        : t(`common.datePreset.${datePreset}`)
   const revenueTrendDescription =
     mixed
       ? t('dashboard.trendDescMixed')

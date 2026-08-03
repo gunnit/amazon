@@ -21,7 +21,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { analyticsApi } from '@/services/api'
-import { formatCurrency } from '@/lib/utils'
+import { formatCurrency, formatDecimal } from '@/lib/utils'
 import { useTranslation } from '@/i18n'
 import type { PerProductSortKey } from '@/types'
 
@@ -264,13 +264,19 @@ export function PerProductPerformanceTable({ dateRange, accountIds, enabled }: P
                     {item.ad_spend > 0 && item.ad_sales <= 0 ? (
                       <span className="text-destructive">{t('reports.acosNoSales')}</span>
                     ) : item.acos != null ? (
-                      `${item.acos.toFixed(1)}%`
+                      `${formatDecimal(item.acos, 1)}%`
                     ) : (
                       '—'
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {item.roas != null ? item.roas.toFixed(2) : '—'}
+                    {item.ad_spend > 0 && item.ad_sales <= 0 ? (
+                      <span className="text-destructive">{t('reports.acosNoSales')}</span>
+                    ) : item.roas != null ? (
+                      formatDecimal(item.roas)
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {item.current_bsr != null ? item.current_bsr.toLocaleString() : '—'}

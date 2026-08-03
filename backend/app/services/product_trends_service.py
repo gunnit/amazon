@@ -27,7 +27,8 @@ SPARKLINE_MONTHLY_MONTHS = 12
 ALERT_COOLDOWN_HOURS = 12
 DEFAULT_RANKING_LIMIT = 25
 TREND_ALERT_TYPE = "product_trend"
-TREND_ALERT_RULE_NAME = "Automatic product trend alerts"
+TREND_ALERT_RULE_NAME = "Avvisi automatici trend prodotto"
+LEGACY_TREND_ALERT_RULE_NAMES = {"Automatic product trend alerts"}
 TREND_ALERT_EVENT_KIND = "product_trend_declining_fast"
 TREND_ALERT_CLASSES = {"declining_fast"}
 
@@ -176,6 +177,7 @@ def _empty_response(language: str) -> Dict[str, Any]:
         summary = "There is not enough product history to identify reliable trends for the selected period."
 
     return {
+        "comparison_window_days": TREND_WINDOW_DAYS,
         "summary": {
             "eligible_products": 0,
             "rising_count": 0,
@@ -261,9 +263,12 @@ def build_rule_based_insights(
     recommendations: List[Dict[str, str]] = []
 
     if language == "it":
+        rising_count = summary["rising_count"]
+        declining_count = summary["declining_count"]
         summary_text = (
-            f"{summary['rising_count']} prodotti sono in crescita e "
-            f"{summary['declining_count']} mostrano un trend in calo nel periodo selezionato."
+            f"{rising_count} {'prodotto è' if rising_count == 1 else 'prodotti sono'} in crescita e "
+            f"{declining_count} {'mostra' if declining_count == 1 else 'mostrano'} "
+            f"un trend in calo nel periodo selezionato."
         )
         if declining_fast_count:
             summary_text += f" {declining_fast_count} richiedono attenzione immediata."
@@ -413,6 +418,19 @@ def _format_percent_signal(label: str, change_percent: float, days: int) -> str:
 def _format_percent_signal_it(label: str, change_percent: float, days: int) -> str:
     sign = "+" if change_percent > 0 else ""
     return f"{label} {sign}{change_percent:.0f}% vs i {days} giorni precedenti"
+
+
+def _declining_fast_message(product: Dict[str, Any], language: str, window_days: int) -> str:
+    delta = product["sales_delta_percent"]
+    if language == "it":
+        return (
+            f"{_display_name(product)} è in forte calo "
+            f"({delta:+.0f}% vendite rispetto ai {window_days} giorni precedenti)"
+        )
+    return (
+        f"{_display_name(product)} is declining fast "
+        f"({delta:+.0f}% sales vs previous {window_days} days)"
+    )
 
 
 def _build_dedup_key(event_kind: str, account_id: Optional[UUID], asin: Optional[str]) -> str:
@@ -624,6 +642,8 @@ class ProductTrendsService:
                 organization_id=organization_id,
                 account_ids=account_ids,
                 products=all_products,
+                language=language,
+                window_days=comparison_window_days,
             )
 
         filtered_products = all_products
@@ -659,6 +679,7 @@ class ProductTrendsService:
 
         return {
             "summary": summary,
+            "comparison_window_days": comparison_window_days,
             "rising_products": rising_products,
             "declining_products": declining_products,
             "products": sorted_products[:limit],
@@ -1081,6 +1102,8 @@ class ProductTrendsService:
         )
         existing_rule = result.scalars().first()
         if existing_rule:
+            if existing_rule.name in LEGACY_TREND_ALERT_RULE_NAMES:
+                existing_rule.name = TREND_ALERT_RULE_NAME
             return existing_rule
 
         rule = AlertRule(
@@ -1111,6 +1134,8 @@ class ProductTrendsService:
         organization_id: UUID,
         account_ids: List[UUID],
         products: List[Dict[str, Any]],
+        language: str = "it",
+        window_days: int = TREND_WINDOW_DAYS,
     ) -> None:
         rule = await self._ensure_trend_alert_rule(organization_id)
         now = datetime.now(timezone.utc)
@@ -1147,10 +1172,7 @@ class ProductTrendsService:
 
         for product, dedup_key in alert_candidates:
             existing_alert = existing_alerts_by_key.get(dedup_key)
-            message = (
-                f"{_display_name(product)} is declining fast "
-                f"({product['sales_delta_percent']:+.0f}% sales vs previous {TREND_WINDOW_DAYS} days)"
-            )
+            message = _declining_fast_message(product, language, window_days)
             details = {
                 "trend_class": product["trend_class"],
                 "trend_score": product["trend_score"],

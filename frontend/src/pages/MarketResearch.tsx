@@ -28,6 +28,7 @@ import { marketResearchApi, accountsApi, catalogApi } from '@/services/api'
 import { cn, formatDate, formatNumber, formatPercent } from '@/lib/utils'
 import { formatEur, hasCompetitiveMetrics } from '@/lib/market-research'
 import { useTranslation } from '@/i18n'
+import { translateProgressStep } from '@/lib/progressSteps'
 import { useLanguageStore } from '@/store/languageStore'
 import AsinInput from '@/components/market-research/AsinInput'
 import CompetitorTable from '@/components/market-research/CompetitorTable'
@@ -60,6 +61,34 @@ const statusVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'o
 
 function isMarketSearchReport(report: Pick<MarketResearchReport, 'title'> | null | undefined): boolean {
   return report?.title?.startsWith('Market Search:') ?? false
+}
+
+// Titles are stored with English prefixes that both pdf_service and the
+// search-vs-research check above branch on, so localize on render only.
+function localizeReportTitle(
+  title: string | null | undefined,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): string {
+  if (!title) return ''
+  const search = title.match(/^Market Search:\s*(.*)$/)
+  if (search) {
+    const body = search[1].replace(/\((\d+) products\)/, (_, n) =>
+      t('marketResearch.productsCount', { n }),
+    )
+    return `${t('marketResearch.titlePrefix.search')}: ${body}`
+  }
+  const research = title.match(/^Market Research:\s*(.*)$/)
+  if (research) return `${t('marketResearch.titlePrefix.research')}: ${research[1]}`
+  return title
+}
+
+// A job stuck in pending/processing for days will never finish; showing it as
+// "in queue" forever misleads. One day is far past any real run time.
+const STALE_JOB_HOURS = 24
+
+function isStaleJob(report: { status: string; created_at: string }): boolean {
+  if (report.status !== 'pending' && report.status !== 'processing') return false
+  return Date.now() - new Date(report.created_at).getTime() > STALE_JOB_HOURS * 3_600_000
 }
 
 function reportTypeLabelKey(report: { title?: string | null } | null | undefined): string {
@@ -592,7 +621,7 @@ export default function MarketResearch() {
                 <div>
                   <p className="text-sm font-medium">{t('marketResearch.loadingReport')}</p>
                   <p className="text-xs text-muted-foreground">
-                    {selectedReportListItem?.title || selectedReportId}
+                    {localizeReportTitle(selectedReportListItem?.title, t) || selectedReportId}
                   </p>
                 </div>
               </CardContent>
@@ -625,7 +654,11 @@ export default function MarketResearch() {
                       <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium">
-                          {selectedReport?.progress_step || t(`marketResearch.status.${selectedReportStatus || 'processing'}`)}
+                          {translateProgressStep(
+                            selectedReport?.progress_step,
+                            t,
+                            t(`marketResearch.status.${selectedReportStatus || 'processing'}`),
+                          )}
                         </p>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {t(
@@ -1113,15 +1146,19 @@ export default function MarketResearch() {
                   onClick={() => handleSelectReport(report.id, report.title)}
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <Badge variant={statusVariant[report.status] || 'outline'}>
-                      {t(`marketResearch.status.${report.status}`)}
+                    <Badge
+                      variant={isStaleJob(report) ? 'destructive' : statusVariant[report.status] || 'outline'}
+                    >
+                      {isStaleJob(report)
+                        ? t('marketResearch.status.stale')
+                        : t(`marketResearch.status.${report.status}`)}
                     </Badge>
                     <Badge variant="secondary">
                       {t(reportTypeLabelKey(report))}
                     </Badge>
                     <div className="min-w-0">
                       <p className="text-sm font-medium truncate">
-                        {report.title || report.source_asin}
+                        {localizeReportTitle(report.title, t) || report.source_asin}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {report.competitor_count} {t('marketResearch.competitors')} · {formatDate(report.created_at)}

@@ -17,7 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import { EmptyState } from '@/components/EmptyState'
-import { downloadBlob } from '@/lib/utils'
+import { downloadBlob, formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -103,10 +103,10 @@ function categoryIcon(category: StrategicRecommendation['category']) {
   }
 }
 
-function priorityBadge(priority: StrategicRecommendation['priority']) {
-  if (priority === 'high') return <Badge variant="destructive">{priority}</Badge>
-  if (priority === 'medium') return <Badge variant="outline">{priority}</Badge>
-  return <Badge variant="secondary">{priority}</Badge>
+function priorityBadge(priority: StrategicRecommendation['priority'], label: string) {
+  if (priority === 'high') return <Badge variant="destructive">{label}</Badge>
+  if (priority === 'medium') return <Badge variant="outline">{label}</Badge>
+  return <Badge variant="secondary">{label}</Badge>
 }
 
 export default function Recommendations() {
@@ -477,12 +477,12 @@ export default function Recommendations() {
                         {rec.confidence === 'low' && <ShieldAlert className="h-3 w-3" />}
                         {t(`recommendations.confidence.${rec.confidence}`)}
                       </Badge>
-                      {priorityBadge(rec.priority)}
+                      {priorityBadge(rec.priority, t(`marketResearch.priority.${rec.priority}`))}
                     </div>
                   </div>
                   <CardTitle className="text-base leading-snug">{rec.title}</CardTitle>
                   <div className="space-y-2 text-xs text-muted-foreground">
-                    <div>{new Date(rec.generated_at).toLocaleDateString()}</div>
+                    <div>{formatDate(rec.generated_at)}</div>
                     <div className="flex flex-wrap gap-2">
                       {isGlobalScope ? (
                         <Badge variant="secondary">

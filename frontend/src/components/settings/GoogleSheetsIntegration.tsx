@@ -24,6 +24,7 @@ import type {
   GoogleSheetsSyncRun,
 } from '@/types'
 import { useTranslation } from '@/i18n'
+import { translateProgressStep } from '@/lib/progressSteps'
 import { useToast } from '@/components/ui/use-toast'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -781,7 +782,7 @@ export function GoogleSheetsIntegration() {
                       {run.error_message ? (
                         <p className="text-sm text-destructive">{run.error_message}</p>
                       ) : (
-                        <p className="text-sm text-muted-foreground">{run.progress_step || '—'}</p>
+                        <p className="text-sm text-muted-foreground">{translateProgressStep(run.progress_step, t)}</p>
                       )}
                     </div>
                     {run.spreadsheet_url ? (

@@ -16,6 +16,7 @@ from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.models.inventory import InventoryData
+from app.models.product import Product
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
 from app.schemas.report import (
     SalesDataResponse, SalesDataAggregated,
@@ -366,7 +367,20 @@ async def get_inventory_data(
     query = query.order_by(InventoryData.snapshot_date.desc(), InventoryData.asin).limit(limit)
 
     result = await db.execute(query)
-    return result.scalars().all()
+    rows = result.scalars().all()
+
+    if rows:
+        titles_result = await db.execute(
+            select(Product.asin, Product.title).where(
+                Product.account_id.in_(accounts_query),
+                Product.asin.in_({row.asin for row in rows}),
+            )
+        )
+        titles = {asin: title for asin, title in titles_result.all() if title}
+        for row in rows:
+            row.title = titles.get(row.asin)
+
+    return rows
 
 
 @router.get("/advertising", response_model=List[AdvertisingMetricsResponse])

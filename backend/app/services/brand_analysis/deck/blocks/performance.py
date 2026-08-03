@@ -127,7 +127,10 @@ class TopPerformersBlock(BaseBlock):
     required_keys = ("top_5_asins",)
 
     def is_available(self, ctx) -> bool:
-        return len(ctx.m("top_5_asins") or []) >= 3
+        items = ctx.m("top_5_asins") or []
+        # A chart of five zero bars plus a "0,0% of revenue" caption is not an
+        # analysis; let the composer render the honest skip instead.
+        return len(items) >= 3 and any(float(i.get("revenue_2025") or 0) > 0 for i in items)
 
     def render(self, ctx, deck, page: int) -> BlockResult:
         slide = deck.blank_slide()

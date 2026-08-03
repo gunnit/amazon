@@ -47,6 +47,7 @@ class InventoryDataResponse(BaseModel):
     account_id: UUID
     snapshot_date: date
     asin: str
+    title: Optional[str] = None
     sku: Optional[str]
     fnsku: Optional[str]
     afn_fulfillable_quantity: int

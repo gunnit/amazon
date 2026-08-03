@@ -1633,6 +1633,7 @@ async def get_product_trends(
 
     return ProductTrendsResponse(
         summary=trend_data["summary"],
+        comparison_window_days=trend_data["comparison_window_days"],
         rising_products=trend_data["rising_products"],
         declining_products=trend_data["declining_products"],
         products=trend_data["products"],
@@ -1713,6 +1714,10 @@ async def get_product_trend_insights(
             generated_with_ai = True
         except Exception:
             logger.exception("Falling back to deterministic product trend insights")
+            # The key is configured but the provider rejected the call (billing,
+            # auth, quota). Reporting it as available would promise AI output
+            # that never arrives.
+            ai_available = False
 
     return ProductTrendInsightsResponse(
         insights=insights,

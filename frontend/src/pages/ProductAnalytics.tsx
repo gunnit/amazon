@@ -20,7 +20,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { analyticsApi } from '@/services/api'
-import { formatChangePercent, formatCurrency, formatNumber } from '@/lib/utils'
+import { formatCurrency, formatNumber, formatTrendPercent } from '@/lib/utils'
 import { AREA_FILL, CHART_PRIMARY, CHART_SERIES } from '@/lib/chart-theme'
 import { FilterBar, DateRangeFilter, AccountFilter } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
@@ -124,6 +124,7 @@ export default function ProductAnalytics() {
   })
 
   const trendProduct = trendsData?.products?.[0] ?? null
+  const trendWindowDays = trendsData?.comparison_window_days ?? 7
 
   const { data: insightsData, isFetching: insightsFetching } = useQuery({
     queryKey: ['product-trend-insights-single', asin, dateRange, accountIds, language],
@@ -272,9 +273,9 @@ export default function ProductAnalytics() {
                   <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="rounded-lg border p-3">
-                        <p className="text-xs text-muted-foreground">{t('analytics.tableSalesDelta')}</p>
+                        <p className="text-xs text-muted-foreground">{t('analytics.tableSalesDelta', { n: trendWindowDays })}</p>
                         <p className="mt-2 text-xl font-semibold tabular-nums">
-                          {formatChangePercent(trendProduct.sales_delta_percent) || '—'}
+                          {formatTrendPercent(trendProduct.sales_delta_percent) || '—'}
                         </p>
                       </div>
                       <div className="rounded-lg border p-3">
@@ -285,13 +286,13 @@ export default function ProductAnalytics() {
                         </p>
                       </div>
                       <div className="rounded-lg border p-3">
-                        <p className="text-xs text-muted-foreground">{t('analytics.current7DaySales')}</p>
+                        <p className="text-xs text-muted-foreground">{t('analytics.current7DaySales', { n: trendWindowDays })}</p>
                         <p className="mt-2 text-xl font-semibold tabular-nums">
                           {formatCurrency(trendProduct.current_revenue)}
                         </p>
                       </div>
                       <div className="rounded-lg border p-3">
-                        <p className="text-xs text-muted-foreground">{t('analytics.previous7DaySales')}</p>
+                        <p className="text-xs text-muted-foreground">{t('analytics.previous7DaySales', { n: trendWindowDays })}</p>
                         <p className="mt-2 text-xl font-semibold tabular-nums">
                           {formatCurrency(trendProduct.previous_revenue)}
                         </p>
@@ -563,7 +564,7 @@ export default function ProductAnalytics() {
             <TrendInsightsCard
               insights={insightsData?.insights ?? trendsData.insights}
               generatedWithAi={insightsData?.generated_with_ai ?? false}
-              aiAvailable={trendsData.ai_available}
+              aiAvailable={insightsData?.ai_available ?? trendsData.ai_available}
               loading={!insightsData && insightsFetching}
             />
           )}

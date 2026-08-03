@@ -578,6 +578,7 @@ export interface ProductTrendSummary {
 
 export interface ProductTrendsResponse {
   summary: ProductTrendSummary
+  comparison_window_days: number
   rising_products: ProductTrendItem[]
   declining_products: ProductTrendItem[]
   products: ProductTrendItem[]
@@ -620,6 +621,7 @@ export interface InventoryReportItem {
   account_id: string
   snapshot_date: string
   asin: string
+  title: string | null
   sku: string | null
   fnsku: string | null
   afn_fulfillable_quantity: number

@@ -41,6 +41,7 @@ import {
 import { useToast } from '@/components/ui/use-toast'
 import { alertsApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
+import { useFilterStore } from '@/store/filterStore'
 import { cn, formatDate, formatNumber } from '@/lib/utils'
 import {
   optimisticallyMarkAlertRead,
@@ -62,9 +63,9 @@ function severityIcon(severity: string) {
   }
 }
 
-function severityBadge(severity: string) {
+function severityBadge(severity: string, t: (key: string) => string) {
   const variant = severity === 'critical' ? 'destructive' : severity === 'warning' ? 'outline' : 'secondary'
-  return <Badge variant={variant}>{severity}</Badge>
+  return <Badge variant={variant}>{t(`alerts.severity.${severity}`)}</Badge>
 }
 
 function alertTypeBadge(type: string | null, t: (key: string) => string) {
@@ -723,6 +724,7 @@ function HistoryTab({
 }) {
   const { t, language } = useTranslation()
   const queryClient = useQueryClient()
+  const { accountIds } = useFilterStore()
   const [severityFilter, setSeverityFilter] = useState<string>('all')
   const [readFilter, setReadFilter] = useState<string>('all')
   const [typeFilter, setTypeFilter] = useState<string>('all')
@@ -732,9 +734,12 @@ function HistoryTab({
 
   useEffect(() => {
     setOffset(0)
-  }, [severityFilter, readFilter, typeFilter])
+  }, [severityFilter, readFilter, typeFilter, accountIds])
 
   const params: Record<string, unknown> = { limit, offset }
+  // The endpoint accepts account_id; without it the list mixes every account
+  // while the header switcher says otherwise.
+  if (accountIds.length === 1) params.account_id = accountIds[0]
   if (severityFilter !== 'all') params.severity = severityFilter
   if (readFilter !== 'all') params.status = readFilter
   if (typeFilter !== 'all') params.type = typeFilter
@@ -940,7 +945,7 @@ function HistoryTab({
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     {alertTypeBadge(alert.alert_type, t)}
-                    {severityBadge(alert.severity)}
+                    {severityBadge(alert.severity, t)}
                     {!alert.is_read && (
                       <Badge variant="outline" className="border-primary/30 text-primary">
                         {t('alerts.unread')}

@@ -1430,8 +1430,14 @@ def calculate_brand_metrics(
     export_2025: ParsedBrandExport,
     *,
     brand_name: str,
+    language: str = "en",
 ) -> dict[str, Any]:
     """Compute all requested Brand Analysis metrics before any narrative step."""
+    is_it = str(language or "").lower().startswith("it")
+
+    def _lim(en: str, it: str) -> str:
+        return it if is_it else en
+
     market_df24 = export_2024.rows.copy()
     market_df25 = export_2025.rows.copy()
     for df in (market_df24, market_df25):
@@ -1765,9 +1771,15 @@ def calculate_brand_metrics(
     )
     fee_limitation = None
     if fee_confidence == "estimated":
-        fee_limitation = "Product Fees API values are estimates based on current price and are not actual settlement fees."
+        fee_limitation = _lim(
+            "Product Fees API values are estimates based on current price and are not actual settlement fees.",
+            "I valori della Product Fees API sono stime basate sul prezzo corrente e non sono commissioni di liquidazione effettive.",
+        )
     elif fee_confidence == "unavailable":
-        fee_limitation = "FBA fees require settlement/finance reports, FBA fee reports, or Product Fees API estimates."
+        fee_limitation = _lim(
+            "FBA fees require settlement/finance reports, FBA fee reports, or Product Fees API estimates.",
+            "Le commissioni FBA richiedono report di liquidazione/finance, report commissioni FBA o le stime della Product Fees API.",
+        )
 
     market_has_brand_column = _text_present_any(market_df25, "brand")
     market_brand_values = (
@@ -1788,9 +1800,11 @@ def calculate_brand_metrics(
     market_size_status = "revenue_calculated" if broad_market_available else (
         "partial_internal_only" if export_2025.source_name == "internal" else "not_available"
     )
-    market_share_limitation = None if broad_market_available else (
+    market_share_limitation = None if broad_market_available else _lim(
         "Market share requires a broad ASIN-level market dataset with competitor revenue. "
-        "Internal Amazon data is brand/account-scoped and SP-API catalog search does not expose reliable revenue."
+        "Internal Amazon data is brand/account-scoped and SP-API catalog search does not expose reliable revenue.",
+        "La quota di mercato richiede un dataset di mercato a livello ASIN con il fatturato dei competitor. "
+        "I dati interni Amazon sono limitati al brand/account e la ricerca a catalogo SP-API non espone un fatturato affidabile.",
     )
 
     # Brand Analytics search-share signal (Brand Registry only). The search-terms
@@ -1848,9 +1862,11 @@ def calculate_brand_metrics(
     search_share_limitation = (
         None
         if brand_analytics_available
-        else (
+        else _lim(
             "Brand Analytics search share is unavailable unless the Brand Analytics "
-            "capability is present; it is never used as revenue market share."
+            "capability is present; it is never used as revenue market share.",
+            "La quota di ricerca Brand Analytics non è disponibile senza la capability "
+            "Brand Analytics; non viene mai usata come quota di mercato a fatturato.",
         )
     )
 
@@ -2098,7 +2114,9 @@ def build_fallback_narrative(metrics: dict[str, Any], language: str = "en") -> d
         conclusion_strengths = []
         if top_category:
             conclusion_strengths.append(f"Categoria principale: {top_category}")
-        if top5_share is not None:
+        # A 0,0% "strength" reads as nonsense; with no revenue there is nothing
+        # to concentrate.
+        if top5_share:
             conclusion_strengths.append(f"I top 5 ASIN generano il {fmtr.share(top5_share)} del fatturato")
         plan = ["Piano operativo in 3 fasi su 12 mesi"]
         urgency = [f"Catalogo inattivo: {fmtr.share(inactive_pct)}"]
@@ -2142,7 +2160,7 @@ def build_fallback_narrative(metrics: dict[str, Any], language: str = "en") -> d
         conclusion_strengths = []
         if top_category:
             conclusion_strengths.append(f"Top category: {top_category}")
-        if top5_share is not None:
+        if top5_share:
             conclusion_strengths.append(f"Top 5 ASINs drive {fmtr.share(top5_share)} of revenue")
         plan = ["Use a 3-phase 12-month operating plan"]
         urgency = [f"Inactive catalog: {fmtr.share(inactive_pct)}"]
@@ -2153,7 +2171,8 @@ def build_fallback_narrative(metrics: dict[str, Any], language: str = "en") -> d
 
     scenarios = metrics.get("growth_projection_scenarios") or {}
     realistic = scenarios.get("realistic") or {}
-    if realistic.get("revenue_low") is not None and realistic.get("revenue_high") is not None:
+    # "€ 0 – € 0" is not a range; suppress it when there is no revenue base.
+    if realistic.get("revenue_high"):
         label = (scenario_label_derived
                  if scenarios.get("basis") == "derived_from_yoy_history"
                  else scenario_label_illustrative)
@@ -3441,7 +3460,9 @@ def process_brand_analysis_job(job_id: str) -> None:
                     return
 
                 await _set_status("generating_metrics", "Calculating deterministic metrics")
-                metrics = calculate_brand_metrics(parsed_2024, parsed_2025, brand_name=job.brand_name)
+                metrics = calculate_brand_metrics(
+                    parsed_2024, parsed_2025, brand_name=job.brand_name, language=job.language
+                )
                 completeness = assess_data_completeness(parsed_2024, parsed_2025)
                 metrics["data_completeness"] = completeness
                 metrics["capability_matrix"] = capability_matrix

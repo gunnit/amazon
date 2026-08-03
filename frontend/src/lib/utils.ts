@@ -9,11 +9,12 @@ export function formatCurrency(value: number, currency: string = 'EUR'): string 
   return new Intl.NumberFormat('it-IT', {
     style: 'currency',
     currency,
+    useGrouping: true,
   }).format(value)
 }
 
 export function formatNumber(value: number): string {
-  return new Intl.NumberFormat('it-IT').format(value)
+  return new Intl.NumberFormat('it-IT', { useGrouping: true }).format(value)
 }
 
 export function formatRatio(value: number): string {
@@ -23,8 +24,20 @@ export function formatRatio(value: number): string {
   }).format(value)}x`
 }
 
-export function formatPercent(value: number): string {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
+function decimalFormat(digits: number): Intl.NumberFormat {
+  return new Intl.NumberFormat('it-IT', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+    useGrouping: true,
+  })
+}
+
+export function formatDecimal(value: number, digits: number = 2): string {
+  return decimalFormat(digits).format(value)
+}
+
+export function formatPercent(value: number, digits: number = 1): string {
+  return `${value >= 0 ? '+' : ''}${decimalFormat(digits).format(value)}%`
 }
 
 /** Signed percent change, empty string when the value is missing. */
@@ -33,7 +46,21 @@ export function formatChangePercent(value: number | null | undefined): string {
     return ''
   }
 
-  return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`
+  return `${value > 0 ? '+' : ''}${decimalFormat(1).format(value)}%`
+}
+
+/** Signed percent capped at ±999%: near-zero baselines make ratios meaningless. */
+export function formatTrendPercent(value: number | null | undefined): string {
+  if (value == null) {
+    return ''
+  }
+  if (value > 999) {
+    return '>999%'
+  }
+  if (value < -999) {
+    return '<-999%'
+  }
+  return formatChangePercent(value)
 }
 
 export function formatDate(date: string | Date): string {
@@ -41,7 +68,7 @@ export function formatDate(date: string | Date): string {
   const d = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
     ? new Date(date + 'T00:00:00')
     : new Date(date)
-  return d.toLocaleDateString('en-US', {
+  return d.toLocaleDateString('it-IT', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',

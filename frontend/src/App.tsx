@@ -96,7 +96,7 @@ function App() {
           <Route
             path="brand-analysis"
             element={
-              <ErrorBoundary title="Brand Analysis crashed">
+              <ErrorBoundary>
                 <BrandAnalysis />
               </ErrorBoundary>
             }
@@ -104,7 +104,7 @@ function App() {
           <Route
             path="brand-intelligence"
             element={
-              <ErrorBoundary title="Brand Intelligence crashed">
+              <ErrorBoundary>
                 <BrandIntelligence />
               </ErrorBoundary>
             }

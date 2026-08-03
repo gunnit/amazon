@@ -200,9 +200,13 @@ def _load_exports_module():
 class _FakeExportService:
     """Deterministic stand-in for ExportService used by the endpoint."""
 
+    account_type = "seller"
+
     def __init__(self, db):
         self.db = db
-        self.account = SimpleNamespace(id=uuid4(), account_name="Acme IT")
+        self.account = SimpleNamespace(
+            id=uuid4(), account_name="Acme IT", account_type=self.account_type
+        )
 
     async def _get_accounts(self, org_id, account_ids):
         return [self.account]
@@ -240,7 +244,7 @@ class _FakeExportService:
         return []
 
 
-def _run_powerpoint_endpoint(exports, rec_service_factory):
+def _run_powerpoint_endpoint(exports, rec_service_factory, export_service=None):
     import asyncio
     import io
     from pptx import Presentation
@@ -253,7 +257,7 @@ def _run_powerpoint_endpoint(exports, rec_service_factory):
     orig_service = exports.ExportService
     orig_rec = exports.StrategicRecommendationsService
     orig_latest = exports._latest_forecasts
-    exports.ExportService = _FakeExportService
+    exports.ExportService = export_service or _FakeExportService
     exports.StrategicRecommendationsService = rec_service_factory
 
     async def _no_forecasts(db, account_ids):
@@ -296,7 +300,12 @@ class _OkRecService:
 
     async def list_recommendations(self, org_id, *, limit=6):
         return [
-            SimpleNamespace(category="pricing", title="Raise price on hero ASIN", expected_impact="+5% margin"),
+            SimpleNamespace(
+                category="pricing",
+                title="Raise price on hero ASIN",
+                expected_impact="+5% margin",
+                account_id=None,
+            ),
         ]
 
 
@@ -333,3 +342,45 @@ def test_powerpoint_endpoint_degrades_when_recommendations_raise():
     # Must not raise even though the recommendation service blows up.
     prs, _, _ = _run_powerpoint_endpoint(exports, _BrokenRecService)
     assert len(prs.slides._sldIdLst) >= 10
+
+
+class _UnreconciledExportService(_FakeExportService):
+    """Seller-style rows whose per-ASIN revenue dwarfs the account total."""
+
+    async def _sales_summary(self, account_ids, start_date, end_date):
+        summary = await super()._sales_summary(account_ids, start_date, end_date)
+        summary["revenue"] = 1073.95
+        return summary
+
+
+def _slide_text(prs) -> str:
+    parts = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                parts.append(shape.text_frame.text)
+            if getattr(shape, "has_table", False):
+                for row in shape.table.rows:
+                    parts.extend(cell.text for cell in row.cells)
+    return "\n".join(parts)
+
+
+def test_powerpoint_withholds_products_when_they_exceed_the_account_total():
+    exports = _load_exports_module()
+    prs, _, _ = _run_powerpoint_endpoint(exports, _OkRecService, _UnreconciledExportService)
+    text = _slide_text(prs)
+    assert "non risultano riconciliati" in text
+    assert "Product 15" not in text
+
+
+def test_powerpoint_uses_vendor_labels_for_vendor_accounts():
+    exports = _load_exports_module()
+
+    class _VendorExportService(_FakeExportService):
+        account_type = "vendor"
+
+    prs, _, _ = _run_powerpoint_endpoint(exports, _OkRecService, _VendorExportService)
+    text = _slide_text(prs)
+    assert "Articoli Ordinati" in text
+    assert "Valore Medio Ordine" not in text
+    assert "Vendor Central" in text
