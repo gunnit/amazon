@@ -849,6 +849,36 @@ export interface ForecastExportJob {
   completed_at: string | null
 }
 
+// Competitor Tracking types
+export interface TrackedCompetitor {
+  id: string
+  asin: string
+  marketplace: string
+  title: string | null
+  brand: string | null
+  current_price: number | null
+  current_bsr: number | null
+  review_count: number | null
+  rating: number | null
+  is_tracking: boolean
+  created_at: string
+  last_snapshot_date: string | null
+}
+
+export interface CompetitorHistoryPoint {
+  date: string
+  price: number | null
+  bsr: number | null
+  review_count: number | null
+  rating: number | null
+}
+
+export interface CompetitorHistoryResponse {
+  competitor_id: string
+  asin: string
+  points: CompetitorHistoryPoint[]
+}
+
 // Market Research types
 export interface ProductSnapshot {
   asin: string

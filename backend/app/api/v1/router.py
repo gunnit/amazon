@@ -10,6 +10,7 @@ from app.api.v1 import (
     brand_intelligence,
     brand_pulse,
     catalog,
+    competitors,
     exports,
     forecasts,
     google_sheets,
@@ -30,6 +31,7 @@ api_router.include_router(exports.router, prefix="/exports", tags=["Exports"])
 api_router.include_router(google_sheets.router, prefix="/google-sheets", tags=["Google Sheets"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["Alerts"])
 api_router.include_router(market_research.router, prefix="/market-research", tags=["Market Research"])
+api_router.include_router(competitors.router, prefix="/competitors", tags=["Competitor Tracking"])
 api_router.include_router(brand_analysis.router, prefix="/brand-analysis", tags=["Brand Analysis"])
 api_router.include_router(brand_pulse.router, prefix="/brand-pulse", tags=["Brand Pulse"])
 api_router.include_router(

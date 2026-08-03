@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI):
                 run_backfill_recovery_sweep,
                 run_brand_analysis_recovery,
                 run_brand_search_terms_sync_all,
+                run_competitor_tracking_all,
                 run_daily_sync_all,
                 run_listing_quality_snapshot_all,
                 run_market_snapshot_all,
@@ -127,6 +128,16 @@ async def lifespan(app: FastAPI):
                 run_market_snapshot_all,
                 CronTrigger(hour=6, minute=30),
                 id="market-snapshot",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            # Daily tracked-competitor snapshots (Catalog/Pricing quotas,
+            # after the market snapshot so the two don't overlap on Pricing).
+            scheduler.add_job(
+                run_competitor_tracking_all,
+                CronTrigger(hour=7, minute=15),
+                id="competitor-tracking",
                 max_instances=1,
                 coalesce=True,
                 misfire_grace_time=3600,

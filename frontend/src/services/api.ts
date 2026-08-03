@@ -14,6 +14,7 @@ import type {
   GoogleSheetsConnection, GoogleSheetsSync, GoogleSheetsSyncRun,
   ApiKeysUpdate, ApiKeysResponse,
   MarketResearchReport, MarketResearchListItem, ComparisonMatrixResponse, MarketSearchResponse, MarketSearchResult,
+  TrackedCompetitor, CompetitorHistoryResponse,
   BrandAnalysisJob, BrandAnalysisListItem, BrandPulseResponse,
   BrandIntelligenceReport, BrandIntelligenceReportListItem,
   BrandIntelligenceGenerateResponse, BrandIntelligenceSchedule,
@@ -1077,6 +1078,28 @@ export const marketResearchApi = {
     language?: string
   }): Promise<MarketSearchResponse> => {
     const response = await api.post('/market-research/market-search', params)
+    return response.data
+  },
+}
+
+// Competitor Tracking API
+export const competitorsApi = {
+  list: async (): Promise<TrackedCompetitor[]> => {
+    const response = await api.get('/competitors')
+    return response.data
+  },
+
+  add: async (params: { asin: string; account_id: string }): Promise<TrackedCompetitor> => {
+    const response = await api.post('/competitors', params)
+    return response.data
+  },
+
+  remove: async (id: string): Promise<void> => {
+    await api.delete(`/competitors/${id}`)
+  },
+
+  history: async (id: string, days = 90): Promise<CompetitorHistoryResponse> => {
+    const response = await api.get(`/competitors/${id}/history`, { params: { days } })
     return response.data
   },
 }

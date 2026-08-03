@@ -1106,6 +1106,61 @@ def run_listing_quality_snapshot_all() -> dict:
     return _run_seller_job("Listing quality snapshot", _snapshot_listing_quality_one)
 
 
+async def _sync_competitors_org(org_id: UUID, session_factory) -> int:
+    from app.services.competitor_tracking_service import CompetitorTrackingService
+
+    async with session_factory() as db:
+        try:
+            count = await CompetitorTrackingService(db).sync_organization(org_id)
+            await db.commit()
+            return count
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            logger.exception("Competitor tracking sync failed for org %s", org_id)
+            return 0
+
+
+def run_competitor_tracking_all() -> dict:
+    """Daily tracked-competitor snapshots (Catalog/Pricing quotas, no report lock)."""
+    from app.models.competitor import Competitor
+
+    engine = None
+    loop = None
+    try:
+        engine, session_factory = _make_local_session_factory()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def _collect() -> List[UUID]:
+            async with session_factory() as db:
+                result = await db.execute(
+                    select(Competitor.organization_id)
+                    .where(Competitor.is_tracking.is_(True))
+                    .distinct()
+                )
+                return [row[0] for row in result.all()]
+
+        org_ids = loop.run_until_complete(_collect())
+        records = 0
+        for org_id in org_ids:
+            records += loop.run_until_complete(_sync_competitors_org(org_id, session_factory))
+        logger.info(
+            "Competitor tracking: finished %d organizations, %d competitors updated",
+            len(org_ids), records,
+        )
+        return {"status": "success", "organizations": len(org_ids), "records": records}
+    finally:
+        try:
+            if loop is not None and engine is not None:
+                loop.run_until_complete(engine.dispose())
+        finally:
+            if loop is not None:
+                loop.close()
+
+
 def run_daily_sync_all() -> None:
     """Entrypoint for the scheduler: sync every active account once."""
     if not _SCHEDULED_SYNC_LOCK.acquire(blocking=False):

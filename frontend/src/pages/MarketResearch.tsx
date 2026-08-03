@@ -8,6 +8,7 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
+  Crosshair,
   Globe,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -32,6 +33,7 @@ import AsinInput from '@/components/market-research/AsinInput'
 import CompetitorTable from '@/components/market-research/CompetitorTable'
 import AIInsights from '@/components/market-research/AIInsights'
 import MarketTracker, { type MarketTrackerState } from '@/components/market-research/MarketTracker'
+import CompetitorTracking from '@/components/market-research/CompetitorTracking'
 import MarketPositionSummary from '@/components/market-research/MarketPositionSummary'
 import MarketOverviewStats from '@/components/market-research/MarketOverviewStats'
 import PriceDistributionChart from '@/components/market-research/PriceDistributionChart'
@@ -144,7 +146,7 @@ export default function MarketResearch() {
   const { language } = useLanguageStore()
   const [selectedAccount, setSelectedAccount] = useState('')
   const [analysisLanguage, setAnalysisLanguage] = useState<'en' | 'it'>(language)
-  const [activeTab, setActiveTab] = useState<'product-analysis' | 'market-search'>('product-analysis')
+  const [activeTab, setActiveTab] = useState<'product-analysis' | 'market-search' | 'competitor-tracking'>('product-analysis')
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null)
   const [marketTrackerState, setMarketTrackerState] = useState<MarketTrackerState>({
     searchType: 'keyword',
@@ -438,7 +440,7 @@ export default function MarketResearch() {
       </Card>
 
       {/* Tabs: Product Analysis + Market Search */}
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'product-analysis' | 'market-search')} className="space-y-4">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'product-analysis' | 'market-search' | 'competitor-tracking')} className="space-y-4">
         <TabsList>
           <TabsTrigger value="product-analysis" className="gap-2">
             <Search className="h-4 w-4" />
@@ -447,6 +449,10 @@ export default function MarketResearch() {
           <TabsTrigger value="market-search" className="gap-2">
             <Globe className="h-4 w-4" />
             {t('marketResearch.marketTrackerTab')}
+          </TabsTrigger>
+          <TabsTrigger value="competitor-tracking" className="gap-2">
+            <Crosshair className="h-4 w-4" />
+            {t('competitorTracking.tab')}
           </TabsTrigger>
         </TabsList>
 
@@ -568,6 +574,11 @@ export default function MarketResearch() {
             }}
             isGenerating={generateMutation.isPending}
           />
+        </TabsContent>
+
+        {/* ── Tab 3: Competitor Tracking ── */}
+        <TabsContent value="competitor-tracking">
+          <CompetitorTracking selectedAccount={selectedAccount} products={products} />
         </TabsContent>
       </Tabs>
 
