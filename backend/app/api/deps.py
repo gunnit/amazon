@@ -88,16 +88,19 @@ def revoke_token(jti: str, exp: Optional[int]) -> bool:
 
 
 class RateLimiter:
-    """Fixed-window per-client rate limiter backed by Redis.
+    """Fixed-window per-client rate limiter.
 
-    Used as a FastAPI dependency on sensitive endpoints. If Redis is
-    unavailable the limiter allows the request rather than locking users out.
+    Used as a FastAPI dependency on sensitive endpoints. Counts in Redis when
+    available; otherwise falls back to an in-process counter so the limit
+    still holds on deployments without Redis. The fallback is per-process,
+    which is fine for a single-instance API.
     """
 
     def __init__(self, max_requests: int, window_seconds: int = 60, scope: str = "default"):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.scope = scope
+        self._local: dict[str, tuple[float, int]] = {}
 
     def _client_key(self, request: Request) -> str:
         forwarded = request.headers.get("x-forwarded-for")
@@ -106,18 +109,31 @@ class RateLimiter:
         )
         return f"ratelimit:{self.scope}:{ip}"
 
+    def _local_incr(self, key: str) -> int:
+        now = time.monotonic()
+        start, count = self._local.get(key, (now, 0))
+        if now - start >= self.window_seconds:
+            start, count = now, 0
+        count += 1
+        self._local[key] = (start, count)
+        if len(self._local) > 10_000:
+            cutoff = now - self.window_seconds
+            self._local = {k: v for k, v in self._local.items() if v[0] > cutoff}
+        return count
+
     async def __call__(self, request: Request) -> None:
+        key = self._client_key(request)
         client = _get_redis()
         if client is None:
-            return
-        key = self._client_key(request)
-        try:
-            count = client.incr(key)
-            if count == 1:
-                client.expire(key, self.window_seconds)
-        except Exception:
-            logger.warning("Rate limit check failed; allowing request", exc_info=True)
-            return
+            count = self._local_incr(key)
+        else:
+            try:
+                count = client.incr(key)
+                if count == 1:
+                    client.expire(key, self.window_seconds)
+            except Exception:
+                logger.warning("Redis rate limit check failed; using local counter", exc_info=True)
+                count = self._local_incr(key)
         if count > self.max_requests:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
