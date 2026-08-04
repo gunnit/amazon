@@ -240,11 +240,11 @@ export default function Settings() {
   const handleExportData = async () => {
     setIsSaving(true)
     try {
-      const blob = await exportsApi.exportExcel({
+      const blob = await exportsApi.exportExcelBundle({
+        report_types: ['sales', 'advertising'],
         start_date: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         end_date: new Date().toISOString().split('T')[0],
-        include_sales: true,
-        include_advertising: true,
+        language,
       })
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')

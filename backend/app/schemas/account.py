@@ -131,6 +131,14 @@ class AmazonAccountResponse(BaseModel):
     last_sync_heartbeat_at: Optional[datetime] = None
     sync_error_code: Optional[str] = None
     sync_error_kind: Optional[str] = None
+    last_backfill_status: Optional[str] = None
+    last_backfill_started_at: Optional[datetime] = None
+    last_backfill_completed_at: Optional[datetime] = None
+    last_backfill_records: Optional[int] = None
+    last_backfill_windows_skipped: Optional[int] = None
+    last_backfill_error: Optional[str] = None
+    last_backfill_range_start: Optional[date] = None
+    last_backfill_range_end: Optional[date] = None
     has_refresh_token: bool = False
     has_advertising_refresh_token: bool = False
     has_ads_client_credentials: bool = False

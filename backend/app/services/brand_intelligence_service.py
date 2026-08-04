@@ -493,7 +493,7 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
                 f"{active.get('previous', 0)} la settimana precedente.",
                 SOURCE_INTERNAL_SALES,
                 "high",
-                f"active_asins current={active.get('current', 0)}, previous={active.get('previous', 0)}",
+                f"active_asins attuale={active.get('current', 0)}, precedente={active.get('previous', 0)}",
             )
         ],
     }
@@ -512,7 +512,7 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
                 f"contro {_fmt_eur(rev.get('previous'))} la settimana precedente).",
                 SOURCE_INTERNAL_SALES,
                 "high",
-                f"revenue current={rev.get('current')}, previous={rev.get('previous')}",
+                f"revenue attuale={rev.get('current')}, precedente={rev.get('previous')}",
             ),
             item(
                 "Economia dell'ordine",
@@ -520,7 +520,7 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
                 f"({_fmt_pct(aov.get('delta_percent'))} settimana su settimana).",
                 SOURCE_INTERNAL_SALES,
                 "high",
-                f"average_order_value current={aov.get('current')}, previous={aov.get('previous')}",
+                f"average_order_value attuale={aov.get('current')}, precedente={aov.get('previous')}",
             ),
         ],
     }
@@ -555,7 +555,7 @@ def build_fallback_sections(brand_label: str, diff: Dict[str, Any]) -> List[Dict
                 f"prima settimana monitorata.",
                 SOURCE_INTERNAL_SALES,
                 "medium",
-                f"asin={row['asin']} appeared this week",
+                f"asin={row['asin']} comparso questa settimana",
             )
         )
     if ads.get("is_available") and (ads.get("acos") or 0) > 0 and (ads.get("acos") or 0) < 20:
@@ -989,3 +989,92 @@ async def _emit_ready_alert(
             )
         rule.last_triggered_at = now
         await ndb.commit()
+
+
+def run_brand_intelligence_scan() -> None:
+    """In-process scheduler entrypoint mirroring Celery ``scan_brand_intelligence_due``.
+
+    Finds enabled weekly schedules that are due, creates their pending reports,
+    and runs the pipeline inline (one at a time — the 512MB web instance should
+    not run several report pipelines concurrently).
+    """
+    from app.models.brand_intelligence import BrandIntelligenceSchedule
+    from app.services.alert_check_service import _run_with_private_engine
+
+    async def _scan(SessionLocal):
+        now = datetime.now(timezone.utc)
+        report_ids: list[str] = []
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(BrandIntelligenceSchedule).where(
+                    BrandIntelligenceSchedule.is_enabled.is_(True),
+                    BrandIntelligenceSchedule.next_run_at.is_not(None),
+                    BrandIntelligenceSchedule.next_run_at <= now,
+                )
+            )
+            schedules = result.scalars().all()
+            service = BrandIntelligenceService(db)
+            for schedule in schedules:
+                account = await service.resolve_account(
+                    schedule.organization_id, schedule.account_id
+                )
+                if account is None:
+                    schedule.is_enabled = False
+                    continue
+                period_start, period_end = resolve_week_period()
+                report = await service.create_pending_report(
+                    schedule.organization_id,
+                    account,
+                    period_start=period_start,
+                    period_end=period_end,
+                    generated_by="scheduler",
+                )
+                schedule.next_run_at = compute_next_weekly_run(
+                    schedule.day_of_week, schedule.timezone
+                )
+                report_ids.append(str(report.id))
+            await db.commit()
+        return report_ids
+
+    report_ids = _run_with_private_engine("brand intelligence scan", _scan) or []
+    for report_id in report_ids:
+        try:
+            process_brand_intelligence_report_job(report_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Brand intelligence pipeline failed for %s", report_id)
+    if report_ids:
+        logger.info("Brand intelligence scan processed %d report(s)", len(report_ids))
+
+
+def run_brand_intelligence_recovery() -> None:
+    """Force-fail brand-intelligence runs whose thread died mid-pipeline."""
+    from app.models.brand_intelligence import (
+        RUNNING_STATUSES,
+        STATUS_FAILED,
+        BrandIntelligenceReport,
+    )
+    from app.services.alert_check_service import _run_with_private_engine
+
+    async def _recover(SessionLocal):
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=20)
+        failed = 0
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(BrandIntelligenceReport).where(
+                    BrandIntelligenceReport.status.in_(tuple(RUNNING_STATUSES)),
+                    BrandIntelligenceReport.heartbeat_at.is_not(None),
+                    BrandIntelligenceReport.heartbeat_at <= cutoff,
+                )
+            )
+            now = datetime.utcnow()
+            for report in result.scalars().all():
+                report.status = STATUS_FAILED
+                report.error_message = "Run stalled before completion and was failed by the monitor"
+                report.heartbeat_at = now
+                failed += 1
+            await db.commit()
+        if failed:
+            logger.info("Brand intelligence recovery failed %d stalled run(s)", failed)
+        return {"failed": failed}
+
+    return _run_with_private_engine("brand intelligence recovery", _recover)

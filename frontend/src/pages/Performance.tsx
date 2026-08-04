@@ -1626,7 +1626,11 @@ function ResiTab({ active, dateRange, accountIds }: TabProps) {
           <div className="h-[320px]">
             {returnTrendChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={returnTrendChartData} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+                <LineChart
+                  key={`${returnTrendChartData.length}_${returnTrendChartData[0]?.date ?? ''}_${returnTrendChartData[returnTrendChartData.length - 1]?.date ?? ''}`}
+                  data={returnTrendChartData}
+                  margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="displayDate" axisLine={false} tickLine={false} />
                   <YAxis
@@ -1940,7 +1944,11 @@ function AdsVsOrganicTab({
             <div className="h-[360px]">
               {adsChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={adsChartData} margin={{ top: 8, right: 12, left: 8, bottom: 12 }}>
+                  <BarChart
+                    key={`${adsEffectiveGroupBy}_${adsChartData.length}_${adsChartData[0]?.date ?? ''}`}
+                    data={adsChartData}
+                    margin={{ top: 8, right: 12, left: 8, bottom: 12 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis
                       dataKey="displayDate"

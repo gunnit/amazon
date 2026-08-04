@@ -213,8 +213,15 @@ export function PeriodComparisonCard({
                 </div>
 
                 <div className="h-[320px]">
+                  {/* key: remount on dataset change — Recharts' update diff intermittently
+                      drops line paths when the series length changes (empty chart with
+                      populated axes). A fresh mount always draws. */}
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+                    <LineChart
+                      key={`${comparison.period_1.start}_${comparison.period_2.start}_${chartData.length}`}
+                      data={chartData}
+                      margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
+                    >
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                       <XAxis dataKey="tick_label" axisLine={false} tickLine={false} minTickGap={24} />
                       <YAxis

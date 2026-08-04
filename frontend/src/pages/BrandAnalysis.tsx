@@ -633,7 +633,14 @@ export default function BrandAnalysis() {
             : selectedAccountObj.sync_status === 'syncing'
               ? 'warning'
               : 'ready',
-        label: selectedAccountObj.sync_status,
+        label:
+          selectedAccountObj.sync_status === 'success'
+            ? t('accounts.status.synced')
+            : selectedAccountObj.sync_status === 'syncing'
+              ? t('accounts.status.syncing')
+              : selectedAccountObj.sync_status === 'error'
+                ? t('accounts.status.error')
+                : t('accounts.status.pending'),
         detail: selectedAccountObj.last_sync_at
           ? `${t('brandAnalysis.readiness.lastSync')} ${formatDate(selectedAccountObj.last_sync_at)}`
           : t('brandAnalysis.readiness.neverSynced'),

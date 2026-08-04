@@ -38,9 +38,14 @@ def _clamp(value: float, *, minimum: float = -100.0, maximum: float = 100.0) -> 
 
 
 def _percent_change(current: float, previous: float) -> float:
-    if previous == 0:
-        return 100.0 if current > 0 else 0.0
-    return ((current - previous) / previous) * 100.0
+    # Net-of-returns revenue can go negative; a zero/negative baseline makes
+    # the ratio meaningless (a "-1275%" drop reached the UI), so degrade to
+    # direction-only there and floor real drops at -100%.
+    if previous <= 0:
+        if current > 0:
+            return 100.0
+        return -100.0 if current < previous else 0.0
+    return max(((current - previous) / previous) * 100.0, -100.0)
 
 
 def _bsr_change_percent(current_bsr: Optional[int], previous_bsr: Optional[int]) -> Optional[float]:
