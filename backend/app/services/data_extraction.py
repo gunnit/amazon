@@ -690,8 +690,14 @@ class DataExtractionService:
             })
             count += 1
 
-        # --- Per-ASIN aggregate rows (salesAndTrafficByAsin) ---
-        for entry in report.get("by_asin", []):
+        # --- Per-ASIN rows (salesAndTrafficByAsin) ---
+        # This section carries no date: Amazon aggregates each ASIN over the
+        # WHOLE requested window, so it can only be attributed to a date when the
+        # window is a single day. Storing a 30-day window under end_date is what
+        # made per-ASIN sums explode (~42x for a trailing-30-day nightly refresh).
+        # The daily per-ASIN series comes from orders instead — see
+        # rebuild_asin_sales_from_orders.
+        for entry in (report.get("by_asin", []) if start_date == end_date else []):
             asin = entry.get("childAsin") or entry.get("parentAsin")
             if not asin:
                 continue
@@ -855,6 +861,11 @@ class DataExtractionService:
                 )
                 sreport = {}
 
+            # When SOURCING answered, an ASIN-day it did not list shipped zero;
+            # writing NULL instead would make it fall back to ordered revenue and
+            # inflate every per-ASIN sum above the sentinel.
+            sourcing_ok = bool(sreport.get("salesByAsin") or sreport.get("salesAggregate"))
+
             for sentry in sreport.get("salesByAsin", []) or []:
                 sasin = sentry.get("asin")
                 sdate = self._parse_report_date(sentry.get("startDate"))
@@ -912,6 +923,8 @@ class DataExtractionService:
                 units = entry.get("orderedUnits", 0) or 0
 
                 shipped = shipped_by_asin_date.get((asin, entry_date))
+                if shipped is None and sourcing_ok:
+                    shipped = {"revenue": Decimal("0"), "units": 0, "cogs": Decimal("0")}
                 ordered_keys.add((asin, entry_date))
                 await self._upsert_sales_record({
                     "account_id": account.id,
@@ -1313,6 +1326,9 @@ class DataExtractionService:
 
         await self._touch_sync(account)
         synced_orders, synced_items = await self._persist_orders(account, client, raw_orders)
+        await self.rebuild_asin_sales_from_orders(
+            account, created_after.date(), created_before.date()
+        )
 
         await self.db.flush()
         logger.info(
@@ -1413,6 +1429,91 @@ class DataExtractionService:
 
         return synced_orders, synced_items
 
+    async def rebuild_asin_sales_from_orders(
+        self,
+        account: AmazonAccount,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> int:
+        """Rebuild the seller per-ASIN daily sales_data rows from stored orders.
+
+        The Sales & Traffic report cannot supply them: its ASIN section has no
+        date. Orders can — purchase_date + asin + item_price reproduce the
+        __DAILY_TOTAL__ sentinel within ~3% (pending/cancellation timing).
+        Reads only the DB, so it costs no Amazon quota and is idempotent; with no
+        window it rebuilds the account's whole history.
+
+        ponytail: traffic columns stay 0 on these rows — Amazon exposes ASIN-level
+        sessions only as a window aggregate. If real daily ASIN traffic is ever
+        needed, request Sales & Traffic one day at a time (the sync_sales_data
+        guard already makes those writes correct).
+        """
+        from app.models.amazon_account import AccountType
+
+        if account.account_type == AccountType.VENDOR:
+            return 0
+
+        params: Dict[str, Any] = {"acc": str(account.id), "sentinel": DAILY_TOTAL_ASIN}
+        sales_window = ""
+        orders_window = ""
+        if start_date:
+            params["win_start"] = start_date
+            sales_window += " AND date >= :win_start"
+            orders_window += " AND (o.purchase_date AT TIME ZONE 'UTC')::date >= :win_start"
+        if end_date:
+            params["win_end"] = end_date
+            sales_window += " AND date <= :win_end"
+            orders_window += " AND (o.purchase_date AT TIME ZONE 'UTC')::date <= :win_end"
+
+        await self.db.execute(
+            text(
+                "DELETE FROM sales_data WHERE account_id = :acc AND asin <> :sentinel"
+                + sales_window
+            ),
+            params,
+        )
+        result = await self.db.execute(
+            text(
+                """
+                INSERT INTO sales_data (
+                    account_id, date, asin, sku, units_ordered, ordered_product_sales,
+                    total_order_items, currency
+                )
+                SELECT o.account_id,
+                       (o.purchase_date AT TIME ZONE 'UTC')::date,
+                       i.asin,
+                       MAX(i.sku),
+                       SUM(i.quantity),
+                       SUM(COALESCE(i.item_price, 0)),
+                       COUNT(*),
+                       COALESCE(MAX(o.currency), 'EUR')
+                  FROM orders o
+                  JOIN order_items i ON i.order_id = o.id
+                 WHERE o.account_id = :acc
+                   AND i.asin IS NOT NULL
+                   AND o.order_status NOT IN ('Canceled', 'Cancelled')
+                """
+                + orders_window
+                + """
+                 GROUP BY 1, 2, 3
+                ON CONFLICT ON CONSTRAINT uq_sales_data_account_date_asin DO UPDATE SET
+                    sku = EXCLUDED.sku,
+                    units_ordered = EXCLUDED.units_ordered,
+                    ordered_product_sales = EXCLUDED.ordered_product_sales,
+                    total_order_items = EXCLUDED.total_order_items,
+                    currency = EXCLUDED.currency
+                """
+            ),
+            params,
+        )
+        await self.db.flush()
+        written = result.rowcount or 0
+        logger.info(
+            "Rebuilt %d per-ASIN sales rows from orders for %s (%s..%s)",
+            written, account.account_name, start_date or "start", end_date or "today",
+        )
+        return written
+
     async def backfill_orders_history(
         self,
         account: AmazonAccount,
@@ -1451,6 +1552,7 @@ class DataExtractionService:
             synced_orders, synced_items = await self._persist_orders(
                 account, client, raw_orders
             )
+            await self.rebuild_asin_sales_from_orders(account, window_start, window_end)
             await self.db.commit()
             total += synced_orders
             logger.info(

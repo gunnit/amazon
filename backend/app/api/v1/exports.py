@@ -668,14 +668,13 @@ async def export_to_excel(
         )
         result = await db.execute(sales_query)
         for sale in result.scalars().all():
+            # Same rule as app/services/sales_metrics.py: only NULL falls back.
             display_units = (
-                sale.shipped_units
-                if sale.shipped_units not in (None, 0)
-                else sale.units_ordered
+                sale.shipped_units if sale.shipped_units is not None else sale.units_ordered
             )
             display_revenue = (
                 sale.shipped_revenue
-                if sale.shipped_revenue not in (None, 0)
+                if sale.shipped_revenue is not None
                 else sale.ordered_product_sales
             )
             sales_rows.append({

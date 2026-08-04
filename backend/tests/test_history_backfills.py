@@ -17,12 +17,17 @@ class FakeDb:
     def __init__(self):
         self.commits = 0
         self.flushes = 0
+        self.statements = []
 
     async def commit(self):
         self.commits += 1
 
     async def flush(self):
         self.flushes += 1
+
+    async def execute(self, statement, *_args):
+        self.statements.append(str(statement))
+        return SimpleNamespace(rowcount=0)
 
 
 def _seller(**overrides):
@@ -117,7 +122,9 @@ async def test_sync_orders_persists_through_shared_helper(monkeypatch):
 
     assert count == 1
     assert captured["raw_orders"] == [{"AmazonOrderId": "171-1"}]
-    assert db.flushes == 1
+    # Orders sync also rebuilds the per-ASIN daily rows for the synced window.
+    assert any("INSERT INTO sales_data" in stmt for stmt in db.statements)
+    assert db.flushes == 2
 
 
 @pytest.mark.asyncio
