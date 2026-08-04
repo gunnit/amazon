@@ -819,8 +819,8 @@ async def export_to_powerpoint(
             currency = row["currency"]
             break
 
-    # Seller accounts can store a trailing-window aggregate on every date, so the
-    # per-ASIN rows sum far above the account total taken from the sentinel row.
+    # Safety net: per-ASIN rows and the sentinel account total come from
+    # different sources, so a regression in either can make them disagree.
     # Publishing both in one deck contradicts itself, so drop the ASIN table
     # instead of shipping numbers that cannot both be true.
     product_revenue_total = sum(float(r.get("revenue") or 0) for r in product_rows)
