@@ -1079,3 +1079,31 @@ class StrategicRecommendationsService:
             )
         )
         return int(result.scalar() or 0)
+
+
+def run_weekly_recommendations():
+    """In-process scheduler entrypoint mirroring Celery ``generate_weekly_recommendations``.
+
+    Skips quietly when the AI provider is unconfigured or unavailable (credit
+    exhausted) — the wiring stays correct and resumes when the provider does.
+    """
+    from app.models.user import Organization
+    from app.services.alert_check_service import _run_with_private_engine
+
+    async def _generate(SessionLocal):
+        async with SessionLocal() as db:
+            org_ids = list((await db.execute(select(Organization.id))).scalars().all())
+        created_total = 0
+        for org_id in org_ids:
+            try:
+                async with SessionLocal() as db:
+                    created = await StrategicRecommendationsService(db).generate_for_organization(org_id)
+                    await db.commit()
+                created_total += len(created)
+            except RuntimeError as exc:  # includes AIProviderUnavailableError
+                logger.warning("Weekly recommendations skipped for org %s: %s", org_id, exc)
+            except Exception:  # noqa: BLE001
+                logger.exception("Weekly recommendations failed for org %s", org_id)
+        return {"organizations": len(org_ids), "created": created_total}
+
+    return _run_with_private_engine("weekly recommendations", _generate)

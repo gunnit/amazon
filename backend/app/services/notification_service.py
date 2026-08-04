@@ -240,37 +240,42 @@ class NotificationService:
         alerts: List[Dict[str, Any]],
         from_email: Optional[str] = None,
     ) -> bool:
-        """Send daily digest email."""
+        """Send daily digest email (Italian, EUR formatting)."""
+        from app.services.export_service import format_int_eu, format_money_eu
+
+        alert_lines = ''.join(f'<p>- {a.get("message", "")}</p>' for a in alerts[:5]) or (
+            '<p>Nessun avviso nelle ultime 24 ore.</p>'
+        )
         html_content = f"""
         <html>
         <body style="font-family: Arial, sans-serif;">
-            <h1 style="color: #4472C4;">Daily Performance Digest</h1>
+            <h1 style="color: #4472C4;">Riepilogo giornaliero delle performance</h1>
 
-            <h2>Key Metrics</h2>
+            <h2>Indicatori principali</h2>
             <table style="border-collapse: collapse; width: 100%;">
                 <tr style="background-color: #4472C4; color: white;">
-                    <th style="padding: 10px; text-align: left;">Metric</th>
-                    <th style="padding: 10px; text-align: right;">Value</th>
-                    <th style="padding: 10px; text-align: right;">Change</th>
+                    <th style="padding: 10px; text-align: left;">Metrica</th>
+                    <th style="padding: 10px; text-align: right;">Valore</th>
+                    <th style="padding: 10px; text-align: right;">Variazione</th>
                 </tr>
                 <tr>
-                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">Revenue</td>
-                    <td style="padding: 10px; text-align: right;">${kpis.get('revenue', 0):,.2f}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">Fatturato</td>
+                    <td style="padding: 10px; text-align: right;">{format_money_eu(float(kpis.get('revenue', 0) or 0))}</td>
                     <td style="padding: 10px; text-align: right;">{kpis.get('revenue_change', 0):+.1f}%</td>
                 </tr>
                 <tr>
-                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">Units Sold</td>
-                    <td style="padding: 10px; text-align: right;">{kpis.get('units', 0):,}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">Unità vendute</td>
+                    <td style="padding: 10px; text-align: right;">{format_int_eu(float(kpis.get('units', 0) or 0))}</td>
                     <td style="padding: 10px; text-align: right;">{kpis.get('units_change', 0):+.1f}%</td>
                 </tr>
             </table>
 
-            <h2>Alerts ({len(alerts)})</h2>
-            {''.join(f'<p>- {a.get("message", "")}</p>' for a in alerts[:5])}
+            <h2>Avvisi ({len(alerts)})</h2>
+            {alert_lines}
 
             <hr>
             <p style="color: #666; font-size: 12px;">
-                View full details in your <a href="https://inthezon.niuexa.ai">Inthezon Dashboard</a>
+                Tutti i dettagli nella tua <a href="https://inthezon-frontend.onrender.com">dashboard Inthezon</a>
             </p>
         </body>
         </html>
@@ -278,7 +283,7 @@ class NotificationService:
 
         return await self.send_email(
             to_emails=[to_email],
-            subject="Inthezon Daily Digest",
+            subject="Inthezon — Riepilogo giornaliero",
             html_content=html_content,
             from_email=from_email,
         )

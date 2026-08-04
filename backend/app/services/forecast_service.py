@@ -732,3 +732,36 @@ class ForecastService:
             "first_period_avg": round(first_avg, 2),
             "second_period_avg": round(second_avg, 2),
         }
+
+
+def run_weekly_forecast_generation():
+    """In-process scheduler entrypoint mirroring Celery ``generate_all_forecasts``.
+
+    Regenerates the account-level forecast for every active account so the
+    Forecasts page does not go stale between manual generations.
+    """
+    from app.models.amazon_account import AmazonAccount
+    from app.services.alert_check_service import _run_with_private_engine
+
+    async def _generate(SessionLocal):
+        async with SessionLocal() as db:
+            account_ids = list(
+                (
+                    await db.execute(
+                        select(AmazonAccount.id).where(AmazonAccount.is_active == True)  # noqa: E712
+                    )
+                ).scalars().all()
+            )
+        generated = 0
+        for account_id in account_ids:
+            try:
+                async with SessionLocal() as db:
+                    await ForecastService(db).generate_forecast(account_id)
+                    await db.commit()
+                generated += 1
+            except Exception as exc:  # noqa: BLE001 - one bad account must not stop the rest
+                logger.warning("Weekly forecast failed for account %s: %s", account_id, exc)
+        logger.info("Weekly forecast generation: %d/%d accounts", generated, len(account_ids))
+        return {"generated": generated, "accounts": len(account_ids)}
+
+    return _run_with_private_engine("weekly forecast generation", _generate)

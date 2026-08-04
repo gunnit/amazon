@@ -160,8 +160,10 @@ def test_daily_digests_short_circuit_without_sendgrid(monkeypatch):
         iterated["sessions"] += 1
         raise AssertionError("send_daily_digests must not open a session when SendGrid is absent")
 
-    # If the short-circuit fails, run_async would be invoked and open a session.
-    monkeypatch.setattr(notif_tasks, "run_async", _boom)
+    # If the short-circuit fails, the private engine runner would be invoked.
+    from app.services import alert_check_service
+
+    monkeypatch.setattr(alert_check_service, "_run_with_private_engine", _boom)
 
     result = notif_tasks.send_daily_digests()
 

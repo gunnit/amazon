@@ -6,11 +6,10 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.v1.alerts import AlertType, _validate_rule_payload
-from workers.tasks.notifications import (
+from app.services.alert_check_service import (
     _bsr_baseline,
     _build_batch_payload,
     _build_dedup_key,
-    _format_age,
     _rule_account_ids,
 )
 
@@ -21,10 +20,6 @@ def test_build_dedup_key_includes_event_scope():
     key = _build_dedup_key("low_stock", account_id=account_id, asin="B001TEST")
 
     assert key == f"low_stock:{account_id}:B001TEST"
-
-
-def test_format_age_returns_never_when_missing_timestamp():
-    assert _format_age(None) == "never"
 
 
 def test_bsr_baseline_uses_daily_best_rank_and_median():
@@ -65,7 +60,7 @@ def test_build_batch_payload_summarizes_multiple_alerts():
 
     message, details = _build_batch_payload(rule, alerts)
 
-    assert "2 alerts triggered" in message
+    assert "2 avvisi attivati" in message
     assert details["count"] == 2
     assert details["severity_counts"] == {"warning": 1, "critical": 1}
     assert len(details["alerts"]) == 2

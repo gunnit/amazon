@@ -48,7 +48,21 @@ async def lifespan(app: FastAPI):
                 run_recent_seller_sales_sync_all,
                 run_sales_gap_repair_all,
             )
-            from app.services.scheduled_report_service import run_scheduled_report_scan
+            from app.services.alert_check_service import run_alert_check, run_daily_digest
+            from app.services.brand_intelligence_service import (
+                run_brand_intelligence_recovery,
+                run_brand_intelligence_scan,
+            )
+            from app.services.db_maintenance import run_partition_ensure
+            from app.services.forecast_service import run_weekly_forecast_generation
+            from app.services.google_sheets_service import run_google_sheets_scan
+            from app.services.scheduled_report_service import (
+                run_scheduled_report_recovery,
+                run_scheduled_report_scan,
+            )
+            from app.services.strategic_recommendations_service import (
+                run_weekly_recommendations,
+            )
 
             scheduler = BackgroundScheduler(timezone="UTC")
             scheduler.add_job(
@@ -171,6 +185,83 @@ async def lifespan(app: FastAPI):
                 max_instances=1,
                 coalesce=True,
                 misfire_grace_time=600,
+            )
+            # ---- Jobs below existed only in Celery beat; without them the
+            # weekly artifacts silently go stale in worker-less deployments.
+            # Configurable alert rules (low_stock/price_change/bsr_drop/
+            # sync_failure) are only evaluated here.
+            scheduler.add_job(
+                run_alert_check,
+                CronTrigger(minute=5),
+                id="hourly-alert-check",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=900,
+            )
+            scheduler.add_job(
+                run_daily_digest,
+                CronTrigger(hour=8, minute=0),
+                id="daily-digest",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            scheduler.add_job(
+                run_weekly_forecast_generation,
+                CronTrigger(day_of_week="sun", hour=3, minute=0),
+                id="weekly-forecasts",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            scheduler.add_job(
+                run_weekly_recommendations,
+                CronTrigger(day_of_week="mon", hour=6, minute=0),
+                id="weekly-strategic-recommendations",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
+            )
+            scheduler.add_job(
+                run_brand_intelligence_scan,
+                IntervalTrigger(minutes=15),
+                id="brand-intelligence-scan",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=600,
+            )
+            scheduler.add_job(
+                run_brand_intelligence_recovery,
+                IntervalTrigger(minutes=30),
+                id="brand-intelligence-recovery",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=600,
+            )
+            scheduler.add_job(
+                run_scheduled_report_recovery,
+                IntervalTrigger(minutes=15),
+                id="scheduled-report-recovery",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=600,
+            )
+            scheduler.add_job(
+                run_google_sheets_scan,
+                IntervalTrigger(minutes=5),
+                id="google-sheets-sync-scan",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=300,
+            )
+            # Creation-only: never drops partitions (see db_maintenance.py).
+            scheduler.add_job(
+                run_partition_ensure,
+                CronTrigger(hour=3, minute=30),
+                id="partition-ensure",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=3600,
             )
             scheduler.start()
             logger.info(

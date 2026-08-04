@@ -1545,3 +1545,35 @@ def process_google_sheets_sync_job(run_id: str) -> None:
     finally:
         loop.run_until_complete(engine.dispose())
         loop.close()
+
+
+def run_google_sheets_scan() -> None:
+    """In-process scheduler entrypoint mirroring Celery ``scan_google_sheets_syncs_due``."""
+    from app.services.alert_check_service import _run_with_private_engine
+
+    async def _scan(SessionLocal):
+        now = datetime.now(timezone.utc)
+        queued = 0
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(GoogleSheetsSync).where(
+                    GoogleSheetsSync.is_enabled.is_(True),
+                    GoogleSheetsSync.next_run_at.is_not(None),
+                    GoogleSheetsSync.next_run_at <= now,
+                )
+            )
+            syncs = result.scalars().all()
+            service = GoogleSheetsService(db)
+            run_ids = []
+            for sync in syncs:
+                run = await service.create_run(sync, reference_time=now)
+                run_ids.append(str(run.id))
+                queued += 1
+            await db.commit()
+        for run_id in run_ids:
+            enqueue_google_sheets_run_processing(run_id)
+        if queued:
+            logger.info("In-process scan queued %d Google Sheets sync run(s)", queued)
+        return {"queued": queued}
+
+    return _run_with_private_engine("google sheets scan", _scan)

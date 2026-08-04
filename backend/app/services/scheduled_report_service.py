@@ -615,3 +615,52 @@ def deliver_scheduled_report_run_job(run_id: str) -> None:
     finally:
         loop.run_until_complete(engine.dispose())
         loop.close()
+
+
+def run_scheduled_report_recovery() -> None:
+    """Safety net for runs whose generation or delivery was lost.
+
+    In-process mirror of Celery ``recover_stuck_scheduled_report_runs``: runs
+    generated but never delivered get their delivery retried inline; runs
+    stuck mid-processing (thread killed by a deploy) are marked failed.
+    """
+    from datetime import timedelta, timezone
+
+    from app.services.alert_check_service import _run_with_private_engine
+
+    async def _recover(SessionLocal):
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+        redeliver: list[str] = []
+        failed = 0
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(ScheduledReportRun).where(
+                    ScheduledReportRun.status.notin_(tuple(RUN_TERMINAL_STATUS)),
+                    ScheduledReportRun.triggered_at <= cutoff,
+                )
+            )
+            for run in result.scalars().all():
+                if run.generation_status == "generated" and run.delivery_status in ("pending", "processing"):
+                    redeliver.append(str(run.id))
+                else:
+                    run.status = "failed"
+                    run.generation_status = "failed"
+                    run.delivery_status = "failed"
+                    run.error_message = "Run stalled before completion and was failed by the monitor"
+                    run.progress_step = "Stalled"
+                    run.completed_at = utcnow()
+                    failed += 1
+            await db.commit()
+        return {"redeliver": redeliver, "failed": failed}
+
+    outcome = _run_with_private_engine("scheduled report recovery", _recover) or {}
+    for run_id in outcome.get("redeliver", []):
+        try:
+            deliver_scheduled_report_run_job(run_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Recovery delivery failed for scheduled report run %s", run_id)
+    if outcome.get("redeliver") or outcome.get("failed"):
+        logger.info(
+            "Scheduled report recovery: %d redelivered, %d failed",
+            len(outcome.get("redeliver", [])), outcome.get("failed", 0),
+        )
