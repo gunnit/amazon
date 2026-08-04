@@ -1,4 +1,4 @@
-"""Unit tests for CatalogService, ImageService, and catalog schemas.
+"""Unit tests for CatalogService and catalog schemas.
 
 SP-API and S3 are mocked. The pattern mirrors test_product_trends_service.py:
 FakeAsyncSession with a queue of pre-built responses, and SimpleNamespace
@@ -98,7 +98,7 @@ importlib.metadata.version = _fake_version
 
 sys.path.insert(0, str(ROOT))
 
-# Stub boto3 so importing image_service does not require AWS creds.
+# Stub boto3/botocore so transitive imports never require AWS creds.
 boto3_stub = types.ModuleType("boto3")
 boto3_stub.client = lambda *_a, **_kw: MagicMock()
 sys.modules.setdefault("boto3", boto3_stub)
@@ -136,12 +136,6 @@ from app.services.catalog_service import (  # noqa: E402
     CatalogService,
     import_template_bytes,
     parse_import_rows,
-)
-from app.services.image_service import (  # noqa: E402
-    ALLOWED_CONTENT_TYPES,
-    MAX_IMAGE_BYTES,
-    ImageService,
-    ImageUpload,
 )
 
 
@@ -627,153 +621,3 @@ async def test_import_never_blanks_existing_title(monkeypatch):
     assert existing.source == "manual_import"
 
 
-# ---------------------------------------------------------------------
-# ImageService validation
-# ---------------------------------------------------------------------
-
-
-def _image(content_type="image/png", size=1024, is_main=False):
-    return ImageUpload(
-        filename="x.png",
-        content_type=content_type,
-        data=b"\x00" * size,
-        is_main=is_main,
-    )
-
-
-def test_image_service_validates_allowed_mime():
-    svc = ImageService(db=MagicMock())
-    svc.validate_upload(_image(content_type="image/png"))
-    assert "image/png" in ALLOWED_CONTENT_TYPES
-
-
-def test_image_service_rejects_unsupported_mime():
-    svc = ImageService(db=MagicMock())
-    with pytest.raises(CatalogOperationError, match="Unsupported"):
-        svc.validate_upload(_image(content_type="application/pdf"))
-
-
-def test_image_service_rejects_empty():
-    svc = ImageService(db=MagicMock())
-    with pytest.raises(CatalogOperationError, match="Empty"):
-        svc.validate_upload(_image(size=0))
-
-
-def test_image_service_rejects_too_large():
-    svc = ImageService(db=MagicMock())
-    with pytest.raises(CatalogOperationError, match="exceeds"):
-        svc.validate_upload(_image(size=MAX_IMAGE_BYTES + 1))
-
-
-# ---------------------------------------------------------------------
-# ImageService.upload_images writes an audit row
-# ---------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_image_service_upload_writes_audit_row(monkeypatch):
-    account = _account()
-    product = _product(asin="B0IMG00001", sku="SKU-IMG")
-    session = FakeAsyncSession([])
-    svc = ImageService(db=session, user_id=uuid4())
-
-    async def _req(*_a, **_kw):
-        return account
-
-    async def _load_product(_self, _account_id, _asin):
-        return product
-
-    async def _load_org(*_a, **_kw):
-        return SimpleNamespace(id=account.organization_id)
-
-    monkeypatch.setattr(svc, "_require_seller_account", _req)
-    monkeypatch.setattr(ImageService, "_load_product", _load_product)
-    monkeypatch.setattr(svc, "_load_organization", _load_org)
-    monkeypatch.setattr(
-        svc,
-        "_upload_to_s3",
-        lambda org_id, acc_id, asin, upload: f"catalog/{org_id}/{acc_id}/{asin}/abc.png",
-    )
-
-    sp_client = MagicMock()
-    sp_client.update_listing_images.return_value = {"ok": True}
-    monkeypatch.setattr(svc, "_create_sp_api_client", lambda *_a, **_kw: sp_client)
-
-    uploads = [_image(is_main=True), _image()]
-    result = await svc.upload_images(account.id, "B0IMG00001", uploads)
-
-    assert result["main_image_url"]
-    assert result["sp_api_error"] is None
-
-    audit = [o for o in session.added if o.__class__.__name__ == "CatalogChangeLog"]
-    assert len(audit) == 1
-    assert audit[0].sp_api_status == CatalogChangeStatus.SUCCESS.value
-    assert audit[0].field == CatalogChangeField.IMAGE.value
-    assert audit[0].asin == "B0IMG00001"
-
-
-@pytest.mark.asyncio
-async def test_image_service_upload_records_sp_api_failure(monkeypatch):
-    account = _account()
-    product = _product(asin="B0IMG00002", sku="SKU-IMG2")
-    session = FakeAsyncSession([])
-    svc = ImageService(db=session, user_id=uuid4())
-
-    async def _req(*_a, **_kw):
-        return account
-
-    async def _load_product(_self, _account_id, _asin):
-        return product
-
-    async def _load_org(*_a, **_kw):
-        return SimpleNamespace(id=account.organization_id)
-
-    monkeypatch.setattr(svc, "_require_seller_account", _req)
-    monkeypatch.setattr(ImageService, "_load_product", _load_product)
-    monkeypatch.setattr(svc, "_load_organization", _load_org)
-    monkeypatch.setattr(
-        svc,
-        "_upload_to_s3",
-        lambda org_id, acc_id, asin, upload: f"catalog/{org_id}/{acc_id}/{asin}/x.png",
-    )
-
-    sp_client = MagicMock()
-    sp_client.update_listing_images.side_effect = AmazonAPIError("Image too big")
-    monkeypatch.setattr(svc, "_create_sp_api_client", lambda *_a, **_kw: sp_client)
-
-    result = await svc.upload_images(account.id, "B0IMG00002", [_image(is_main=True)])
-
-    assert result["sp_api_error"] == "Image too big"
-    audit = [o for o in session.added if o.__class__.__name__ == "CatalogChangeLog"]
-    assert len(audit) == 1
-    assert audit[0].sp_api_status == CatalogChangeStatus.FAILED.value
-    assert audit[0].sp_api_error == "Image too big"
-
-
-@pytest.mark.asyncio
-async def test_image_service_delete_writes_audit_row(monkeypatch):
-    account = _account()
-    product = _product(asin="B0IMG00003", sku="SKU-IMG3")
-    session = FakeAsyncSession([])
-    svc = ImageService(db=session, user_id=uuid4())
-
-    async def _req(*_a, **_kw):
-        return account
-
-    async def _load_product(_self, _account_id, _asin):
-        return product
-
-    monkeypatch.setattr(svc, "_require_seller_account", _req)
-    monkeypatch.setattr(ImageService, "_load_product", _load_product)
-    monkeypatch.setattr(svc, "_delete_key", lambda _key: None)
-
-    key = f"catalog/{account.organization_id}/{account.id}/B0IMG00003/old.png"
-    result = await svc.delete_image(account.id, "B0IMG00003", key)
-
-    assert result == {"deleted": key, "amazon_listing_updated": False}
-    audit = [o for o in session.added if o.__class__.__name__ == "CatalogChangeLog"]
-    assert len(audit) == 1
-    assert audit[0].sp_api_status == CatalogChangeStatus.SUCCESS.value
-    assert audit[0].field == CatalogChangeField.IMAGE.value
-    assert audit[0].old_value["key"] == key
-    assert audit[0].new_value is None

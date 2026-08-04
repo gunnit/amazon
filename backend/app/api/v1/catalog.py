@@ -32,12 +32,6 @@ from app.services.catalog_service import (
     import_template_bytes,
 )
 from app.services.data_extraction import DAILY_TOTAL_ASIN, DataExtractionService
-from app.services.image_service import (
-    ALLOWED_CONTENT_TYPES,
-    ImageService,
-    ImageUpload,
-    MAX_ALTERNATE_IMAGES,
-)
 
 router = APIRouter()
 
@@ -405,112 +399,6 @@ async def get_product_history(
         .limit(limit)
     )
     return result.scalars().all()
-
-
-# ---------------------------------------------------------------------
-# Image management
-# ---------------------------------------------------------------------
-
-
-@router.get("/products/{asin}/images")
-async def list_product_images(
-    asin: str,
-    current_user: CurrentUser,
-    organization: CurrentOrganization,
-    db: DbSession,
-    account_id: UUID = Query(...),
-):
-    """List images stored in S3 for a given product."""
-    await _verify_account_in_org(db, organization.id, account_id)
-
-    service = ImageService(db)
-    try:
-        return {"asin": asin, "account_id": str(account_id), "images": await service.list_images(account_id, asin)}
-    except CatalogOperationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-
-@router.post("/products/{asin}/images", status_code=status.HTTP_201_CREATED)
-async def upload_product_images(
-    asin: str,
-    current_user: CurrentUser,
-    organization: CurrentOrganization,
-    db: DbSession,
-    account_id: UUID = Form(...),
-    product_type: str = Form("PRODUCT"),
-    push_to_amazon: bool = Form(True),
-    main_index: Optional[int] = Form(None),
-    files: List[UploadFile] = File(...),
-):
-    """Upload product images to S3 and push them to the Amazon listing.
-
-    * `main_index` (0-based) marks which uploaded file is the primary image.
-    * Up to 1 main + 8 alternate images are pushed to SP-API.
-    """
-    if not files:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files uploaded")
-    if len(files) > MAX_ALTERNATE_IMAGES + 1:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Too many files (max {MAX_ALTERNATE_IMAGES + 1})",
-        )
-
-    await _verify_account_in_org(db, organization.id, account_id)
-
-    uploads: List[ImageUpload] = []
-    for idx, file in enumerate(files):
-        content_type = (file.content_type or "").lower()
-        if content_type not in ALLOWED_CONTENT_TYPES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"File {file.filename!r} has unsupported type {content_type!r}",
-            )
-        data = await file.read()
-        uploads.append(
-            ImageUpload(
-                filename=file.filename or f"image_{idx}",
-                content_type=content_type,
-                data=data,
-                is_main=(main_index == idx),
-            )
-        )
-
-    service = ImageService(db, user_id=current_user.id)
-    try:
-        result = await service.upload_images(
-            account_id=account_id,
-            asin=asin,
-            uploads=uploads,
-            push_to_amazon=push_to_amazon,
-            product_type=product_type,
-        )
-    except CatalogOperationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-
-    return result
-
-
-@router.delete("/products/{asin}/images")
-async def delete_product_image(
-    asin: str,
-    current_user: CurrentUser,
-    organization: CurrentOrganization,
-    db: DbSession,
-    account_id: UUID = Query(...),
-    key: str = Query(..., description="S3 object key returned by the upload/list endpoints"),
-):
-    """Delete a previously uploaded image from S3.
-
-    Does not automatically re-patch the Amazon listing: call the upload
-    endpoint again with the remaining set if you need to re-sync slots.
-    """
-    await _verify_account_in_org(db, organization.id, account_id)
-
-    service = ImageService(db)
-    try:
-        return await service.delete_image(account_id, asin, key)
-    except CatalogOperationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.get("/listing-quality", response_model=ListingQualityResponse)

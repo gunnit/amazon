@@ -91,7 +91,6 @@ _import_real("app.models.product", ROOT / "app" / "models" / "product.py")
 _import_real("app.models.sales_data", ROOT / "app" / "models" / "sales_data.py")
 _import_real("app.services.catalog_service", ROOT / "app" / "services" / "catalog_service.py")
 _import_real("app.services.data_extraction", ROOT / "app" / "services" / "data_extraction.py")
-_import_real("app.services.image_service", ROOT / "app" / "services" / "image_service.py")
 
 
 def _load_real_module(qualname: str, path: Path):

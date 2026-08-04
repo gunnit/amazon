@@ -9,7 +9,7 @@ Two backends are supported:
   ``{"backend": "db"}`` so the API knows where bytes came from.
 * ``s3`` — bytes are uploaded to S3 under
   ``brand-analysis/{organization_id}/{job_id}/...`` using the same boto3
-  configuration as :mod:`app.services.image_service`. The existing
+  configuration used elsewhere in the app. The existing
   ``LargeBinary`` columns are still written when bytes are small enough to
   keep the on-disk artifact accessible from the DB; ``storage_ref`` records
   the S3 key for the canonical copy.

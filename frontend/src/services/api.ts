@@ -767,64 +767,6 @@ export const catalogApi = {
   },
 }
 
-// Catalog Images API
-export interface ProductImage {
-  key: string
-  url: string
-  filename: string
-  is_main?: boolean
-}
-
-export interface UploadImagesResponse {
-  account_id: string
-  asin: string
-  uploaded: ProductImage[]
-  main_image_url: string | null
-  other_image_urls: string[]
-  sp_api_result: Record<string, unknown> | null
-  sp_api_error: string | null
-}
-
-export const imagesApi = {
-  list: async (asin: string, accountId: string): Promise<{ asin: string; account_id: string; images: ProductImage[] }> => {
-    const response = await api.get(`/catalog/products/${asin}/images`, {
-      params: { account_id: accountId },
-    })
-    return response.data
-  },
-
-  upload: async (params: {
-    asin: string
-    account_id: string
-    files: File[]
-    main_index?: number
-    push_to_amazon?: boolean
-    product_type?: string
-  }): Promise<UploadImagesResponse> => {
-    const form = new FormData()
-    form.append('account_id', params.account_id)
-    form.append('product_type', params.product_type ?? 'PRODUCT')
-    form.append('push_to_amazon', String(params.push_to_amazon ?? true))
-    if (params.main_index !== undefined) {
-      form.append('main_index', String(params.main_index))
-    }
-    for (const file of params.files) {
-      form.append('files', file)
-    }
-    const response = await api.post(`/catalog/products/${params.asin}/images`, form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    return response.data
-  },
-
-  remove: async (asin: string, accountId: string, key: string): Promise<{ deleted: string }> => {
-    const response = await api.delete(`/catalog/products/${asin}/images`, {
-      params: { account_id: accountId, key },
-    })
-    return response.data
-  },
-}
-
 // Strategic Recommendations API
 export interface StrategicRecommendation {
   id: string

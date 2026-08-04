@@ -45,7 +45,6 @@ import { BulkUpdateCard } from '@/components/catalog/BulkUpdateCard'
 import { ImportCard } from '@/components/catalog/ImportCard'
 import { PricesCard } from '@/components/catalog/PricesCard'
 import { AvailabilityCard } from '@/components/catalog/AvailabilityCard'
-import { ImagesCard } from '@/components/catalog/ImagesCard'
 
 type StringSortKey = 'asin' | 'title' | 'sku' | 'brand'
 type NumberSortKey = 'current_price' | 'current_bsr'
@@ -193,7 +192,6 @@ export default function Catalog() {
           <TabsTrigger value="bulk">{t('catalog.tab.bulk')}</TabsTrigger>
           <TabsTrigger value="prices">{t('catalog.tab.prices')}</TabsTrigger>
           <TabsTrigger value="availability">{t('catalog.tab.availability')}</TabsTrigger>
-          <TabsTrigger value="images">{t('catalog.tab.images')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="products">
@@ -431,9 +429,6 @@ export default function Catalog() {
           <AvailabilityCard {...sharedProps} />
         </TabsContent>
 
-        <TabsContent value="images">
-          <ImagesCard {...sharedProps} />
-        </TabsContent>
       </Tabs>
 
       <Dialog open={selectedProduct !== null} onOpenChange={(open) => !open && setSelectedProduct(null)}>
