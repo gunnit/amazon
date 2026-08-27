@@ -22,6 +22,7 @@ import Settings from '@/pages/Settings'
 import Advertising from '@/pages/Advertising'
 import Alerts from '@/pages/Alerts'
 import Accounts from '@/pages/Accounts'
+import Docs from '@/pages/Docs'
 import NotFound from '@/pages/NotFound'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -115,6 +116,8 @@ function App() {
           <Route path="recommendations" element={<Recommendations />} />
           <Route path="alerts" element={<Alerts />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="docs" element={<Docs />} />
+          <Route path="docs/:slug" element={<Docs />} />
           <Route path="*" element={<NotFound />} />
         </Route>
 

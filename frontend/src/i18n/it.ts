@@ -33,6 +33,7 @@ const it: Record<string, string> = {
   'nav.logout': 'Esci',
   'nav.orgSettings': 'Impostazioni organizzazione',
   'nav.organization': 'Organizzazione:',
+  'nav.docs': 'Documentazione',
   'nav.group.analytics': 'Analytics',
   'nav.group.intelligence': 'Intelligence',
   'nav.group.operations': 'Operazioni',
@@ -1948,6 +1949,17 @@ const it: Record<string, string> = {
   'competitorTracking.selectYourProduct': 'Seleziona un tuo prodotto',
   'competitorTracking.comparisonEmpty': 'Monitora almeno un competitor e seleziona un tuo prodotto per vedere il confronto.',
   'competitorTracking.selectAccountFirst': 'Seleziona un account qui sopra per aggiungere competitor.',
+
+  // ── Documentazione ──
+  'docs.title': 'Documentazione',
+  'docs.subtitle': 'Guide operative: collegare gli account, capire gli errori di sincronizzazione, leggere i dati.',
+  'docs.group.guide': 'Guida',
+  'docs.group.technical': 'Tecnico',
+  'docs.index': 'Indice',
+  'docs.notFound': 'Questa pagina della documentazione non esiste. Scegli una voce dall\'indice.',
+  'docs.empty': 'La documentazione non è ancora disponibile.',
+  'docs.readGuide': 'Leggi la guida',
+  'docs.whatToDo': 'Cosa fare',
 }
 
 export default it

@@ -55,6 +55,7 @@ import { cn, formatDate } from '@/lib/utils'
 import { isPlaceholderAccountName } from '@/lib/accountNaming'
 import { accountsApi, authApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
+import { docHref } from '@/components/docs/registry'
 import { apiErrorDetail } from '@/lib/apiError'
 import type {
   AccountSummary,
@@ -640,7 +641,7 @@ function ConnectAmazonDialog({
 }
 
 export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
-  const { t } = useTranslation()
+  const { t, language } = useTranslation()
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [dialogMode, setDialogMode] = useState<ConnectionMode | null>(null)
@@ -1012,7 +1013,13 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                     {detailsAccount.sync_error_kind === 'warning' ? <AlertTriangle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
                     <AlertTitle>{detailsAccount.sync_error_kind === 'warning' ? t('alerts.severity.warning') : t('accounts.lastError')}</AlertTitle>
                     <AlertDescription>
-                      {translateCode(t, 'accounts.syncError', detailsAccount.sync_error_code)}
+                      {translateCode(t, 'accounts.syncError', detailsAccount.sync_error_code)}{' '}
+                      <Link
+                        to={docHref('account-errors', language, detailsAccount.sync_error_code)}
+                        className="whitespace-nowrap underline underline-offset-2"
+                      >
+                        {t('docs.whatToDo')}
+                      </Link>
                       <details className="mt-2">
                         <summary className="cursor-pointer text-xs opacity-70">{t('accounts.technicalDetail')}</summary>
                         <p className="mt-1 break-words font-mono text-xs opacity-70">{detailsAccount.sync_error_message}</p>

@@ -10,6 +10,7 @@ import {
   Newspaper,
   Target,
   Bell,
+  BookOpen,
   Package,
   Settings,
   Store,
@@ -62,9 +63,15 @@ const navGroups: { key: string; items: NavItemDef[] }[] = [
       { key: 'nav.catalog', href: '/catalog', icon: Package },
       { key: 'nav.alerts', href: '/alerts', icon: Bell },
       { key: 'nav.settings', href: '/settings', icon: Settings },
+      { key: 'nav.docs', href: '/docs', icon: BookOpen },
     ],
   },
 ]
+
+// Nested routes (/docs/:slug) must keep their sidebar entry lit.
+function isActivePath(pathname: string, href: string): boolean {
+  return pathname === href || (href !== '/' && pathname.startsWith(`${href}/`))
+}
 
 // Brand wordmark — theme-aware (the old version hardcoded text-white and
 // disappeared on the light theme).
@@ -119,7 +126,7 @@ export default function Layout() {
               </p>
               <div className="flex flex-col gap-0.5">
                 {group.items.map((item) => {
-                  const isActive = location.pathname === item.href
+                  const isActive = isActivePath(location.pathname, item.href)
                   return (
                     <Link
                       key={item.key}
@@ -185,7 +192,7 @@ export default function Layout() {
                 ) : null}
                 <div className="flex flex-col gap-0.5">
                   {group.items.map((item) => {
-                    const isActive = location.pathname === item.href
+                    const isActive = isActivePath(location.pathname, item.href)
                     return (
                       <Link
                         key={item.key}

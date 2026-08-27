@@ -42,9 +42,14 @@ export function SecretRotationBanner() {
             accounts: affected.map((account) => account.account_name).join(', '),
           })}
         </p>
-        <Button asChild size="sm" variant="outline">
-          <Link to="/settings">{t('secretRotation.cta')}</Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-4">
+          <Button asChild size="sm" variant="outline">
+            <Link to="/settings">{t('secretRotation.cta')}</Link>
+          </Button>
+          <Link to="/docs/secret-rotation" className="text-xs underline underline-offset-2">
+            {t('docs.readGuide')}
+          </Link>
+        </div>
       </AlertDescription>
     </Alert>
   )

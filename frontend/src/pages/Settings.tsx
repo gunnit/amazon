@@ -306,6 +306,9 @@ export default function Settings() {
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
             {t('settings.subtitle')}
           </p>
+          <Button asChild variant="outline" size="sm" className={cn(ghostButton, 'mt-4')}>
+            <Link to="/docs">{t('nav.docs')}</Link>
+          </Button>
         </div>
       </header>
 
