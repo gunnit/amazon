@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 import base64
+import secrets
 from fastapi import APIRouter, Body, HTTPException, status, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,22 +15,23 @@ import re
 from app.db.session import get_db
 from app.models.user import User, Organization, OrganizationMember, UserRole
 from app.schemas.user import (
-    UserCreate, UserUpdate, UserResponse, UserLogin, Token,
+    UserUpdate, UserResponse, UserLogin, Token,
     PasswordChange, NotificationPreferences, EmailDeliveryStatus,
     ForgotPasswordRequest, ResetPasswordRequest,
-    OrganizationCreate, OrganizationUpdate, OrganizationResponse,
+    OrganizationUpdate, OrganizationResponse, OrganizationMemberResponse,
+    MemberCreate, MemberUpdate, MemberInviteResponse,
     OrganizationApiKeysUpdate, OrganizationApiKeysResponse,
 )
 from app.core.security import (
     verify_password, get_password_hash,
     create_access_token, create_refresh_token, decode_token,
-    create_password_reset_token,
+    create_password_reset_token, password_fingerprint,
     encrypt_value, decrypt_value,
 )
 from app.config import settings
 from app.services.notification_service import NotificationService
 from app.api.deps import (
-    CurrentUser, CurrentOrganization, DbSession,
+    CurrentUser, CurrentOrganization, AdminOrganization, DbSession,
     RateLimiter, is_token_revoked, revoke_token, security,
 )
 from fastapi.security import HTTPAuthorizationCredentials
@@ -43,52 +45,6 @@ _auth_limit = RateLimiter(max_requests=10, window_seconds=60, scope="auth")
 
 class RefreshRequest(BaseModel):
     refresh_token: str
-
-
-@router.post(
-    "/register",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(_auth_limit)],
-)
-async def register(user_in: UserCreate, db: DbSession):
-    """Register a new user."""
-    # Check if user exists
-    result = await db.execute(select(User).where(User.email == user_in.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-
-    # Create user
-    user = User(
-        email=user_in.email,
-        hashed_password=get_password_hash(user_in.password),
-        full_name=user_in.full_name,
-    )
-    db.add(user)
-    await db.flush()
-    await db.refresh(user)
-
-    # Create default organization for user
-    slug = re.sub(r'[^a-z0-9-]', '', user_in.email.split('@')[0].lower())
-    org = Organization(
-        name=f"{user_in.full_name or user_in.email}'s Organization",
-        slug=f"{slug}-{str(user.id)[:8]}",
-    )
-    db.add(org)
-    await db.flush()
-
-    # Add user as org admin
-    membership = OrganizationMember(
-        user_id=user.id,
-        organization_id=org.id,
-        role=UserRole.ADMIN,
-    )
-    db.add(membership)
-
-    return user
 
 
 @router.post("/login", response_model=Token, dependencies=[Depends(_auth_limit)])
@@ -209,7 +165,7 @@ async def forgot_password(request: ForgotPasswordRequest, db: DbSession):
     user = result.scalar_one_or_none()
 
     if user and user.is_active:
-        token = create_password_reset_token(user.id)
+        token = create_password_reset_token(user.id, user.hashed_password)
         reset_link = f"{settings.APP_FRONTEND_URL}/reset-password?token={token}"
         html_content = f"""
         <html>
@@ -253,6 +209,12 @@ async def reset_password(request: ResetPasswordRequest, db: DbSession):
     user = result.scalar_one_or_none()
 
     if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
+    if payload.get("pwf") != password_fingerprint(user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token"
@@ -370,77 +332,202 @@ async def delete_current_user(
     await db.delete(current_user)
 
 
-@router.post("/organization", response_model=OrganizationResponse, status_code=status.HTTP_201_CREATED)
-async def create_organization(org_in: OrganizationCreate, current_user: CurrentUser, db: DbSession):
-    """Create a new organization."""
-    # Check if slug exists
-    result = await db.execute(select(Organization).where(Organization.slug == org_in.slug))
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Organization slug already exists"
-        )
-
-    org = Organization(name=org_in.name, slug=org_in.slug)
-    db.add(org)
-    await db.flush()
-
-    # Add creator as admin
-    membership = OrganizationMember(
-        user_id=current_user.id,
-        organization_id=org.id,
-        role=UserRole.ADMIN,
-    )
-    db.add(membership)
-    await db.refresh(org)
-
-    return org
-
-
 @router.get("/organization", response_model=OrganizationResponse)
 async def get_current_organization(current_user: CurrentUser, db: DbSession):
     """Get current user's organization."""
-    result = await db.execute(
-        select(Organization)
-        .join(OrganizationMember)
-        .where(OrganizationMember.user_id == current_user.id)
-    )
-    org = result.scalar_one_or_none()
+    row = (
+        await db.execute(
+            select(Organization, OrganizationMember.role)
+            .join(OrganizationMember, OrganizationMember.organization_id == Organization.id)
+            .where(OrganizationMember.user_id == current_user.id)
+        )
+    ).first()
 
-    if not org:
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User is not a member of any organization"
         )
 
-    return org
+    org, role = row
+    return OrganizationResponse.model_validate(org).model_copy(update={"my_role": role})
 
 
 @router.put("/organization", response_model=OrganizationResponse)
 async def update_current_organization(
     org_in: OrganizationUpdate,
-    current_user: CurrentUser,
+    organization: AdminOrganization,
     db: DbSession,
 ):
     """Update the current user's organization (name)."""
-    result = await db.execute(
-        select(Organization)
-        .join(OrganizationMember)
-        .where(OrganizationMember.user_id == current_user.id)
-    )
-    org = result.scalar_one_or_none()
+    organization.name = org_in.name
+    await db.flush()
+    await db.refresh(organization)
 
-    if not org:
+    return OrganizationResponse.model_validate(organization).model_copy(
+        update={"my_role": UserRole.ADMIN}
+    )
+
+
+# Email delivery is dead (no verified SendGrid sender), so an invite cannot be
+# mailed. The admin copies the link and sends it over chat instead, which means
+# it has to survive longer than the 30 minutes an emailed reset link gets.
+INVITE_LINK_EXPIRY_DAYS = 7
+
+
+def _invite_link(user: User, first_time: bool) -> MemberInviteResponse:
+    """Build a link that lets a member set their own password.
+
+    Reuses the reset-password machinery so the admin never learns the password.
+    """
+    token = create_password_reset_token(
+        user.id, user.hashed_password, expires_minutes=INVITE_LINK_EXPIRY_DAYS * 24 * 60
+    )
+    suffix = "&new=1" if first_time else ""
+    return MemberInviteResponse(
+        user=UserResponse.model_validate(user),
+        invite_link=f"{settings.APP_FRONTEND_URL}/reset-password?token={token}{suffix}",
+        expires_in_days=INVITE_LINK_EXPIRY_DAYS,
+    )
+
+
+async def _get_member(db: AsyncSession, organization: Organization, user_id: UUID) -> tuple[OrganizationMember, User]:
+    """Load a membership of this organization, or 404. Keeps tenants isolated."""
+    row = (
+        await db.execute(
+            select(OrganizationMember, User)
+            .join(User, User.id == OrganizationMember.user_id)
+            .where(
+                OrganizationMember.organization_id == organization.id,
+                OrganizationMember.user_id == user_id,
+            )
+        )
+    ).first()
+
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User is not a member of any organization"
+            detail="Member not found in this organization",
         )
 
-    org.name = org_in.name
-    await db.flush()
-    await db.refresh(org)
+    return row
 
-    return org
+
+def _reject_self(current_user: User, user_id: UUID) -> None:
+    """An admin cannot demote or deactivate themselves.
+
+    Besides being a foot-gun, this is what guarantees the organization always
+    keeps at least one admin: the caller is one, and they cannot remove it.
+    """
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot modify your own membership",
+        )
+
+
+@router.get("/organization/members", response_model=list[OrganizationMemberResponse])
+async def list_organization_members(organization: AdminOrganization, db: DbSession):
+    """List the members of the current organization."""
+    rows = (
+        await db.execute(
+            select(OrganizationMember, User)
+            .join(User, User.id == OrganizationMember.user_id)
+            .where(OrganizationMember.organization_id == organization.id)
+            .order_by(User.created_at)
+        )
+    ).all()
+
+    return [
+        OrganizationMemberResponse(
+            user_id=member.user_id,
+            organization_id=member.organization_id,
+            role=member.role,
+            user=UserResponse.model_validate(user),
+        )
+        for member, user in rows
+    ]
+
+
+@router.post(
+    "/organization/members",
+    response_model=MemberInviteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_organization_member(
+    member_in: MemberCreate,
+    organization: AdminOrganization,
+    db: DbSession,
+):
+    """Add a member to the current organization and return their setup link."""
+    result = await db.execute(select(User).where(User.email == member_in.email))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    # No password is ever chosen for them: the account is unusable until they
+    # follow the link and pick one themselves.
+    user = User(
+        email=member_in.email,
+        full_name=member_in.full_name,
+        hashed_password=get_password_hash(secrets.token_urlsafe(32)),
+    )
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+
+    db.add(
+        OrganizationMember(
+            user_id=user.id,
+            organization_id=organization.id,
+            role=member_in.role,
+        )
+    )
+
+    return _invite_link(user, first_time=True)
+
+
+@router.post(
+    "/organization/members/{user_id}/reset-link",
+    response_model=MemberInviteResponse,
+)
+async def create_member_reset_link(
+    user_id: UUID,
+    organization: AdminOrganization,
+    db: DbSession,
+):
+    """Issue a fresh password link for a member who cannot get in."""
+    _, user = await _get_member(db, organization, user_id)
+    return _invite_link(user, first_time=False)
+
+
+@router.patch("/organization/members/{user_id}", response_model=OrganizationMemberResponse)
+async def update_organization_member(
+    user_id: UUID,
+    member_in: MemberUpdate,
+    current_user: CurrentUser,
+    organization: AdminOrganization,
+    db: DbSession,
+):
+    """Change a member's role, or activate/deactivate them."""
+    _reject_self(current_user, user_id)
+    member, user = await _get_member(db, organization, user_id)
+
+    if member_in.role is not None:
+        member.role = member_in.role
+    if member_in.is_active is not None:
+        user.is_active = member_in.is_active
+
+    await db.flush()
+
+    return OrganizationMemberResponse(
+        user_id=member.user_id,
+        organization_id=member.organization_id,
+        role=member.role,
+        user=UserResponse.model_validate(user),
+    )
 
 
 def _mask_value(value: str | None) -> str | None:
@@ -552,8 +639,7 @@ async def get_organization_api_keys(
 @router.put("/organization/api-keys", response_model=ApiKeysResponse)
 async def update_organization_api_keys(
     keys_in: OrganizationApiKeysUpdate,
-    current_user: CurrentUser,
-    organization: CurrentOrganization,
+    organization: AdminOrganization,
     db: DbSession,
 ):
     """Save SP-API credentials for the organization (encrypted)."""
@@ -587,8 +673,7 @@ async def update_organization_api_keys(
 
 @router.delete("/organization/api-keys", response_model=ApiKeysResponse)
 async def delete_organization_api_keys(
-    current_user: CurrentUser,
-    organization: CurrentOrganization,
+    organization: AdminOrganization,
     db: DbSession,
 ):
     """Remove all saved SP-API credentials for the organization."""

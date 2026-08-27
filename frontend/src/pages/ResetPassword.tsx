@@ -22,6 +22,7 @@ export default function ResetPassword() {
   const { t } = useTranslation()
 
   const token = searchParams.get('token')
+  const isNew = searchParams.get('new') === '1'
 
   const schema = z
     .object({
@@ -91,8 +92,12 @@ export default function ResetPassword() {
       <div className="space-y-6">
         <div className="space-y-2">
           <span className="text-2xl font-bold text-primary lg:hidden">Inthezon</span>
-          <h2 className="text-2xl font-bold tracking-tight">{t('resetPassword.title')}</h2>
-          <p className="text-sm text-muted-foreground">{t('resetPassword.subtitle')}</p>
+          <h2 className="text-2xl font-bold tracking-tight">
+            {t(isNew ? 'resetPassword.setupTitle' : 'resetPassword.title')}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {t(isNew ? 'resetPassword.setupSubtitle' : 'resetPassword.subtitle')}
+          </p>
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -129,7 +134,7 @@ export default function ResetPassword() {
             disabled={isLoading}
           >
             {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {t('resetPassword.submit')}
+            {t(isNew ? 'resetPassword.setupSubmit' : 'resetPassword.submit')}
           </Button>
           <Link to="/login" className="flex items-center justify-center text-sm text-primary hover:underline">
             <ArrowLeft className="mr-1 h-4 w-4" />

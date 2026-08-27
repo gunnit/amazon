@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Any
 from jose import jwt, JWTError
 import bcrypt
+import hashlib
 from cryptography.fernet import Fernet
 import base64
 import secrets
@@ -45,10 +46,27 @@ def create_refresh_token(data: dict) -> str:
     return encoded_jwt
 
 
-def create_password_reset_token(user_id: Any) -> str:
-    """Create a short-lived JWT for password reset."""
-    expire = datetime.utcnow() + timedelta(minutes=30)
-    to_encode = {"sub": str(user_id), "exp": expire, "type": "password_reset"}
+def password_fingerprint(hashed_password: str) -> str:
+    """Short digest of a password hash, used to bind reset tokens to it."""
+    return hashlib.sha256(hashed_password.encode("utf-8")).hexdigest()[:16]
+
+
+def create_password_reset_token(user_id: Any, hashed_password: str, expires_minutes: int = 30) -> str:
+    """Create a JWT for password reset.
+
+    The token carries a fingerprint of the password it was issued against, so
+    it stops working the moment the password changes. Without that, a reset
+    link stays a valid bearer credential for its whole lifetime even after
+    being used - tolerable for a 30-minute emailed link, not for the multi-day
+    links an admin hands out by chat.
+    """
+    expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
+    to_encode = {
+        "sub": str(user_id),
+        "exp": expire,
+        "type": "password_reset",
+        "pwf": password_fingerprint(hashed_password),
+    }
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 

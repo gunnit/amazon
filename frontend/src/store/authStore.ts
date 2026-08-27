@@ -1,27 +1,27 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { User, Organization } from '@/types'
+import type { User } from '@/types'
 import { authApi } from '@/services/api'
+import type { OrganizationWithRole } from '@/services/api'
 
 interface AuthState {
   user: User | null
-  organization: Organization | null
+  organization: OrganizationWithRole | null
   isAuthenticated: boolean
   isLoading: boolean
   error: string | null
 
   login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string, fullName?: string) => Promise<void>
   logout: () => void
   loadUser: () => Promise<void>
   setUser: (user: User) => void
-  setOrganization: (organization: Organization) => void
+  setOrganization: (organization: OrganizationWithRole) => void
   clearError: () => void
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       user: null,
       organization: null,
       isAuthenticated: false,
@@ -59,24 +59,6 @@ export const useAuthStore = create<AuthState>()(
           const errorMessage = error instanceof Error
             ? error.message
             : 'Login failed'
-          set({
-            error: errorMessage,
-            isLoading: false
-          })
-          throw error
-        }
-      },
-
-      register: async (email: string, password: string, fullName?: string) => {
-        set({ isLoading: true, error: null })
-        try {
-          await authApi.register(email, password, fullName)
-          // Auto-login after registration
-          await get().login(email, password)
-        } catch (error: unknown) {
-          const errorMessage = error instanceof Error
-            ? error.message
-            : 'Registration failed'
           set({
             error: errorMessage,
             isLoading: false
@@ -133,7 +115,7 @@ export const useAuthStore = create<AuthState>()(
 
       setUser: (user: User) => set({ user }),
 
-      setOrganization: (organization: Organization) => set({ organization }),
+      setOrganization: (organization: OrganizationWithRole) => set({ organization }),
 
       clearError: () => set({ error: null }),
     }),

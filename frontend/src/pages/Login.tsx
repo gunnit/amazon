@@ -121,12 +121,6 @@ export default function Login() {
               {t('login.warmupHint')}
             </p>
           )}
-          <p className="text-sm text-center text-muted-foreground">
-            {t('login.noAccount')}{' '}
-            <Link to="/register" className="text-primary hover:underline">
-              {t('login.signUp')}
-            </Link>
-          </p>
         </form>
       </div>
     </AuthLayout>

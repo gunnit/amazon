@@ -4,12 +4,7 @@ from typing import Literal, Optional, List
 from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
 
-
-class UserCreate(BaseModel):
-    """Schema for creating a new user."""
-    email: EmailStr
-    password: str = Field(..., min_length=8)
-    full_name: Optional[str] = None
+from app.models.user import UserRole
 
 
 class UserUpdate(BaseModel):
@@ -38,12 +33,6 @@ class UserLogin(BaseModel):
     password: str
 
 
-class OrganizationCreate(BaseModel):
-    """Schema for creating an organization."""
-    name: str = Field(..., min_length=1, max_length=255)
-    slug: str = Field(..., min_length=1, max_length=100, pattern=r'^[a-z0-9-]+$')
-
-
 class OrganizationUpdate(BaseModel):
     """Schema for updating an organization."""
     name: str = Field(..., min_length=1, max_length=255)
@@ -56,6 +45,7 @@ class OrganizationResponse(BaseModel):
     slug: str
     timezone: str = "UTC"
     created_at: datetime
+    my_role: Optional[UserRole] = None
 
     class Config:
         from_attributes = True
@@ -65,11 +55,31 @@ class OrganizationMemberResponse(BaseModel):
     """Schema for organization member response."""
     user_id: UUID
     organization_id: UUID
-    role: str
+    role: UserRole
     user: UserResponse
 
     class Config:
         from_attributes = True
+
+
+class MemberCreate(BaseModel):
+    """Schema for adding a member to the current organization."""
+    email: EmailStr
+    full_name: Optional[str] = None
+    role: UserRole = UserRole.MEMBER
+
+
+class MemberUpdate(BaseModel):
+    """Schema for changing a member's role or activation."""
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+
+
+class MemberInviteResponse(BaseModel):
+    """A member plus the link they use to set their own password."""
+    user: UserResponse
+    invite_link: str
+    expires_in_days: int
 
 
 class OrganizationApiKeysUpdate(BaseModel):

@@ -5,7 +5,6 @@ import { Toaster } from '@/components/ui/toaster'
 import Layout from '@/components/Layout'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import Login from '@/pages/Login'
-import Register from '@/pages/Register'
 import ForgotPassword from '@/pages/ForgotPassword'
 import ResetPassword from '@/pages/ResetPassword'
 import AmazonOAuthForward from '@/pages/AmazonOAuthForward'
@@ -68,9 +67,6 @@ function App() {
       <Routes>
         <Route path="/login" element={
           isAuthenticated ? <Navigate to="/" replace /> : <Login />
-        } />
-        <Route path="/register" element={
-          isAuthenticated ? <Navigate to="/" replace /> : <Register />
         } />
         <Route path="/forgot-password" element={
           isAuthenticated ? <Navigate to="/" replace /> : <ForgotPassword />

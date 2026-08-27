@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.db.session import get_db
 from app.core.security import decode_token
-from app.models.user import User, Organization, OrganizationMember
+from app.models.user import User, Organization, OrganizationMember, UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -230,8 +230,38 @@ async def get_user_organization(
     return organization
 
 
+async def get_admin_organization(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Organization:
+    """Get the user's organization, requiring them to be an admin of it."""
+    row = (
+        await db.execute(
+            select(Organization, OrganizationMember.role)
+            .join(OrganizationMember, OrganizationMember.organization_id == Organization.id)
+            .where(OrganizationMember.user_id == current_user.id)
+        )
+    ).first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User is not a member of any organization",
+        )
+
+    organization, role = row
+    if role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator role required",
+        )
+
+    return organization
+
+
 # Type aliases for cleaner dependency injection
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentSuperuser = Annotated[User, Depends(get_current_active_superuser)]
 CurrentOrganization = Annotated[Organization, Depends(get_user_organization)]
+AdminOrganization = Annotated[Organization, Depends(get_admin_organization)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]

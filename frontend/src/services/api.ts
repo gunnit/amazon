@@ -92,15 +92,32 @@ api.interceptors.response.use(
   }
 )
 
+export type OrgRole = 'admin' | 'member' | 'viewer'
+// `viewer` exists in the backend enum but nothing enforces read-only, so the UI
+// never offers it.
+export type OfferedRole = Exclude<OrgRole, 'viewer'>
+
+export interface OrganizationWithRole extends Organization {
+  my_role?: OrgRole | null
+}
+
+export interface OrganizationMember {
+  user_id: string
+  organization_id: string
+  role: OrgRole
+  user: User
+}
+
+export interface MemberInvite {
+  user: User
+  invite_link: string
+  expires_in_days: number
+}
+
 // Auth API
 export const authApi = {
   login: async (email: string, password: string): Promise<AuthTokens> => {
     const response = await api.post('/auth/login', { email, password })
-    return response.data
-  },
-
-  register: async (email: string, password: string, full_name?: string): Promise<User> => {
-    const response = await api.post('/auth/register', { email, password, full_name })
     return response.data
   },
 
@@ -161,13 +178,40 @@ export const authApi = {
     await api.delete('/auth/me')
   },
 
-  getOrganization: async (): Promise<Organization> => {
+  getOrganization: async (): Promise<OrganizationWithRole> => {
     const response = await api.get('/auth/organization')
     return response.data
   },
 
-  updateOrganization: async (data: { name: string }): Promise<Organization> => {
+  updateOrganization: async (data: { name: string }): Promise<OrganizationWithRole> => {
     const response = await api.put('/auth/organization', data)
+    return response.data
+  },
+
+  getMembers: async (): Promise<OrganizationMember[]> => {
+    const response = await api.get('/auth/organization/members')
+    return response.data
+  },
+
+  createMember: async (data: {
+    email: string
+    full_name?: string
+    role?: OfferedRole
+  }): Promise<MemberInvite> => {
+    const response = await api.post('/auth/organization/members', data)
+    return response.data
+  },
+
+  createMemberResetLink: async (userId: string): Promise<MemberInvite> => {
+    const response = await api.post(`/auth/organization/members/${userId}/reset-link`)
+    return response.data
+  },
+
+  updateMember: async (
+    userId: string,
+    data: { role?: OrgRole; is_active?: boolean },
+  ): Promise<OrganizationMember> => {
+    const response = await api.patch(`/auth/organization/members/${userId}`, data)
     return response.data
   },
 

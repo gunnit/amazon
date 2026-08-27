@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Trash2 } from 'lucide-react'
+import { Check, Copy, Loader2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -14,9 +14,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/store/authStore'
 import { authApi, exportsApi } from '@/services/api'
+import type { MemberInvite, OfferedRole, OrgRole } from '@/services/api'
 import { useTranslation } from '@/i18n'
 import { apiErrorDetail } from '@/lib/apiError'
 import { GoogleSheetsIntegration } from '@/components/settings/GoogleSheetsIntegration'
@@ -46,6 +55,7 @@ export default function Settings() {
   const [isSaving, setIsSaving] = useState(false)
   const { t, language, setLanguage } = useTranslation()
   const activeTab = searchParams.get('tab') || 'profile'
+  const isAdmin = organization?.my_role === 'admin'
 
   const [profile, setProfile] = useState({
     fullName: user?.full_name || '',
@@ -339,6 +349,11 @@ export default function Settings() {
           <TabsTrigger value="data" className={tabTrigger}>
             {t('settings.tabData')}
           </TabsTrigger>
+          {isAdmin && (
+            <TabsTrigger value="users" className={tabTrigger}>
+              {t('settings.tabUsers')}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="accounts" className="mt-8">
@@ -796,6 +811,11 @@ export default function Settings() {
             </div>
           </SettingsSection>
         </TabsContent>
+        {isAdmin && (
+          <TabsContent value="users" className="mt-8">
+            <UsersSection currentUserId={user?.id} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   )
@@ -819,6 +839,259 @@ function SettingsSection({
       <SectionMark title={title} hint={hint} />
       <div className={cn('mt-6 space-y-5', wide ? 'max-w-3xl' : 'max-w-2xl')}>{children}</div>
     </section>
+  )
+}
+
+function UsersSection({ currentUserId }: { currentUserId?: string }) {
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+  const [invite, setInvite] = useState<MemberInvite | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [form, setForm] = useState<{ email: string; full_name: string; role: OfferedRole }>({
+    email: '',
+    full_name: '',
+    role: 'member',
+  })
+
+  const { data: members, isLoading } = useQuery({
+    queryKey: ['org-members'],
+    queryFn: () => authApi.getMembers(),
+  })
+
+  const showInvite = (result: MemberInvite) => {
+    setInvite(result)
+    setCopied(false)
+    queryClient.invalidateQueries({ queryKey: ['org-members'] })
+  }
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      authApi.createMember({
+        email: form.email,
+        full_name: form.full_name || undefined,
+        role: form.role,
+      }),
+    onSuccess: (result) => {
+      showInvite(result)
+      setForm({ email: '', full_name: '', role: 'member' })
+      toast({ title: t('settings.usersCreated') })
+    },
+    onError: (error: unknown) => {
+      toast({
+        variant: 'destructive',
+        title: apiErrorDetail(error, t) || t('settings.usersCreateFailed'),
+      })
+    },
+  })
+
+  const linkMutation = useMutation({
+    mutationFn: (userId: string) => authApi.createMemberResetLink(userId),
+    onSuccess: showInvite,
+    onError: () => {
+      toast({ variant: 'destructive', title: t('settings.usersLinkFailed') })
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: ({ userId, data }: { userId: string; data: { role?: OrgRole; is_active?: boolean } }) =>
+      authApi.updateMember(userId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['org-members'] })
+      toast({ title: t('settings.usersUpdated') })
+    },
+    onError: (error: unknown) => {
+      toast({
+        variant: 'destructive',
+        title: apiErrorDetail(error, t) || t('settings.usersUpdateFailed'),
+      })
+    },
+  })
+
+  const copyLink = async () => {
+    if (!invite) return
+    try {
+      await navigator.clipboard.writeText(invite.invite_link)
+      setCopied(true)
+      toast({ title: t('settings.usersCopied') })
+    } catch {
+      toast({ variant: 'destructive', title: t('settings.usersCopyFailed') })
+    }
+  }
+
+  const roleLabel = (role: OrgRole) =>
+    t(role === 'admin' ? 'settings.usersRoleAdmin' : role === 'member' ? 'settings.usersRoleMember' : 'settings.usersRoleViewer')
+
+  return (
+    <div className="space-y-10">
+      <SettingsSection wide title={t('settings.usersTitle')} hint={t('settings.usersDesc')}>
+        {invite && (
+          <div className="rounded-sm border border-foreground/15 p-4">
+            <p className={eyebrow}>{t('settings.usersInviteTitle')}</p>
+            <p className="mt-1.5 text-sm font-medium">{invite.user.email}</p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-sm bg-foreground/[0.05] px-2 py-1.5 font-mono text-[11px]">
+                {invite.invite_link}
+              </code>
+              <Button variant="outline" size="sm" className={ghostButton} onClick={copyLink}>
+                {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+                {t('settings.usersCopy')}
+              </Button>
+            </div>
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">
+              {t('settings.usersInviteDesc', { days: invite.expires_in_days })}
+            </p>
+          </div>
+        )}
+
+        {isLoading ? (
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        ) : !members?.length ? (
+          <p className="text-sm text-muted-foreground">{t('settings.usersEmpty')}</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('settings.fullName')}</TableHead>
+                <TableHead>{t('common.email')}</TableHead>
+                <TableHead>{t('settings.usersRole')}</TableHead>
+                <TableHead>{t('settings.usersStatus')}</TableHead>
+                <TableHead className="text-right">{t('accounts.actions')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {members.map((member) => {
+                const isSelf = member.user_id === currentUserId
+                return (
+                  <TableRow key={member.user_id}>
+                    <TableCell className="font-medium">{member.user.full_name || '—'}</TableCell>
+                    <TableCell>{member.user.email}</TableCell>
+                    <TableCell>
+                      {isSelf ? (
+                        roleLabel(member.role)
+                      ) : (
+                        <Select
+                          value={member.role}
+                          onValueChange={(role) =>
+                            updateMutation.mutate({ userId: member.user_id, data: { role: role as OrgRole } })
+                          }
+                        >
+                          <SelectTrigger className={cn(fieldInput, 'w-[160px]')}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="admin">{t('settings.usersRoleAdmin')}</SelectItem>
+                            <SelectItem value="member">{t('settings.usersRoleMember')}</SelectItem>
+                            {member.role === 'viewer' && (
+                              <SelectItem value="viewer">{t('settings.usersRoleViewer')}</SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {member.user.is_active ? t('settings.usersActive') : t('settings.usersInactive')}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={ghostButton}
+                          onClick={() => linkMutation.mutate(member.user_id)}
+                          disabled={linkMutation.isPending}
+                        >
+                          {t('settings.usersNewLink')}
+                        </Button>
+                        {isSelf ? (
+                          <span className="self-center text-xs text-muted-foreground">
+                            {t('settings.usersSelfHint')}
+                          </span>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className={ghostButton}
+                            onClick={() =>
+                              updateMutation.mutate({
+                                userId: member.user_id,
+                                data: { is_active: !member.user.is_active },
+                              })
+                            }
+                            disabled={updateMutation.isPending}
+                          >
+                            {member.user.is_active
+                              ? t('settings.usersDeactivate')
+                              : t('settings.usersActivate')}
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.usersAddTitle')} hint={t('settings.usersAddDesc')}>
+        <form
+          className="space-y-5"
+          onSubmit={(e) => {
+            e.preventDefault()
+            createMutation.mutate()
+          }}
+        >
+          <div>
+            <Label htmlFor="memberEmail" className={eyebrow}>
+              {t('common.email')}
+            </Label>
+            <Input
+              id="memberEmail"
+              type="email"
+              required
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              placeholder={t('login.emailPlaceholder')}
+              className={cn(fieldInput, 'mt-1')}
+            />
+          </div>
+          <div>
+            <Label htmlFor="memberName" className={eyebrow}>
+              {t('settings.fullName')}
+            </Label>
+            <Input
+              id="memberName"
+              value={form.full_name}
+              onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+              className={cn(fieldInput, 'mt-1')}
+            />
+          </div>
+          <div>
+            <Label className={eyebrow}>{t('settings.usersRole')}</Label>
+            <Select value={form.role} onValueChange={(role) => setForm({ ...form, role: role as OfferedRole })}>
+              <SelectTrigger className={cn(fieldInput, 'mt-1 w-[200px]')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">{t('settings.usersRoleAdmin')}</SelectItem>
+                <SelectItem value="member">{t('settings.usersRoleMember')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              {t('settings.usersRoleAdminDesc')}
+              <br />
+              {t('settings.usersRoleMemberDesc')}
+            </p>
+          </div>
+          <Button type="submit" disabled={createMutation.isPending} className={inkButton}>
+            {createMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {t('settings.usersAddSubmit')}
+          </Button>
+        </form>
+      </SettingsSection>
+    </div>
   )
 }
 

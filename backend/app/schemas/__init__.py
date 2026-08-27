@@ -1,7 +1,7 @@
 # Pydantic Schemas
 from app.schemas.user import (
-    UserCreate, UserUpdate, UserResponse, UserLogin,
-    OrganizationCreate, OrganizationResponse,
+    UserUpdate, UserResponse, UserLogin,
+    OrganizationResponse,
     Token, TokenPayload
 )
 from app.schemas.account import (
@@ -18,8 +18,8 @@ from app.schemas.analytics import (
 )
 
 __all__ = [
-    "UserCreate", "UserUpdate", "UserResponse", "UserLogin",
-    "OrganizationCreate", "OrganizationResponse",
+    "UserUpdate", "UserResponse", "UserLogin",
+    "OrganizationResponse",
     "Token", "TokenPayload",
     "AmazonAccountCreate", "AmazonAccountUpdate", "AmazonAccountResponse",
     "AccountStatusResponse",
