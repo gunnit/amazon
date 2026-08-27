@@ -81,7 +81,15 @@ class FakeDb:
         obj.id = getattr(obj, "id", None) or uuid4()
 
 
+class FakeQuery(base.FakeQuery):
+    def limit(self, *_args, **_kwargs):
+        return self
+
+
 class FakeAccount:
+    # Class-level sentinels so `AmazonAccount.<col> == x` works in filters.
+    id = organization_id = seller_id = marketplace_id = created_at = None
+
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
         self.id = kwargs.get("id") or uuid4()
@@ -116,18 +124,25 @@ def _decode_token(token):
         return None
 
 
-async def _start(account_type="seller", country="IT", marketplace_id="APJ6JRA9NG5V4"):
+async def _start(
+    account_type="seller",
+    country="IT",
+    marketplace_id="APJ6JRA9NG5V4",
+    account_id=None,
+    db=None,
+):
     oauth_in = schema.AmazonOAuthStartRequest(
         account_type=account_type,
         marketplace_id=marketplace_id,
         marketplace_country=country,
         account_name="Test Account",
+        account_id=account_id,
     )
     resp = await accounts.start_amazon_oauth(
         oauth_in=oauth_in,
         current_user=SimpleNamespace(id=uuid4()),
         organization=SimpleNamespace(id=uuid4(), settings={}),
-        db=FakeDb([]),
+        db=db or FakeDb([]),
     )
     return resp.consent_url
 
@@ -199,7 +214,7 @@ async def test_callback_exchanges_code_and_saves_encrypted_token(monkeypatch):
     monkeypatch.setattr(accounts, "decode_token", _decode_token)
     monkeypatch.setattr(accounts, "encrypt_value", lambda v: f"enc({v})")
     monkeypatch.setattr(accounts, "AmazonAccount", FakeAccount)
-    monkeypatch.setattr(accounts, "select", lambda *_a, **_k: base.FakeQuery())
+    monkeypatch.setattr(accounts, "select", lambda *_a, **_k: FakeQuery())
     FakeAsyncClient.responses = [(200, {"refresh_token": "Atzr|real-token"})]
     FakeAsyncClient.posts = []
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
@@ -232,7 +247,7 @@ async def test_callback_exchange_failure_tries_both_redirect_uris(monkeypatch):
     sync_calls = []
     _install_lazy_stubs(monkeypatch, sync_calls)
     monkeypatch.setattr(accounts, "decode_token", _decode_token)
-    monkeypatch.setattr(accounts, "select", lambda *_a, **_k: base.FakeQuery())
+    monkeypatch.setattr(accounts, "select", lambda *_a, **_k: FakeQuery())
     FakeAsyncClient.responses = [(400, {"error": "invalid_grant"})]
     FakeAsyncClient.posts = []
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
@@ -247,3 +262,77 @@ async def test_callback_exchange_failure_tries_both_redirect_uris(monkeypatch):
     assert FakeAsyncClient.posts[1][1]["redirect_uri"] == "http://front.test/amazon/callback"
     assert "reason=token_exchange_failed" in resp.headers["location"]
     assert db.added == [] and sync_calls == []
+
+
+@pytest.mark.asyncio
+async def test_start_fails_before_consent_without_client_secret(monkeypatch):
+    settings = sys.modules["app.config"].settings
+    monkeypatch.setattr(settings, "AMAZON_SP_API_CLIENT_SECRET", "", raising=False)
+
+    with pytest.raises(HTTPException) as exc:
+        await _start()
+    assert exc.value.status_code == 400
+    assert "client id/secret" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_callback_refuses_token_from_a_different_seller(monkeypatch):
+    sync_calls = []
+    _install_lazy_stubs(monkeypatch, sync_calls)
+    monkeypatch.setattr(accounts, "decode_token", _decode_token)
+    monkeypatch.setattr(accounts, "encrypt_value", lambda v: f"enc({v})")
+    monkeypatch.setattr(accounts, "AmazonAccount", FakeAccount)
+    monkeypatch.setattr(accounts, "select", lambda *_a, **_k: FakeQuery())
+    FakeAsyncClient.responses = [(200, {"refresh_token": "Atzr|other-seller"})]
+    FakeAsyncClient.posts = []
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    existing = FakeAccount(
+        account_name="Vignola",
+        seller_id="A2SELLER",
+        sp_api_refresh_token_encrypted="enc(Atzr|vignola)",
+        last_backfill_status="completed",
+    )
+    state = parse_qs(urlparse(await _start(account_id=existing.id, db=FakeDb([existing]))).query)["state"][0]
+    db = FakeDb([SimpleNamespace(id=uuid4(), settings={}), existing])
+
+    resp = await _callback(
+        db, state=state, spapi_oauth_code="oauth-code", selling_partner_id="ENVIRONMENTALSCIENCE"
+    )
+
+    assert "reason=seller_mismatch" in resp.headers["location"]
+    assert existing.sp_api_refresh_token_encrypted == "enc(Atzr|vignola)"
+    assert existing.seller_id == "A2SELLER"
+    assert db.added == [] and sync_calls == [] and not db.committed
+
+
+@pytest.mark.asyncio
+async def test_callback_reuses_existing_account_for_same_seller(monkeypatch):
+    sync_calls = []
+    _install_lazy_stubs(monkeypatch, sync_calls)
+    monkeypatch.setattr(accounts, "decode_token", _decode_token)
+    monkeypatch.setattr(accounts, "encrypt_value", lambda v: f"enc({v})")
+    monkeypatch.setattr(accounts, "AmazonAccount", FakeAccount)
+    monkeypatch.setattr(accounts, "select", lambda *_a, **_k: FakeQuery())
+    FakeAsyncClient.responses = [(200, {"refresh_token": "Atzr|fresh-token"})]
+    FakeAsyncClient.posts = []
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    existing = FakeAccount(
+        account_name="Dialcos",
+        seller_id="A2SELLER",
+        marketplace_id="APJ6JRA9NG5V4",
+        sp_api_refresh_token_encrypted="enc(Atzr|stale)",
+        last_backfill_status="completed",
+    )
+    # No account_id in the state: the "connect" button path.
+    state = parse_qs(urlparse(await _start()).query)["state"][0]
+    db = FakeDb([SimpleNamespace(id=uuid4(), settings={}), existing])
+
+    resp = await _callback(db, state=state, spapi_oauth_code="oauth-code", selling_partner_id="A2SELLER")
+
+    assert db.added == []  # reused, not duplicated
+    assert existing.sp_api_refresh_token_encrypted == "enc(Atzr|fresh-token)"
+    assert existing.sync_status == base.StubSyncStatus.SYNCING
+    assert sync_calls == [("sync", existing.id)]
+    assert "amazon_status=connected&account=Dialcos" in resp.headers["location"]

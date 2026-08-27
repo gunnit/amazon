@@ -378,6 +378,19 @@ def _resolve_sp_api_app_id(organization) -> Optional[str]:
     )
 
 
+def _resolve_sp_api_client_credentials(organization) -> tuple[Optional[str], Optional[str]]:
+    """LWA app credentials: org settings → env fallback."""
+    from app.config import settings as app_settings
+    from app.core.amazon.credentials import _get_org_sp_api_setting
+
+    return (
+        _get_org_sp_api_setting(organization, "client_id_enc")
+        or app_settings.AMAZON_SP_API_CLIENT_ID,
+        _get_org_sp_api_setting(organization, "client_secret_enc")
+        or app_settings.AMAZON_SP_API_CLIENT_SECRET,
+    )
+
+
 def _oauth_redirect_uri() -> str:
     """Must exactly match an OAuth Redirect URI registered on the SP-API app."""
     from app.config import settings as app_settings
@@ -404,6 +417,15 @@ async def start_amazon_oauth(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="SP-API application id is not configured (AMAZON_SP_API_APP_ID).",
+        )
+
+    # Checked here too, not just in the callback: otherwise the user only finds
+    # out after logging into Amazon and granting consent.
+    client_id, client_secret = _resolve_sp_api_client_credentials(organization)
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SP-API client id/secret are not configured for this organization.",
         )
 
     if oauth_in.account_id:
@@ -472,7 +494,6 @@ async def amazon_oauth_callback(
     org/user. Always redirects back to the frontend accounts page.
     """
     from app.config import settings as app_settings
-    from app.core.amazon.credentials import _get_org_sp_api_setting
 
     frontend = app_settings.APP_FRONTEND_URL.rstrip("/")
 
@@ -492,14 +513,7 @@ async def amazon_oauth_callback(
     if not org:
         return fail("organization_not_found")
 
-    client_id = (
-        _get_org_sp_api_setting(org, "client_id_enc")
-        or app_settings.AMAZON_SP_API_CLIENT_ID
-    )
-    client_secret = (
-        _get_org_sp_api_setting(org, "client_secret_enc")
-        or app_settings.AMAZON_SP_API_CLIENT_SECRET
-    )
+    client_id, client_secret = _resolve_sp_api_client_credentials(org)
     if not client_id or not client_secret:
         return fail("missing_client_credentials")
 
@@ -551,7 +565,32 @@ async def amazon_oauth_callback(
         account = result.scalar_one_or_none()
         if not account:
             return fail("account_not_found")
+        # An account is bound to one seller: writing another seller's refresh
+        # token here would silently sync that seller's history into this
+        # account (this has happened in production).
+        if account.seller_id and selling_partner_id and account.seller_id != selling_partner_id:
+            logger.warning(
+                "Amazon OAuth seller mismatch for account %s: bound to %s, consent returned %s",
+                account.id, account.seller_id, selling_partner_id,
+            )
+            return fail("seller_mismatch")
         is_new = False
+    elif selling_partner_id:
+        # Reconnecting via the primary "connect" button carries no account_id;
+        # without this lookup the same seller gets a duplicate account and a
+        # second backfill of the same history.
+        result = await db.execute(
+            select(AmazonAccount).where(
+                AmazonAccount.organization_id == org.id,
+                AmazonAccount.seller_id == selling_partner_id,
+                AmazonAccount.marketplace_id == payload["marketplace_id"],
+            )
+            # limit(1): duplicates from before this guard must not blow up here.
+            .order_by(AmazonAccount.created_at)
+            .limit(1)
+        )
+        account = result.scalar_one_or_none()
+        is_new = account is None
 
     if account is None:
         account = AmazonAccount(
