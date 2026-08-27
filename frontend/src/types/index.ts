@@ -1201,4 +1201,6 @@ export interface ApiKeysResponse {
   has_client_secret: boolean
   has_aws_secret_key: boolean
   has_advertising_client_secret: boolean
+  /** Days since the secret was saved here — not since Amazon issued it. */
+  client_secret_age_days?: number | null
 }

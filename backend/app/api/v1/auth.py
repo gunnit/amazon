@@ -1,8 +1,10 @@
 """Authentication endpoints."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
+import base64
 from fastapi import APIRouter, Body, HTTPException, status, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -465,13 +467,34 @@ def _mask_arn(arn: str | None) -> str | None:
     return f"{prefix}{'•' * max(len(account) - 3, 0)}{tail}{suffix}"
 
 
+class ApiKeysResponse(OrganizationApiKeysResponse):
+    """Adds the client-secret age, so the UI can nudge before Amazon's 180-day rotation."""
+    client_secret_age_days: Optional[int] = None
+
+
+def _fernet_age_days(token: Optional[str]) -> Optional[int]:
+    """Age of a Fernet token from its embedded timestamp (bytes 1..9), without decrypting.
+
+    ponytail: this is when the value was saved here, not when Amazon issued it —
+    so it underestimates the real age. The UI warns well before 180 days.
+    """
+    if not token:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(token.encode())
+        issued = datetime.fromtimestamp(int.from_bytes(raw[1:9], "big"), timezone.utc)
+    except Exception:
+        return None
+    return max((datetime.now(timezone.utc) - issued).days, 0)
+
+
 def _build_api_keys_response(
     sp_api: dict | None,
     advertising_api: dict | None = None,
-) -> OrganizationApiKeysResponse:
+) -> ApiKeysResponse:
     """Build a masked response from stored Amazon API settings."""
     if not sp_api and not advertising_api:
-        return OrganizationApiKeysResponse()
+        return ApiKeysResponse()
 
     client_id = None
     aws_access_key = None
@@ -500,7 +523,7 @@ def _build_api_keys_response(
     except Exception:
         advertising_client_id = "(decryption error)"
 
-    return OrganizationApiKeysResponse(
+    return ApiKeysResponse(
         sp_api_client_id=client_id,
         sp_api_aws_access_key=aws_access_key,
         sp_api_role_arn=role_arn,
@@ -510,10 +533,11 @@ def _build_api_keys_response(
         has_advertising_client_secret=bool(
             advertising_api and advertising_api.get("client_secret_enc")
         ),
+        client_secret_age_days=_fernet_age_days(sp_api.get("client_secret_enc") if sp_api else None),
     )
 
 
-@router.get("/organization/api-keys", response_model=OrganizationApiKeysResponse)
+@router.get("/organization/api-keys", response_model=ApiKeysResponse)
 async def get_organization_api_keys(
     current_user: CurrentUser,
     organization: CurrentOrganization,
@@ -525,7 +549,7 @@ async def get_organization_api_keys(
     return _build_api_keys_response(sp_api, advertising_api)
 
 
-@router.put("/organization/api-keys", response_model=OrganizationApiKeysResponse)
+@router.put("/organization/api-keys", response_model=ApiKeysResponse)
 async def update_organization_api_keys(
     keys_in: OrganizationApiKeysUpdate,
     current_user: CurrentUser,
@@ -561,7 +585,7 @@ async def update_organization_api_keys(
     return _build_api_keys_response(sp_api, advertising_api)
 
 
-@router.delete("/organization/api-keys", response_model=OrganizationApiKeysResponse)
+@router.delete("/organization/api-keys", response_model=ApiKeysResponse)
 async def delete_organization_api_keys(
     current_user: CurrentUser,
     organization: CurrentOrganization,

@@ -50,6 +50,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
+import { SecretRotationBanner } from '@/components/SecretRotationBanner'
 import { cn, formatDate } from '@/lib/utils'
 import { isPlaceholderAccountName } from '@/lib/accountNaming'
 import { accountsApi, authApi } from '@/services/api'
@@ -86,6 +87,16 @@ const marketplaces = [
   { id: 'A13V1IB3VIYZZH', country: 'FR', nameKey: 'marketplace.FR' },
   { id: 'A1RKKUPIHCS9HS', country: 'ES', nameKey: 'marketplace.ES' },
 ]
+
+/** Prefer the structured code over Amazon's raw text; fall back to a generic line. */
+function translateCode(
+  t: (key: string) => string,
+  prefix: string,
+  code: string | null | undefined,
+): string {
+  const key = code ? `${prefix}.${code}` : ''
+  return key && t(key) !== key ? t(key) : t(`${prefix}.generic`)
+}
 
 function connectionState(account: AmazonAccount): StatusFilter {
   if (account.sync_status === 'error') return 'error'
@@ -657,7 +668,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
       toast({
         variant: 'destructive',
         title: t('accounts.oauthErrorTitle'),
-        description: searchParams.get('reason') || undefined,
+        description: translateCode(t, 'accounts.oauthError', searchParams.get('reason')),
       })
     }
     const nextParams = new URLSearchParams(searchParams)
@@ -755,6 +766,8 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
 
   return (
     <div className="space-y-6">
+      <SecretRotationBanner />
+
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
           {embedded ? (
@@ -985,14 +998,26 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
                   <Alert variant="destructive">
                     <AlertCircle className="h-4 w-4" />
                     <AlertTitle>{t('accounts.backfill.error')}</AlertTitle>
-                    <AlertDescription>{detailsAccount.last_backfill_error}</AlertDescription>
+                    <AlertDescription>
+                      {t('accounts.backfill.errorDesc')}
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-xs opacity-70">{t('accounts.technicalDetail')}</summary>
+                        <p className="mt-1 break-words font-mono text-xs opacity-70">{detailsAccount.last_backfill_error}</p>
+                      </details>
+                    </AlertDescription>
                   </Alert>
                 )}
                 {detailsAccount.sync_error_message && (
                   <Alert variant={detailsAccount.sync_error_kind === 'warning' ? 'warning' : 'destructive'}>
                     {detailsAccount.sync_error_kind === 'warning' ? <AlertTriangle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
                     <AlertTitle>{detailsAccount.sync_error_kind === 'warning' ? t('alerts.severity.warning') : t('accounts.lastError')}</AlertTitle>
-                    <AlertDescription>{detailsAccount.sync_error_message}</AlertDescription>
+                    <AlertDescription>
+                      {translateCode(t, 'accounts.syncError', detailsAccount.sync_error_code)}
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-xs opacity-70">{t('accounts.technicalDetail')}</summary>
+                        <p className="mt-1 break-words font-mono text-xs opacity-70">{detailsAccount.sync_error_message}</p>
+                      </details>
+                    </AlertDescription>
                   </Alert>
                 )}
               </div>

@@ -12,6 +12,7 @@ import {
   Bell,
   Package,
   Settings,
+  Store,
   LogOut,
   Menu,
   X,
@@ -57,6 +58,7 @@ const navGroups: { key: string; items: NavItemDef[] }[] = [
   {
     key: 'nav.group.operations',
     items: [
+      { key: 'nav.accounts', href: '/accounts', icon: Store },
       { key: 'nav.catalog', href: '/catalog', icon: Package },
       { key: 'nav.alerts', href: '/alerts', icon: Bell },
       { key: 'nav.settings', href: '/settings', icon: Settings },

@@ -527,6 +527,22 @@ export default function Settings() {
                     placeholder={savedApiKeys?.has_client_secret ? '••••••••' : 'Your client secret'}
                     className={cn(fieldInput, 'mt-1')}
                   />
+                  {savedApiKeys?.client_secret_age_days != null && (
+                    <p
+                      className={cn(
+                        'mt-1.5 text-xs',
+                        // ponytail: the measured age starts at "saved here", which is later
+                        // than Amazon's issue date — so warn well before the 180-day deadline.
+                        savedApiKeys.client_secret_age_days >= 120
+                          ? 'text-amber-700 dark:text-amber-400'
+                          : 'text-muted-foreground',
+                      )}
+                    >
+                      {t('settings.secretAge', { days: savedApiKeys.client_secret_age_days })}{' '}
+                      {t('settings.secretAgeHint')}
+                      {savedApiKeys.client_secret_age_days >= 120 && ` ${t('settings.secretAgeWarning')}`}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <Label htmlFor="awsAccessKey" className={eyebrow}>

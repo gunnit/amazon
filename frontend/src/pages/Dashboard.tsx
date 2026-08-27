@@ -15,6 +15,7 @@ import {
   Megaphone,
   Target,
   Info,
+  Store,
   AlertCircle,
   AlertTriangle,
 } from 'lucide-react'
@@ -47,6 +48,8 @@ import { FilterBar, DateRangeFilter, AccountFilter, ComparisonFilter } from '@/c
 import ProductTrendBadge from '@/components/analytics/ProductTrendBadge'
 import ProductTrendSparkline from '@/components/analytics/ProductTrendSparkline'
 import { PeriodComparisonCard } from '@/components/PeriodComparisonCard'
+import { EmptyState } from '@/components/EmptyState'
+import { SecretRotationBanner } from '@/components/SecretRotationBanner'
 import { useFilterStore, getComparisonPeriods, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
 import { useToast } from '@/components/ui/use-toast'
@@ -538,6 +541,25 @@ export default function Dashboard() {
     )
   }
 
+  // Zeroed KPIs and blank charts say nothing when there is simply no account yet.
+  if (accountSummary && accountSummary.total_accounts === 0) {
+    return (
+      <EmptyState
+        icon={Store}
+        title={t('dashboard.noAccountsTitle')}
+        description={t('dashboard.noAccountsDesc')}
+        action={
+          <Button asChild>
+            <Link to="/accounts">
+              <Store className="mr-2 h-4 w-4" />
+              {t('dashboard.noAccountsCta')}
+            </Link>
+          </Button>
+        }
+      />
+    )
+  }
+
   // The selected window genuinely has no sales (not a load error). Show an honest
   // empty-state instead of alarming "-100%" deltas on the zeroed KPI cards.
   const hasNoSalesData =
@@ -660,6 +682,8 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      <SecretRotationBanner />
+
       {/* Branded hero header — mirrors the login brand panel */}
       <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 px-6 py-6 text-white shadow-sm">
         <div className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full bg-white/5 blur-3xl" />
