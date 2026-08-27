@@ -11,6 +11,7 @@ export const DOC_GROUPS = [
       'secret-rotation',
       'connect-account',
       'account-errors',
+      'manage-users',
       'email-reports',
       'dashboard-guide',
       'known-limits',

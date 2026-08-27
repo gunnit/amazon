@@ -33,7 +33,7 @@ Everything that travels by email is blocked, not just reports:
 - alerts (for example sales drops or competitor price changes);
 - **password recovery**.
 
-That last one deserves attention, and it is the most urgent reason to fix email delivery: if a user clicks "forgot password", the email never reaches them, and **there is currently no other way back in**. There is no feature that lets an administrator reset another user's password: whoever loses their password stays locked out until sending works again. While this is the case, keep credentials in a password manager and do not let access depend on a single person.
+Password recovery, though, **already has an alternative that does not go through email**: an administrator generates a link in *Settings → Users* and sends it to you by hand. If a user clicks "forgot password" the email will not reach them, but they are not locked out. See *Managing users*. This is why it pays to always keep at least two administrators.
 
 Alerts, in any case, keep being generated and stay visible in the **Alerts** section. They just do not reach you by email: you have to go in and look at them.
 

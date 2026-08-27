@@ -33,7 +33,7 @@ Tutto ciò che viaggia via e-mail è bloccato, non solo i report:
 - gli avvisi (per esempio i cali di vendita o le variazioni di prezzo dei concorrenti);
 - il **recupero password**.
 
-Quest'ultimo merita attenzione ed è il motivo più urgente per sistemare l'invio: se un utente clicca "password dimenticata", l'e-mail non gli arriva, e **oggi non esiste un altro modo per rientrare**. Non c'è una funzione con cui un amministratore possa reimpostare la password di un altro utente: chi perde la password resta bloccato fuori finché l'invio non riparte. Finché la situazione è questa, conserva le credenziali in un gestore di password e non lasciare che l'accesso dipenda da una sola persona.
+Sul recupero password, però, **esiste già un'alternativa che non passa dall'e-mail**: un amministratore genera un link da *Impostazioni → Utenti* e te lo manda a mano. Se un utente clicca "password dimenticata" l'e-mail non gli arriverà, ma non resta chiuso fuori. Vedi *Gestire gli utenti*. Per questo conviene avere sempre almeno due amministratori.
 
 Gli avvisi, comunque, continuano a essere generati e restano visibili nella sezione **Avvisi**. Semplicemente non ti raggiungono via e-mail: devi entrare a guardarli.
 

@@ -1,7 +1,7 @@
 # API surface
 > Generated from the source by `backend/scripts/gen_tech_docs.py`. Re-run it after changing the code; do not edit this page by hand.
 
-149 endpoints across 15 routers, all under `/api/v1`.
+151 endpoints across 15 routers, all under `/api/v1`.
 
 ## accounts
 
@@ -72,7 +72,6 @@ Prefix `/auth`.
 
 | Method | Path |
 | --- | --- |
-| POST | `/auth/register` |
 | POST | `/auth/login` |
 | POST | `/auth/refresh` |
 | POST | `/auth/logout` |
@@ -85,9 +84,12 @@ Prefix `/auth`.
 | PUT | `/auth/me/notifications` |
 | GET | `/auth/me/email-status` |
 | DELETE | `/auth/me` |
-| POST | `/auth/organization` |
 | GET | `/auth/organization` |
 | PUT | `/auth/organization` |
+| GET | `/auth/organization/members` |
+| POST | `/auth/organization/members` |
+| POST | `/auth/organization/members/{user_id}/reset-link` |
+| PATCH | `/auth/organization/members/{user_id}` |
 | GET | `/auth/organization/api-keys` |
 | PUT | `/auth/organization/api-keys` |
 | DELETE | `/auth/organization/api-keys` |
