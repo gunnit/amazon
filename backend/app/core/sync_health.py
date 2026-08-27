@@ -29,6 +29,12 @@ TERMINAL_AMAZON_ERROR_CODES = {
     "INVENTORY_NOT_AVAILABLE",
 }
 TERMINAL_SYNC_EXCEPTION_NAMES = {"SellingApiForbiddenException"}
+
+# Amazon returns this in the `details` of a 403 once the LWA client secret has
+# passed its 180-day rotation deadline. The LWA token endpoint keeps issuing
+# access tokens, so nothing else distinguishes it from a bad credential. It
+# needs a rotation in Seller Central, not a reconnect, so it gets its own code.
+LWA_SECRET_EXPIRED_MARKER = "lwa secret token you provided has expired"
 TRANSIENT_SYNC_EXCEPTION_NAMES = {
     "SellingApiRequestThrottledException",
     "SellingApiServerException",
@@ -40,6 +46,11 @@ def classify_sync_exception(exc: Exception, retries: int = 0, max_retries: int =
     """Classify a sync failure into retryable vs terminal."""
     exc_name = type(exc).__name__
     error_code = getattr(exc, "error_code", None)
+
+    # ponytail: substring match — Amazon ships no machine-readable code for it.
+    if LWA_SECRET_EXPIRED_MARKER in str(exc).lower():
+        return SimpleNamespace(kind="terminal", error_code="LWA_SECRET_EXPIRED", retry_delay=None)
+
     if retries >= max_retries:
         return SimpleNamespace(kind="terminal", error_code=error_code or exc_name, retry_delay=None)
 

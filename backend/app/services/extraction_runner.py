@@ -70,6 +70,12 @@ SALES_GAP_LOOKBACK_DAYS = 730
 SALES_GAP_PUBLISH_LAG_DAYS = 2
 SALES_GAP_MAX_WINDOWS_PER_ACCOUNT = 5
 
+# The daily advertising sync only re-pulls a trailing 7-day window (see
+# DataExtractionService.sync_advertising), so anything older than that is
+# unreachable unless the history backfill runs.
+ADS_SYNC_WINDOW_DAYS = 7
+
+
 
 def _subtract_calendar_months(value: date, months: int) -> date:
     """Shift a date backward by calendar months, preserving the day when possible."""
@@ -226,14 +232,35 @@ async def _mark_backfill_failed(account_id: UUID, session_factory, exc: Exceptio
         await db.commit()
 
 
+async def _mark_backfill_degraded(
+    account_id: UUID, session_factory, failed_sources: List[str]
+) -> None:
+    """Downgrade a finished backfill to PARTIAL when best-effort history
+    sources failed, so the UI never reports a complete history it does not
+    have. An errored backfill keeps its (more severe) status and message."""
+    async with session_factory() as db:
+        result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
+        account = result.scalar_one_or_none()
+        if account is None or account.last_backfill_status == BackfillStatus.ERROR.value:
+            return
+        account.last_backfill_status = BackfillStatus.PARTIAL.value
+        account.last_backfill_windows_skipped = (
+            account.last_backfill_windows_skipped or 0
+        ) + len(failed_sources)
+        account.last_backfill_error = (
+            f"History sources failed: {', '.join(failed_sources)}"
+        )
+        await db.commit()
+
+
 async def _backfill_history_extras(
     account_id: UUID, session_factory, start_date: date, end_date: date
-) -> None:
+) -> List[str]:
     """Best-effort seller history extras: orders, economics, MFN returns.
 
     Each source runs in its own session and try/except, so one failure never
-    affects the others — or the sales last_backfill_* status, which is owned
-    exclusively by the sales backfill."""
+    affects the others. Returns the labels that failed, which the caller uses
+    to downgrade the backfill status."""
     from app.services.economics_service import EconomicsService
 
     async def _orders(db, account, organization):
@@ -251,12 +278,13 @@ async def _backfill_history_extras(
             account, organization, start_date=start_date, end_date=end_date
         )
 
+    failed: List[str] = []
     for label, runner in (("orders", _orders), ("economics", _economics), ("returns", _returns)):
         async with session_factory() as db:
             result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
             account = result.scalar_one_or_none()
             if account is None:
-                return
+                return failed
             # Capture before any rollback: the rollback expires ORM attributes
             # and a lazy refresh in the except path raises MissingGreenlet.
             account_name = account.account_name
@@ -274,37 +302,56 @@ async def _backfill_history_extras(
                 except Exception:
                     pass
                 logger.exception("History backfill (%s) failed for %s", label, account_name)
+                failed.append(label)
+    return failed
 
 
-async def _backfill_ads_history(account_id: UUID, session_factory) -> None:
+def _ads_backfill_needed(
+    oldest: Optional[date], newest: Optional[date], *, today: Optional[date] = None
+) -> bool:
+    """Ads coverage is only complete when it reaches back to Amazon's retention
+    bound AND forward into the daily sync's rolling window. Looking at the
+    oldest row alone hides holes the daily sync can no longer reach — an auth
+    outage leaves exactly that."""
+    from app.services.data_extraction import ADS_LOOKBACK_DAYS
+
+    if oldest is None or newest is None:
+        return True
+    today = today or date.today()
+    retention_bound = today - timedelta(days=max(ADS_LOOKBACK_DAYS.values()) - 7)
+    # ponytail: endpoints only, so an account that genuinely stopped advertising
+    # looks like a hole and re-runs the backfill; scan per-day coverage if that
+    # ever costs real quota.
+    return oldest > retention_bound or newest < today - timedelta(days=ADS_SYNC_WINDOW_DAYS)
+
+
+async def _backfill_ads_history(account_id: UUID, session_factory) -> List[str]:
     """Best-effort advertising history backfill, isolated like the other
     history extras. Runs for any account with an Ads token — sellers, vendors,
-    and ads-only accounts — and never touches the last_backfill_* status."""
+    and ads-only accounts. Returns ["advertising"] when it failed."""
     async with session_factory() as db:
         result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
         account = result.scalar_one_or_none()
         if account is None or not account.advertising_refresh_token_encrypted:
-            return
+            return []
         account_name = account.account_name
-        # Resume sweeps re-enter this path; skip when coverage already reaches
-        # the Ads retention bound so we don't re-request every report window.
+        # Resume sweeps re-enter this path; skip when coverage is intact so we
+        # don't re-request every report window.
         from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics
-        from app.services.data_extraction import ADS_LOOKBACK_DAYS
 
-        oldest = (
+        oldest, newest = (
             await db.execute(
-                select(func.min(AdvertisingMetrics.date))
+                select(func.min(AdvertisingMetrics.date), func.max(AdvertisingMetrics.date))
                 .join(AdvertisingCampaign, AdvertisingMetrics.campaign_id == AdvertisingCampaign.id)
                 .where(AdvertisingCampaign.account_id == account_id)
             )
-        ).scalar()
-        bound = date.today() - timedelta(days=max(ADS_LOOKBACK_DAYS.values()) - 7)
-        if oldest is not None and oldest <= bound:
+        ).one()
+        if not _ads_backfill_needed(oldest, newest):
             logger.info(
-                "Skipping advertising history backfill for %s: coverage starts %s",
-                account_name, oldest,
+                "Skipping advertising history backfill for %s: coverage %s..%s is complete",
+                account_name, oldest, newest,
             )
-            return
+            return []
         service = DataExtractionService(db)
         try:
             organization = await service._load_organization(account)
@@ -314,12 +361,14 @@ async def _backfill_ads_history(account_id: UUID, session_factory) -> None:
                 "History backfill (advertising) completed for %s: %d records",
                 account_name, count,
             )
+            return []
         except Exception:
             try:
                 await db.rollback()
             except Exception:
                 pass
             logger.exception("History backfill (advertising) failed for %s", account_name)
+            return ["advertising"]
 
 
 async def _run_sales_backfill(
@@ -327,7 +376,8 @@ async def _run_sales_backfill(
 ) -> None:
     """Run the historical sales backfill over [start_date, end_date] and record
     its outcome in the last_backfill_* fields; sellers then get the best-effort
-    history extras. The caller must already have stamped the backfill started."""
+    history extras, which downgrade the status to PARTIAL when they fail. The
+    caller must already have stamped the backfill started."""
     async with session_factory() as db:
         result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
         account = result.scalar_one_or_none()
@@ -369,12 +419,15 @@ async def _run_sales_backfill(
         else:
             sales_ok = True
 
+    failed: List[str] = []
     if sales_ok and not is_vendor:
-        await _backfill_history_extras(account_id, session_factory, start_date, end_date)
+        failed += await _backfill_history_extras(account_id, session_factory, start_date, end_date)
     # Ads history is independent of the sales window (own API, own lookback
     # caps) and must run even when the sales backfill failed — e.g. ads-only
     # accounts that have no SP-API token at all.
-    await _backfill_ads_history(account_id, session_factory)
+    failed += await _backfill_ads_history(account_id, session_factory)
+    if failed:
+        await _mark_backfill_degraded(account_id, session_factory, failed)
 
 
 async def _initial_sync_one(account_id: UUID, backfill_months: int, session_factory) -> None:
@@ -384,6 +437,23 @@ async def _initial_sync_one(account_id: UUID, backfill_months: int, session_fact
     history for forecasting, plus orders/economics/returns history for sellers.
     The backfill is best-effort and never downgrades a successful sync; its
     outcome is tracked in the last_backfill_* fields."""
+    # The window is resolved before phase 1 because vendors get a deeper one
+    # than the seller report's 2-year cap allows.
+    async with session_factory() as db:
+        result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
+        account = result.scalar_one_or_none()
+        if account is None:
+            return
+        if account.account_type == AccountType.VENDOR:
+            backfill_months = max_months = VENDOR_BACKFILL_MAX_MONTHS
+        else:
+            max_months = DEFAULT_BACKFILL_MONTHS
+    start_date, end_date = _resolve_backfill_window(backfill_months, max_months=max_months)
+    # Stamped before phase 1 on purpose: a phase-1 failure used to leave
+    # last_backfill_status NULL, and neither recovery sweep ever claims NULL,
+    # so the account stayed on the rolling 30-day window forever.
+    await _mark_backfill_started(account_id, session_factory, start_date, end_date)
+
     # Phase 1 — full current sync (also sets sync_status / error state).
     async with session_factory() as db:
         service = DataExtractionService(db)
@@ -401,23 +471,13 @@ async def _initial_sync_one(account_id: UUID, backfill_months: int, session_fact
             except Exception:
                 pass
             await _persist_sync_failure_state(account_id, session_factory, exc)
-            logger.exception("Initial sync failed for %s; skipping backfill", account_id)
+            await _mark_backfill_failed(account_id, session_factory, exc)
+            logger.exception(
+                "Initial sync failed for %s; backfill left for the recovery sweep", account_id
+            )
             return
 
     # Phase 2 — historical sales backfill (best-effort; commits per month).
-    # The window is resolved only after loading the account because vendors
-    # get a deeper one than the seller report's 2-year cap allows.
-    async with session_factory() as db:
-        result = await db.execute(select(AmazonAccount).where(AmazonAccount.id == account_id))
-        account = result.scalar_one_or_none()
-        if account is None:
-            return
-        if account.account_type == AccountType.VENDOR:
-            backfill_months = max_months = VENDOR_BACKFILL_MAX_MONTHS
-        else:
-            max_months = DEFAULT_BACKFILL_MONTHS
-    start_date, end_date = _resolve_backfill_window(backfill_months, max_months=max_months)
-    await _mark_backfill_started(account_id, session_factory, start_date, end_date)
     await _run_sales_backfill(account_id, session_factory, start_date, end_date)
 
 
@@ -665,9 +725,17 @@ async def _resume_backfill_one(account_id: UUID, session_factory) -> None:
                 "Backfill resume for %s: no missing dates in %s..%s, marked success",
                 account_name, range_start, detect_end,
             )
-            return
+            resume_start = None
+        else:
+            resume_start = min(start for start, _ in missing)
 
-        resume_start = min(start for start, _ in missing)
+    if resume_start is None:
+        # Sales are whole, but ads keep their own retention and their own
+        # holes, and the sales gap repair never touches them.
+        failed = await _backfill_ads_history(account_id, session_factory)
+        if failed:
+            await _mark_backfill_degraded(account_id, session_factory, failed)
+        return
 
     logger.info(
         "Resuming backfill for %s from %s (recorded range %s..%s)",
