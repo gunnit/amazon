@@ -4,9 +4,9 @@ from typing import List, Dict, Any, Optional
 from uuid import UUID
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, cast, case, Date, and_
+from sqlalchemy import select, func, cast, Date
 
-from app.models.amazon_account import AccountType, AmazonAccount
+from app.models.amazon_account import AmazonAccount
 from app.models.sales_data import SalesData
 from app.models.advertising import AdvertisingMetrics, AdvertisingCampaign, AdvertisingMetricsByAsin
 from app.models.product import Product, BSRHistory
@@ -253,49 +253,20 @@ class AnalyticsService:
         date_from: date,
         date_to: date,
     ) -> Dict[str, float]:
-        """Snapshot-aware per-ASIN sales for a period, as an ``{asin: sales}`` map.
+        """Per-ASIN sales for a period, as an ``{asin: sales}`` map.
 
-        Vendor per-ASIN rows are settled monthly figures and can be summed.
-        Seller per-ASIN rows are trailing-window snapshots re-stamped on every
-        sync, so summing them across dates multiplies a product's sales; for
-        sellers we take the single most complete snapshot date instead. This is
-        the same handling as :meth:`_fetch_asin_breakdown` but returns the full
-        map (no top-N truncation) so callers can compute period-over-period
-        deltas.
+        Per-ASIN rows are daily for both account types — vendor straight from the
+        Vendor Sales report, seller rebuilt from Orders — so a period is a plain
+        sum. Returns the full map (no top-N truncation) so callers can compute
+        period-over-period deltas.
         """
         if not account_ids:
             return {}
 
-        types_rows = (
-            await self.db.execute(
-                select(AmazonAccount.id, AmazonAccount.account_type).where(
-                    AmazonAccount.id.in_(account_ids)
-                )
-            )
-        ).all()
-        vendor_ids = [r.id for r in types_rows if r.account_type == AccountType.VENDOR]
-        seller_ids = [r.id for r in types_rows if r.account_type == AccountType.SELLER]
-
-        contributions: Dict[str, float] = {}
-
-        if vendor_ids:
-            for row in await self._sum_asin_sales(vendor_ids, date_from, date_to):
-                contributions[row.asin] = contributions.get(row.asin, 0.0) + self._as_float(
-                    row.total_sales
-                )
-
-        for seller_id in seller_ids:
-            snapshot_date = await self._latest_full_snapshot_date(
-                seller_id, date_from, date_to
-            )
-            if snapshot_date is None:
-                continue
-            for row in await self._sum_asin_sales([seller_id], snapshot_date, snapshot_date):
-                contributions[row.asin] = contributions.get(row.asin, 0.0) + self._as_float(
-                    row.total_sales
-                )
-
-        return contributions
+        return {
+            row.asin: self._as_float(row.total_sales)
+            for row in await self._sum_asin_sales(account_ids, date_from, date_to)
+        }
 
     async def compute_advertising_metrics(
         self,
@@ -395,8 +366,6 @@ class AnalyticsService:
                 )
             ).all()
         granularity = granularity_for_account_types([r.account_type for r in types_rows])
-        vendor_ids = [r.id for r in types_rows if r.account_type == AccountType.VENDOR]
-        seller_ids = [r.id for r in types_rows if r.account_type == AccountType.SELLER]
         # Monthly (vendor-only) data cannot be split into coherent daily/weekly
         # buckets, so force a monthly cadence regardless of the requested group.
         if granularity == Granularity.MONTHLY and group_by != "month":
@@ -408,8 +377,6 @@ class AnalyticsService:
             date_to=date_to,
             group_by=group_by,
             asin=asin,
-            vendor_ids=vendor_ids,
-            seller_ids=seller_ids,
         )
 
         prev_start, prev_end = self._previous_period(date_from, date_to)
@@ -419,8 +386,6 @@ class AnalyticsService:
             date_to=prev_end,
             group_by=group_by,
             asin=asin,
-            vendor_ids=vendor_ids,
-            seller_ids=seller_ids,
         )
 
         ads_data_from, ads_data_until = await self._ads_coverage(account_ids)
@@ -474,14 +439,11 @@ class AnalyticsService:
         }
 
         if asin is None:
-            breakdown, breakdown_notes = await self._fetch_asin_breakdown(
+            response["asin_breakdown"] = await self._fetch_asin_breakdown(
                 account_ids=account_ids,
                 date_from=date_from,
                 date_to=date_to,
-                language=language,
             )
-            response["asin_breakdown"] = breakdown
-            response["breakdown_notes"] = breakdown_notes
 
         return response
 
@@ -492,8 +454,6 @@ class AnalyticsService:
         date_to: date,
         group_by: str,
         asin: Optional[str],
-        vendor_ids: Optional[List[UUID]] = None,
-        seller_ids: Optional[List[UUID]] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch aligned sales and ad sales for each account/date bucket."""
         if date_from > date_to:
@@ -506,8 +466,6 @@ class AnalyticsService:
         if asin:
             totals_by_bucket = await self._asin_series_totals(
                 account_ids=account_ids,
-                vendor_ids=vendor_ids or [],
-                seller_ids=seller_ids or [],
                 date_from=date_from,
                 date_to=date_to,
                 group_by=group_by,
@@ -623,8 +581,6 @@ class AnalyticsService:
     async def _asin_series_totals(
         self,
         account_ids: List[UUID],
-        vendor_ids: List[UUID],
-        seller_ids: List[UUID],
         date_from: date,
         date_to: date,
         group_by: str,
@@ -632,68 +588,33 @@ class AnalyticsService:
     ) -> Dict[date, Dict[str, float]]:
         """Per-bucket sales and ad sales for a single ASIN.
 
-        Vendor per-ASIN rows are settled figures and sum cleanly. Seller
-        per-ASIN rows are trailing-window snapshots re-stamped on every sync
-        (see :meth:`_fetch_asin_breakdown`), so per account and bucket we take
-        the ASIN's value at the most complete snapshot date instead of summing
-        dates. Ad sales come from AdvertisingMetricsByAsin (Sponsored Products
+        Per-ASIN rows are daily for both account types, so a bucket is a plain
+        sum. Ad sales come from AdvertisingMetricsByAsin (Sponsored Products
         advertised-product attribution)."""
         totals: Dict[date, Dict[str, float]] = {}
 
         def _slot(bucket_date: date) -> Dict[str, float]:
             return totals.setdefault(bucket_date, {"total_sales": 0.0, "ad_sales": 0.0})
 
-        if vendor_ids:
-            vendor_bucket = self._bucket_expression(SalesData.date, group_by).label("bucket_date")
-            vendor_rows = (
-                await self.db.execute(
-                    select(
-                        vendor_bucket,
-                        func.sum(display_revenue_expr()).label("total_sales"),
-                    )
-                    .where(
-                        SalesData.account_id.in_(vendor_ids),
-                        SalesData.asin == asin,
-                        SalesData.date >= date_from,
-                        SalesData.date <= date_to,
-                    )
-                    .group_by(vendor_bucket)
+        sales_bucket = self._bucket_expression(SalesData.date, group_by).label("bucket_date")
+        sales_rows = (
+            await self.db.execute(
+                select(
+                    sales_bucket,
+                    func.sum(display_revenue_expr()).label("total_sales"),
                 )
-            ).all()
-            for row in vendor_rows:
-                bucket_date = self._normalize_bucket_date(row.bucket_date)
-                _slot(bucket_date)["total_sales"] += self._as_float(row.total_sales)
-
-        if seller_ids:
-            seller_rows = (
-                await self.db.execute(
-                    select(
-                        SalesData.account_id.label("account_id"),
-                        SalesData.date.label("date"),
-                        func.sum(
-                            case((SalesData.asin == asin, display_revenue_expr()), else_=0)
-                        ).label("asin_sales"),
-                        func.sum(display_revenue_expr()).label("snapshot_sales"),
-                    )
-                    .where(
-                        SalesData.account_id.in_(seller_ids),
-                        SalesData.asin != DAILY_TOTAL_ASIN,
-                        SalesData.date >= date_from,
-                        SalesData.date <= date_to,
-                    )
-                    .group_by(SalesData.account_id, SalesData.date)
+                .where(
+                    SalesData.account_id.in_(account_ids),
+                    SalesData.asin == asin,
+                    SalesData.date >= date_from,
+                    SalesData.date <= date_to,
                 )
-            ).all()
-            # Same ranking as _latest_full_snapshot_date: most sales, latest date.
-            best: Dict[tuple[UUID, date], tuple[tuple[float, date], float]] = {}
-            for row in seller_rows:
-                snapshot_date = self._normalize_bucket_date(row.date)
-                key = (row.account_id, self._bucket_floor(snapshot_date, group_by))
-                rank = (self._as_float(row.snapshot_sales), snapshot_date)
-                if key not in best or rank > best[key][0]:
-                    best[key] = (rank, self._as_float(row.asin_sales))
-            for (_account_id, bucket_date), (_rank, asin_sales) in best.items():
-                _slot(bucket_date)["total_sales"] += asin_sales
+                .group_by(sales_bucket)
+            )
+        ).all()
+        for row in sales_rows:
+            bucket_date = self._normalize_bucket_date(row.bucket_date)
+            _slot(bucket_date)["total_sales"] += self._as_float(row.total_sales)
 
         ads_bucket = self._bucket_expression(AdvertisingMetricsByAsin.date, group_by).label(
             "bucket_date"
@@ -724,62 +645,26 @@ class AnalyticsService:
         account_ids: List[UUID],
         date_from: date,
         date_to: date,
-        language: str = "en",
-    ) -> tuple[List[Dict[str, Any]], List[str]]:
-        """Return a sales breakdown by ASIN for the current period.
+    ) -> List[Dict[str, Any]]:
+        """Return the top-25 sales breakdown by ASIN for the current period.
 
-        Vendor per-ASIN rows are settled monthly figures, so summing them over a
-        period is correct and reconciles with the account sentinel. Seller
-        per-ASIN rows are a trailing-window snapshot re-stamped on every sync,
-        so summing the same ASIN across dates multiplies its sales many times
-        over. We therefore aggregate vendor and seller accounts separately: sum
-        the vendor rows and, for each seller account, take the single most
-        complete snapshot date. Shares are computed against the breakdown's own
-        total so they always stay coherent (no ASIN above 100%)."""
+        Shares are computed against the breakdown's own total so they always stay
+        coherent (no ASIN above 100%)."""
         if not account_ids:
-            return [], []
+            return []
 
-        types_rows = (
-            await self.db.execute(
-                select(AmazonAccount.id, AmazonAccount.account_type).where(
-                    AmazonAccount.id.in_(account_ids)
-                )
-            )
-        ).all()
-        vendor_ids = [r.id for r in types_rows if r.account_type == AccountType.VENDOR]
-        seller_ids = [r.id for r in types_rows if r.account_type == AccountType.SELLER]
-
-        contributions: Dict[str, float] = {}
-        has_seller_snapshot = False
-
-        if vendor_ids:
-            for row in await self._sum_asin_sales(vendor_ids, date_from, date_to):
-                contributions[row.asin] = contributions.get(row.asin, 0.0) + self._as_float(
-                    row.total_sales
-                )
-
-        for seller_id in seller_ids:
-            snapshot_date = await self._latest_full_snapshot_date(
-                seller_id, date_from, date_to
-            )
-            if snapshot_date is None:
-                continue
-            has_seller_snapshot = True
-            for row in await self._sum_asin_sales(
-                [seller_id], snapshot_date, snapshot_date
-            ):
-                contributions[row.asin] = contributions.get(row.asin, 0.0) + self._as_float(
-                    row.total_sales
-                )
-
+        contributions = {
+            row.asin: self._as_float(row.total_sales)
+            for row in await self._sum_asin_sales(account_ids, date_from, date_to)
+        }
         if not contributions:
-            return [], []
+            return []
 
         titles = await self._asin_titles(account_ids, list(contributions.keys()))
         breakdown_total = sum(contributions.values())
 
         ranked = sorted(contributions.items(), key=lambda kv: (-kv[1], kv[0]))[:25]
-        breakdown = [
+        return [
             {
                 "asin": asin,
                 "title": titles.get(asin),
@@ -788,16 +673,6 @@ class AnalyticsService:
             }
             for asin, value in ranked
         ]
-
-        notes: List[str] = []
-        if has_seller_snapshot:
-            notes.append(
-                "Per gli account Seller la ripartizione per ASIN usa lo snapshot più completo del periodo (i report per-ASIN di Amazon sono cumulativi e non si possono sommare per giorno). Il totale dell'account resta basato sulle vendite confermate."
-                if language == "it"
-                else "For Seller accounts the per-ASIN breakdown uses the period's most complete snapshot (Amazon's by-ASIN reports are cumulative and cannot be summed per day). The account total stays based on confirmed sales."
-            )
-
-        return breakdown, notes
 
     async def _sum_asin_sales(self, account_ids, date_from: date, date_to: date):
         """Sum per-ASIN sales for the given accounts and date range."""
@@ -815,34 +690,6 @@ class AnalyticsService:
             .group_by(SalesData.asin)
         )
         return (await self.db.execute(query)).all()
-
-    async def _latest_full_snapshot_date(
-        self, account_id: UUID, date_from: date, date_to: date
-    ) -> Optional[date]:
-        """Return the snapshot date with the most per-ASIN sales for a seller.
-
-        Seller per-ASIN rows are trailing-window snapshots, so we pick the date
-        whose snapshot carries the most sales to best approximate the account's
-        product mix without double-counting overlapping windows."""
-        query = (
-            select(
-                SalesData.date.label("date"),
-                func.sum(display_revenue_expr()).label("total_sales"),
-            )
-            .where(
-                SalesData.account_id == account_id,
-                SalesData.asin != DAILY_TOTAL_ASIN,
-                SalesData.date >= date_from,
-                SalesData.date <= date_to,
-            )
-            .group_by(SalesData.date)
-            .order_by(func.sum(display_revenue_expr()).desc(), SalesData.date.desc())
-            .limit(1)
-        )
-        row = (await self.db.execute(query)).first()
-        if row is None or self._as_float(row.total_sales) <= 0:
-            return None
-        return row.date
 
     async def _asin_titles(self, account_ids, asins) -> Dict[str, Optional[str]]:
         """Resolve product titles for a set of ASINs in scope."""

@@ -190,15 +190,6 @@ def _bucket_ads_row(bucket_date: date, ad_sales: float):
     return SimpleNamespace(bucket_date=bucket_date, ad_sales=ad_sales)
 
 
-def _seller_snapshot_row(account_id, snapshot_date: date, asin_sales: float, snapshot_sales: float):
-    return SimpleNamespace(
-        account_id=account_id,
-        date=snapshot_date,
-        asin_sales=asin_sales,
-        snapshot_sales=snapshot_sales,
-    )
-
-
 def _coverage_row(ads_from=None, ads_until=None):
     return SimpleNamespace(ads_from=ads_from, ads_until=ads_until)
 
@@ -246,7 +237,6 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
                 _ads_row(account_a, date(2026, 2, 28), 10),
             ],
             [_coverage_row(date(2026, 1, 15), date(2026, 3, 2))],
-            [_account_row(account_a), _account_row(account_b)],
             [
                 _asin_row("B0AAA", "Alpha", 120),
                 _asin_row("B0BBB", "Beta", 110),
@@ -262,7 +252,7 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
         date_to=date(2026, 3, 2),
     )
 
-    assert session.execute_calls == 9
+    assert session.execute_calls == 8
     assert result["ads_data_from"] == date(2026, 1, 15)
     assert result["ads_data_until"] == date(2026, 3, 2)
     assert [point["date"] for point in result["time_series"]] == [date(2026, 3, 1), date(2026, 3, 2)]
@@ -383,7 +373,7 @@ async def test_get_ads_vs_organic_applies_asin_filter_and_returns_note():
     session = FakeAsyncSession(
         [
             [_account_row(account_id, AccountType.SELLER)],
-            [_seller_snapshot_row(account_id, date(2026, 3, 5), 90, 90)],
+            [SimpleNamespace(bucket_date=date(2026, 3, 5), total_sales=90)],
             [_bucket_ads_row(date(2026, 3, 5), 40)],
             [],
             [],
@@ -416,7 +406,7 @@ async def test_get_ads_vs_organic_normalizes_asin_filter():
     session = FakeAsyncSession(
         [
             [_account_row(account_id, AccountType.SELLER)],
-            [_seller_snapshot_row(account_id, date(2026, 3, 6), 25, 25)],
+            [SimpleNamespace(bucket_date=date(2026, 3, 6), total_sales=25)],
             [_bucket_ads_row(date(2026, 3, 6), 5)],
             [],
             [],
@@ -439,14 +429,16 @@ async def test_get_ads_vs_organic_normalizes_asin_filter():
 
 
 @pytest.mark.asyncio
-async def test_asin_filter_uses_latest_full_snapshot_for_sellers():
+async def test_asin_filter_sums_seller_rows_in_a_bucket():
+    """Seller per-ASIN rows are daily (rebuilt from Orders), so a bucket sums
+    them. They used to be trailing-window snapshots and were picked, not summed."""
     account_id = uuid4()
     session = FakeAsyncSession(
         [
             [_account_row(account_id, AccountType.SELLER)],
             [
-                _seller_snapshot_row(account_id, date(2026, 3, 3), 50, 1000),
-                _seller_snapshot_row(account_id, date(2026, 3, 6), 80, 2000),
+                SimpleNamespace(bucket_date=date(2026, 3, 2), total_sales=50),
+                SimpleNamespace(bucket_date=date(2026, 3, 2), total_sales=80),
             ],
             [_bucket_ads_row(date(2026, 3, 2), 30)],
             [],
@@ -465,10 +457,9 @@ async def test_asin_filter_uses_latest_full_snapshot_for_sellers():
     )
 
     point = result["time_series"][0]
-    # Snapshot at 2026-03-06 is the most complete; summing both would give 130.
-    assert point["total_sales"] == 80.0
+    assert point["total_sales"] == 130.0
     assert point["ad_sales"] == 30.0
-    assert result["summary"]["total_sales"]["value"] == 80.0
+    assert result["summary"]["total_sales"]["value"] == 130.0
 
 
 @pytest.mark.asyncio
