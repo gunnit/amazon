@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# A second push to the same branch makes the first run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Match render.yaml — testing on a version production does not run
+          # is how the local Python 3.9 venv drifted in the first place.
+          python-version: "3.11.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Run tests
+        working-directory: backend
+        # The suite is self-contained: no database, no network, no credentials.
+        # tests/conftest.py is what makes a single-process run trustworthy.
+        run: python -m pytest tests/ -q
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Type-check and build
+        working-directory: frontend
+        # `build` is `tsc && vite build`, so this is the type check too.
+        run: npm run build
+      - name: Check translation parity
+        working-directory: frontend
+        # A key present in one locale and missing in the other renders as a raw
+        # key in the client's face. Cheap to catch here, invisible otherwise.
+        run: |
+          node -e "
+            const fs = require('fs');
+            const keys = (f) => [...fs.readFileSync(f, 'utf8').matchAll(/^  '([^']+)':/gm)].map((m) => m[1]);
+            const it = keys('src/i18n/it.ts');
+            const en = keys('src/i18n/en.ts');
+            const onlyIt = it.filter((k) => !en.includes(k));
+            const onlyEn = en.filter((k) => !it.includes(k));
+            if (onlyIt.length || onlyEn.length) {
+              console.error('Missing in en:', onlyIt);
+              console.error('Missing in it:', onlyEn);
+              process.exit(1);
+            }
+            console.log(\`i18n parity ok — \${it.length} keys in both locales\`);
+          "
