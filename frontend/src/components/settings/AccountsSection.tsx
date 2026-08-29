@@ -51,6 +51,7 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
 import { SecretRotationBanner } from '@/components/SecretRotationBanner'
+import { StaleDataBanner } from '@/components/StaleDataBanner'
 import { cn, formatDate } from '@/lib/utils'
 import { isPlaceholderAccountName } from '@/lib/accountNaming'
 import { accountsApi, authApi } from '@/services/api'
@@ -768,6 +769,7 @@ export function AccountsSection({ embedded = false }: { embedded?: boolean }) {
   return (
     <div className="space-y-6">
       <SecretRotationBanner />
+      <StaleDataBanner />
 
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>

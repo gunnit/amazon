@@ -6,8 +6,8 @@ test('debug select dropdown', async ({ page }) => {
   // Login first
   await page.goto(`${BASE_URL}/login`);
   await page.waitForLoadState('networkidle');
-  await page.fill('input#email', 'test@test.com');
-  await page.fill('input#password', 'Test1234');
+  await page.fill('input#email', process.env.QA_EMAIL ?? '');
+  await page.fill('input#password', process.env.QA_PASSWORD ?? '');
   await page.getByRole('button', { name: /sign in/i }).click();
   await page.waitForURL(BASE_URL + '/', { timeout: 10000 });
   await page.waitForLoadState('networkidle');

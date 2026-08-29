@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from calendar import monthrange
 from datetime import date
@@ -127,6 +128,24 @@ def _drop_expired_partitions_for(connection, parent: str, cutoff: date) -> list[
     return dropped
 
 
+def _require_destructive_opt_in(task: str) -> None:
+    """Refuse to run a task that deletes client data unless explicitly enabled.
+
+    These two tasks are scheduled on the Celery beat path, which production
+    does not run — but the handover documentation tells the reader to start a
+    worker and a beat. Doing that against a restored database would delete
+    everything older than DATA_RETENTION_MONTHS, including the ~4 years of
+    vendor history Amazon will not serve again. The flag makes the stale
+    instruction harmless without depending on anyone rewriting it.
+    """
+    if os.environ.get("ALLOW_DESTRUCTIVE_RETENTION", "").lower() not in ("1", "true", "yes"):
+        raise RuntimeError(
+            f"{task} deletes data older than {settings.DATA_RETENTION_MONTHS} months "
+            "and is disabled by default. Set ALLOW_DESTRUCTIVE_RETENTION=true only "
+            "after confirming the retention window covers the history you must keep."
+        )
+
+
 @celery_app.task
 def manage_partitions():
     """Create future monthly partitions and drop expired ones on managed tables.
@@ -144,6 +163,7 @@ def manage_partitions():
     are reported under outcomes['<table>'] as 'skipped' for creation and
     yield no drops.
     """
+    _require_destructive_opt_in("manage_partitions")
     months_ahead = max(0, int(settings.PARTITION_FUTURE_MONTHS))
     managed_tables = [t for t in settings.PARTITION_MANAGED_TABLES if SQL_IDENTIFIER_RE.fullmatch(t)]
     today = date.today()
@@ -192,6 +212,7 @@ def manage_partitions():
 @celery_app.task
 def manage_data_retention():
     """Delete expired time-series data and vacuum the affected tables."""
+    _require_destructive_opt_in("manage_data_retention")
     if settings.DATA_RETENTION_MONTHS < 1:
         raise ValueError("DATA_RETENTION_MONTHS must be at least 1")
 

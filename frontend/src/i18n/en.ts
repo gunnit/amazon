@@ -336,6 +336,10 @@ const en: Record<string, string> = {
   'accounts.syncError.MISSING_ADVERTISING_PROFILE': 'The advertising profile for this account is missing. Pick it with "Reconnect Ads", choosing the profile on the same marketplace.',
   'accounts.syncError.ADS_ALL_REPORTS_FAILED': 'Amazon Ads did not return the campaign reports. Try later; if it persists, reconnect the advertising side.',
   // Client secret rotation (Amazon requires it every 180 days)
+  'staleData.title': 'Data has not updated for more than 48 hours',
+  'staleData.intro': 'The Amazon sync is not completing for {n} account(s). The figures shown in the platform are frozen at the last successful update.',
+  'staleData.hint': 'The oldest data is from {date}. Check the account status: the most frequent cause is an expired Amazon credential.',
+  'staleData.cta': 'Go to accounts',
   'secretRotation.title': 'The Amazon client secret has expired: data is no longer updating',
   'secretRotation.intro': 'Amazon requires the application client secret to be rotated every 180 days. Yours is past that deadline, so Amazon rejects the requests and sales, orders and campaigns are frozen. This is not a platform fault and you can fix it yourself in a few minutes.',
   'secretRotation.stepsTitle': 'How to fix it:',

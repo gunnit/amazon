@@ -1,8 +1,9 @@
 import { test, expect, Page } from '@playwright/test';
 
 const BASE_URL = 'http://localhost:5173';
-const TEST_EMAIL = 'test@test.com';
-const TEST_PASSWORD = 'Test1234';
+const TEST_EMAIL = process.env.QA_EMAIL ?? ''
+const TEST_PASSWORD = process.env.QA_PASSWORD ?? ''
+if (!TEST_EMAIL || !TEST_PASSWORD) throw new Error('Set QA_EMAIL and QA_PASSWORD to run this spec')
 
 // Helper to log in via the UI
 async function loginViaUI(page: Page) {

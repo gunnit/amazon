@@ -104,6 +104,9 @@ def _make_connection_ctx(execute_side_effect, scalars_side_effect=None):
 
 def test_manage_partitions_creates_current_plus_future_months(maintenance_module, monkeypatch):
     """manage_partitions should call ensure_monthly_partition for current + N future months per table."""
+    # manage_partitions drops expired partitions, so it refuses to run
+    # without an explicit opt-in. Exercising it means opting in.
+    monkeypatch.setenv("ALLOW_DESTRUCTIVE_RETENTION", "true")
     calls: list[dict] = []
 
     def fake_execute(stmt, params=None):
@@ -157,6 +160,9 @@ def test_manage_partitions_creates_current_plus_future_months(maintenance_module
 
 def test_manage_partitions_wraps_year_at_december(maintenance_module, monkeypatch):
     """When current month is Nov, +3 future months should wrap into the next year."""
+    # manage_partitions drops expired partitions, so it refuses to run
+    # without an explicit opt-in. Exercising it means opting in.
+    monkeypatch.setenv("ALLOW_DESTRUCTIVE_RETENTION", "true")
     calls: list[dict] = []
 
     def fake_execute(stmt, params=None):

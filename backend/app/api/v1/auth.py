@@ -41,6 +41,9 @@ router = APIRouter()
 # Sensitive endpoints get a tight limit; the rest of the auth surface relies
 # on authentication. Window is fixed at 60s.
 _auth_limit = RateLimiter(max_requests=10, window_seconds=60, scope="auth")
+# Keyed by the account being attacked, not by source address: rotating IPs
+# (or forging a header) no longer buys an attacker more attempts.
+_login_account_limit = RateLimiter(max_requests=10, window_seconds=900, scope="login-account")
 
 
 class RefreshRequest(BaseModel):
@@ -55,6 +58,8 @@ async def login(user_in: UserLogin, db: DbSession):
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(user_in.password, user.hashed_password):
+        # Counted only on failure, so a working login is never throttled.
+        await _login_account_limit.hit(user_in.email.lower())
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -328,7 +333,36 @@ async def delete_current_user(
     current_user: CurrentUser,
     db: DbSession,
 ):
-    """Permanently delete the current user's account."""
+    """Permanently delete the current user's account.
+
+    Refused for the last admin of an organization. Registration is closed and
+    email delivery is unavailable, so there is no way back in: that click would
+    lock the organization out of its own data for good.
+    """
+    my_admin_orgs = select(OrganizationMember.organization_id).where(
+        OrganizationMember.user_id == current_user.id,
+        OrganizationMember.role == UserRole.ADMIN,
+    )
+    orgs_with_another_admin = select(OrganizationMember.organization_id).join(
+        User, User.id == OrganizationMember.user_id
+    ).where(
+        OrganizationMember.organization_id.in_(my_admin_orgs),
+        OrganizationMember.user_id != current_user.id,
+        OrganizationMember.role == UserRole.ADMIN,
+        User.is_active.is_(True),
+    )
+
+    mine = set((await db.execute(my_admin_orgs)).scalars())
+    covered = set((await db.execute(orgs_with_another_admin)).scalars())
+    if mine - covered:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Sei l'unico amministratore dell'organizzazione. "
+                "Nomina un altro amministratore prima di eliminare il tuo account."
+            ),
+        )
+
     await db.delete(current_user)
 
 

@@ -87,6 +87,26 @@ def revoke_token(jti: str, exp: Optional[int]) -> bool:
         return False
 
 
+# Number of proxies we control between the internet and this process. Render
+# puts exactly one in front of the web service. Each proxy APPENDS the address
+# it received the connection from, so with N trusted hops the real client is
+# the Nth entry from the right — everything to its left is caller-supplied and
+# forgeable. Taking the leftmost entry (CWE-348) let anyone reset their own
+# rate-limit bucket with a header. Raise this if another proxy is added in
+# front (Cloudflare, a WAF).
+TRUSTED_PROXY_HOPS = 1
+
+
+def client_ip(request: Request) -> str:
+    """The client address as seen by the closest proxy we trust."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+        if len(hops) >= TRUSTED_PROXY_HOPS:
+            return hops[-TRUSTED_PROXY_HOPS]
+    return request.client.host if request.client else "unknown"
+
+
 class RateLimiter:
     """Fixed-window per-client rate limiter.
 
@@ -103,11 +123,16 @@ class RateLimiter:
         self._local: dict[str, tuple[float, int]] = {}
 
     def _client_key(self, request: Request) -> str:
-        forwarded = request.headers.get("x-forwarded-for")
-        ip = forwarded.split(",")[0].strip() if forwarded else (
-            request.client.host if request.client else "unknown"
-        )
-        return f"ratelimit:{self.scope}:{ip}"
+        return f"ratelimit:{self.scope}:{client_ip(request)}"
+
+    async def hit(self, key: str) -> None:
+        """Count one event against an arbitrary key and enforce the limit.
+
+        Lets a caller rate-limit on something other than the client IP — the
+        account being logged into, for instance, which an attacker cannot
+        rotate the way they can rotate a source address.
+        """
+        await self._enforce(f"ratelimit:{self.scope}:{key}")
 
     def _local_incr(self, key: str) -> int:
         now = time.monotonic()
@@ -122,7 +147,9 @@ class RateLimiter:
         return count
 
     async def __call__(self, request: Request) -> None:
-        key = self._client_key(request)
+        await self._enforce(self._client_key(request))
+
+    async def _enforce(self, key: str) -> None:
         client = _get_redis()
         if client is None:
             count = self._local_incr(key)

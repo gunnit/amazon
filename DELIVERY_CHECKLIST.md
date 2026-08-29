@@ -34,10 +34,18 @@ AMAZON_ADS_PROFILE_ID=<profile id>            # pode também ser por conta no ap
 AMAZON_ADS_API_BASE_URL=                       # opcional; o cliente já tem defaults por região (NA/EU/FE)
 ```
 
-## 3. Redis (fila de tarefas e cache) — OBRIGATÓRIO
-Necessário para Celery (worker + beat), relatórios agendados, alertas, digests e cache. Sem Redis, os jobs em background não rodam e `/health/ready` falha.
+## 3. Redis (fila de tarefas e cache) — OPCIONAL, NÃO USADO EM PRODUÇÃO
+A produção **não** usa Redis nem Celery. O trabalho agendado corre in-process
+dentro do serviço da API (`ENABLE_INPROCESS_SCHEDULER=true`), que é o que o
+`render.yaml` provisiona. Não é preciso provisionar nada para a entrega.
 
-- [ ] Provisionar um Redis gerenciado (Render Redis, AWS ElastiCache, Redis Cloud, etc.)
+> **Não arranque `celery beat`.** O beat agenda `manage_data_retention` e
+> `manage_partitions`, que apagam dados mais antigos que `DATA_RETENTION_MONTHS`
+> (24 meses) — incluindo os ~4 anos de histórico vendor que a Amazon não volta a
+> fornecer. As duas tarefas recusam-se a correr sem `ALLOW_DESTRUCTIVE_RETENTION=true`;
+> deixe essa variável por definir.
+
+- [ ] Nada a fazer. (Só se um dia migrar para Celery: provisionar Redis gerido.)
 
 Variáveis (podem apontar para a mesma instância em DBs diferentes):
 ```

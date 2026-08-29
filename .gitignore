@@ -50,3 +50,10 @@ backend/celerybeat-schedule
 
 # Database dumps (may contain encrypted credentials — never commit)
 *.dump
+
+# Client tracking spreadsheets and DB dumps — internal data, never in the repo
+*.xlsx
+*.dump
+test-results/
+outputs/
+*.pptx

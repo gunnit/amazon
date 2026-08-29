@@ -834,14 +834,20 @@ cd frontend
 npm install
 npm run dev
 
-# Celery worker (new terminal)
-cd backend
-celery -A workers.celery_app worker --loglevel=info
-
-# Celery beat scheduler (new terminal)
-cd backend
-celery -A workers.celery_app beat --loglevel=info
+# NOTE: production does NOT run Celery. Scheduled work runs in-process inside
+# the API service (ENABLE_INPROCESS_SCHEDULER=true), so the two commands below
+# are for local experiments only and are not part of any deployment.
+#
+# WARNING: `beat` schedules manage_data_retention and manage_partitions, which
+# DELETE and DROP data older than DATA_RETENTION_MONTHS (24). The client's
+# vendor account holds ~4 years of history that Amazon will not serve again.
+# Both tasks now refuse to run unless ALLOW_DESTRUCTIVE_RETENTION=true, and you
+# should leave it unset. Never point either at a production or restored database.
 ```
+
+The authoritative description of the deployed topology lives in the in-app
+documentation, `frontend/src/content/docs/{it,en}/tech-architecture.md`, which
+is kept in sync with the running system.
 
 ---
 

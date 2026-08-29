@@ -600,13 +600,9 @@ Based on client priorities, recommended MVP:
 
 ## Test Account for Development
 
-| Field | Value |
-|-------|-------|
-| Email | assistente42@inthezon.com |
-| Password | Bayerinsect-22 |
-| Type | Seller Central (inactive) |
-| OTP Contact | Gioia: +39 327 867 9673 |
-| ⚠️ Restrictions | Read-only, no modifications |
+Credentials are **not** stored in this repository. The Seller Central account
+used for development, its password and the OTP contact live in the team
+password manager; ask the project owner for access.
 
 ---
 

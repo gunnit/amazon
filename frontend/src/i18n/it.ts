@@ -336,6 +336,10 @@ const it: Record<string, string> = {
   'accounts.syncError.MISSING_ADVERTISING_PROFILE': 'Manca il profilo pubblicitario per questo account. Selezionalo con «Ricollega Ads», scegliendo il profilo dello stesso marketplace.',
   'accounts.syncError.ADS_ALL_REPORTS_FAILED': 'Amazon Ads non ha restituito i report delle campagne. Riprova più tardi; se persiste, ricollega la parte pubblicitaria.',
   // Rotazione del client secret (obbligo Amazon ogni 180 giorni)
+  'staleData.title': 'I dati non si aggiornano da più di 48 ore',
+  'staleData.intro': 'La sincronizzazione con Amazon non va a buon fine per {n} account. Le cifre mostrate nella piattaforma sono ferme all\'ultimo aggiornamento riuscito.',
+  'staleData.hint': 'Il dato più vecchio risale al {date}. Controlla lo stato degli account: la causa più frequente è una credenziale Amazon scaduta.',
+  'staleData.cta': 'Vai agli account',
   'secretRotation.title': 'Il client secret Amazon è scaduto: i dati non si aggiornano più',
   'secretRotation.intro': 'Amazon obbliga a rigenerare il client secret dell\'applicazione ogni 180 giorni. Il tuo ha superato la scadenza, quindi Amazon rifiuta le richieste e vendite, ordini e campagne restano fermi. Non è un problema della piattaforma e puoi risolverlo da solo in pochi minuti.',
   'secretRotation.stepsTitle': 'Come rimetterlo a posto:',

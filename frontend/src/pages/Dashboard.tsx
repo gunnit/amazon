@@ -50,6 +50,7 @@ import ProductTrendSparkline from '@/components/analytics/ProductTrendSparkline'
 import { PeriodComparisonCard } from '@/components/PeriodComparisonCard'
 import { EmptyState } from '@/components/EmptyState'
 import { SecretRotationBanner } from '@/components/SecretRotationBanner'
+import { StaleDataBanner } from '@/components/StaleDataBanner'
 import { useFilterStore, getComparisonPeriods, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
 import { useToast } from '@/components/ui/use-toast'
@@ -683,6 +684,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <SecretRotationBanner />
+      <StaleDataBanner />
 
       {/* Branded hero header — mirrors the login brand panel */}
       <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 px-6 py-6 text-white shadow-sm">

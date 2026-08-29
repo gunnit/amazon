@@ -2,8 +2,9 @@ import { test, expect, Page, ConsoleMessage, Request } from '@playwright/test';
 
 const BASE_URL = 'http://localhost:5173';
 const SHOTS = '/Users/giuseppepretto/Projects/keelai/amazon/test-results';
-const EMAIL = 'peppepretto@gmail.com';
-const PASSWORD = 'QaTest123!';
+const EMAIL = process.env.QA_EMAIL ?? ''
+const PASSWORD = process.env.QA_PASSWORD ?? ''
+if (!EMAIL || !PASSWORD) throw new Error('Set QA_EMAIL and QA_PASSWORD to run this spec')
 
 type Diag = { consoleErrors: string[]; pageErrors: string[]; failedRequests: string[] };
 

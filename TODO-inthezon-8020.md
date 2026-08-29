@@ -46,7 +46,7 @@ Merge local feito, **não pushed** (alguns commits já em prod: `98f358a`). App 
 - **Playwright** (live Docker stack 3.11): **ALL 6 FLOWS PASS** — login, Brand Analysis nav, Catalog "51 con vendite su 60 sincronizzati"+Importa, Forecast "Previsione a 1 mesi" (mesi!), Reports sem banner, Recommendations 502→empty-state gracioso. Screenshots em `test-results/qa-*.png`.
 - **Migrações** aplicadas no DB Docker real: `025→026→027`, `products.source` ok, `alembic_version` width=255.
 - **COMMIT:** `acf0221` em `master` (55 arquivos, +3658/-147). **NÃO pushed** (push = deploy prod no Render). `.env` confirmado gitignored; nenhum secret commitado.
-- Stack Docker local **de pé**: frontend http://localhost:5173, login `peppepretto@gmail.com`/`QaTest123!`. Parar com `docker compose down`.
+- Stack Docker local **de pé**: frontend http://localhost:5173, login: usa as credenciais do gestor de passwords da equipa (nunca no repositório). Parar com `docker compose down`.
 
 ### ✅ T8 — hub "Performance" (2026-06-04, Variante A aprovada pelo usuário)
 - `Reports.tsx`+`Analytics.tsx` → **fundidos** em `Performance.tsx` (6 abas, FilterBar compartilhado, composição — sem reescrever cálculo). Sidebar: 1 item "Performance". Rotas `/reports`+`/analytics`→`/performance`; `/analytics/product/:asin` preservada. Dashboard deep-links + back-link repontados.
