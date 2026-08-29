@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.sql import column, table
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,7 +83,26 @@ product_module.Product = type("Product", (), {})
 sys.modules["app.models.product"] = product_module
 
 sales_data_module = types.ModuleType("app.models.sales_data")
-sales_data_module.SalesData = type("SalesData", (), {})
+# A bare marker class here poisoned app.services.sales_metrics for every other
+# test module in the same process: it binds SalesData at import time and then
+# reads shipped_revenue/shipped_units off it. Give the stub the real columns.
+_sales_table = table(
+    "sales_data",
+    *[
+        column(name)
+        for name in (
+            "account_id", "date", "asin", "sku",
+            "units_ordered", "units_ordered_b2b",
+            "ordered_product_sales", "ordered_product_sales_b2b",
+            "total_order_items", "browser_sessions", "mobile_sessions",
+            "page_views", "currency",
+            "shipped_revenue", "shipped_units", "shipped_cogs",
+        )
+    ],
+)
+sales_data_module.SalesData = type(
+    "SalesData", (), {c.name: c for c in _sales_table.c}
+)
 sys.modules["app.models.sales_data"] = sales_data_module
 
 schema_spec = spec_from_file_location("app.schemas.account", SCHEMA_PATH)

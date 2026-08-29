@@ -350,8 +350,8 @@ async def test_analytics_service_period_metrics_filters_daily_total_sentinel():
     # daily-total sentinel while the active-ASIN query filters it out.
     rendered_queries = [str(q) for q in db.queries]
     assert len(rendered_queries) == 2
-    assert "salesdata.asin =" in rendered_queries[0]
-    assert "salesdata.asin !=" in rendered_queries[1]
+    assert ".asin =" in rendered_queries[0]
+    assert ".asin !=" in rendered_queries[1]
 
 
 @pytest.mark.asyncio
@@ -414,7 +414,7 @@ async def test_analytics_service_compute_trends_uses_daily_total_for_2025_range(
         {"date": "2025-01-01", "value": 1000.0},
         {"date": "2025-01-02", "value": 1500.0},
     ]
-    assert "salesdata.asin =" in str(db.queries[0])
+    assert ".asin =" in str(db.queries[0])
 
 
 @pytest.mark.asyncio
@@ -459,4 +459,4 @@ async def test_analytics_service_top_products_excludes_daily_total_sentinel():
     asins = {item["asin"] for item in products}
     assert asins == {"B00REAL1", "B00REAL2"}
     assert DATA_EXTRACTION_MODULE.DAILY_TOTAL_ASIN not in asins
-    assert "salesdata.asin !=" in str(db.queries[0])
+    assert ".asin !=" in str(db.queries[0])

@@ -15,6 +15,10 @@ services:
     startCommand: |
       cd backend && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
+    # The scheduler runs INSIDE this service, so a second instance would run
+    # every job twice: duplicate writes and double the SP-API quota burn.
+    # Do not raise this without moving scheduling out of the web process.
+    numInstances: 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.11"
@@ -24,6 +28,19 @@ services:
         value: "false"
       - key: ENABLE_INPROCESS_SCHEDULER
         value: "true"
+      # There is no Redis in this deployment. Left unset, the setting defaults
+      # to redis://localhost:6379 and /health/ready fails forever on a
+      # dependency the app does not use. Empty makes the check report
+      # "skipped", so the probe means something again.
+      - key: REDIS_URL
+        value: ""
+      - key: CELERY_BROKER_URL
+        value: ""
+      # Set this to a Sentry DSN to get errors out of the box. init_sentry()
+      # in app/main.py is a no-op while it is empty — and with email delivery
+      # unavailable, this is the only out-of-band alerting channel there is.
+      - key: SENTRY_DSN
+        sync: false
       - key: APP_API_URL
         sync: false
       - key: APP_FRONTEND_URL
