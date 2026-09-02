@@ -25,6 +25,7 @@ export const DOC_GROUPS = [
       'tech-data-model',
       'tech-api',
       'tech-config',
+      'backup-restore',
     ],
   },
 ] as const

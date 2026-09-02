@@ -76,7 +76,11 @@ export function formatDate(date: string | Date): string {
 }
 
 export function formatLocalizedDate(date: string, language: string): string {
-  return new Date(date + 'T00:00:00').toLocaleDateString(language === 'it' ? 'it-IT' : 'en-US', {
+  // Callers pass either a plain 'YYYY-MM-DD' (read as local midnight, never
+  // shifted a day by the timezone) or a full ISO timestamp, which must be left
+  // alone — appending the time to it yields Invalid Date.
+  const value = date.includes('T') ? date : date + 'T00:00:00'
+  return new Date(value).toLocaleDateString(language === 'it' ? 'it-IT' : 'en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
