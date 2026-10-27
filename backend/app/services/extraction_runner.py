@@ -561,6 +561,8 @@ async def _refresh_recent_seller_sales(account_id: UUID, session_factory) -> int
         account = result.scalar_one_or_none()
         if account is None:
             return 0
+        # Capture before any rollback: see _with_account.
+        account_name = account.account_name
 
         service = DataExtractionService(db)
         try:
@@ -569,7 +571,7 @@ async def _refresh_recent_seller_sales(account_id: UUID, session_factory) -> int
             await db.commit()
             logger.info(
                 "Recent seller sales refresh completed for %s: %d records",
-                account.account_name,
+                account_name,
                 count,
             )
             return count
@@ -578,7 +580,7 @@ async def _refresh_recent_seller_sales(account_id: UUID, session_factory) -> int
                 await db.rollback()
             except Exception:
                 pass
-            logger.exception("Recent seller sales refresh failed for %s", account.account_name)
+            logger.exception("Recent seller sales refresh failed for %s", account_name)
             return 0
 
 
@@ -982,6 +984,8 @@ async def _refresh_recent_orders(account_id: UUID, session_factory) -> int:
         account = result.scalar_one_or_none()
         if account is None or account.account_type == AccountType.VENDOR:
             return 0
+        # Capture before any rollback: see _with_account.
+        account_name = account.account_name
 
         service = DataExtractionService(db)
         try:
@@ -994,7 +998,7 @@ async def _refresh_recent_orders(account_id: UUID, session_factory) -> int:
                 await db.rollback()
             except Exception:
                 pass
-            logger.exception("Recent orders refresh failed for %s", account.account_name)
+            logger.exception("Recent orders refresh failed for %s", account_name)
             return 0
 
 
