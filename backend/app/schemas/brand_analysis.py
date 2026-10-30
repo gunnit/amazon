@@ -54,6 +54,7 @@ BrandAnalysisMode = Literal[
 # Structured codes surfaced to the frontend for actionable error states.
 BrandAnalysisErrorCode = Literal[
     "internal_data_missing",
+    "brand_not_sold_by_account",
     "missing_2024_data",
     "missing_2025_data",
     "insufficient_yearly_data",

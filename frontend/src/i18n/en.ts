@@ -1121,6 +1121,7 @@ const en: Record<string, string> = {
   'brandAnalysis.error.asinListRequired': 'Provide at least one ASIN.',
   'brandAnalysis.error.connectedAccountRequired': 'Pick a connected Amazon account to use internal data.',
   'brandAnalysis.errorCode.internal_data_missing': 'Inthezon does not yet have Amazon data for this brand. Sync your account or upload yearly product exports.',
+  'brandAnalysis.errorCode.brand_not_sold_by_account': 'The selected account has never sold this brand, so Inthezon has no sales figures for it and the deck would show €0. Pick the account that sells the brand, or upload 2024 and 2025 product exports with estimated sales (for example from Helium 10).',
   'brandAnalysis.errorCode.missing_2024_data': '2024 Amazon data is missing. Sync 2024 or upload a 2024 yearly product export.',
   'brandAnalysis.errorCode.missing_2025_data': '2025 Amazon data is missing. Sync 2025 or upload a 2025 yearly product export.',
   'brandAnalysis.errorCode.insufficient_yearly_data': 'Yearly data is incomplete. Provide both 2024 and 2025 inputs to continue.',

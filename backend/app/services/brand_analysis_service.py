@@ -201,12 +201,14 @@ class InsufficientDataError(BrandAnalysisDataError):
     """Raised when a data source can't deliver enough rows for a year.
 
     Routed to the ``waiting_for_user_action`` status by the processor so
-    the user can fall back to manual upload.
+    the user can fall back to manual upload. ``error_code`` overrides the
+    code the processor would otherwise derive from the year.
     """
 
-    def __init__(self, year: int, source_name: str, detail: str = ""):
+    def __init__(self, year: int, source_name: str, detail: str = "", error_code: Optional[str] = None):
         self.year = year
         self.source_name = source_name
+        self.error_code = error_code
         message = f"Data source '{source_name}' did not return any data for {year}"
         if detail:
             message += f": {detail}"
@@ -3431,7 +3433,9 @@ def process_brand_analysis_job(job_id: str) -> None:
                         job_id, recovery_error,
                     )
                     error_code = "manual_upload_required"
-                    if isinstance(recovery_error, InsufficientDataError):
+                    if recovery_error.error_code:
+                        error_code = recovery_error.error_code
+                    elif isinstance(recovery_error, InsufficientDataError):
                         if recovery_error.year == 2024:
                             error_code = "missing_2024_data"
                         elif recovery_error.year == 2025:

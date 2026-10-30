@@ -716,7 +716,11 @@ export default function BrandAnalysis() {
         },
       ]
     }
-    if (code === 'insufficient_yearly_data' || code === 'manual_upload_required') {
+    if (
+      code === 'insufficient_yearly_data' ||
+      code === 'manual_upload_required' ||
+      code === 'brand_not_sold_by_account'
+    ) {
       return [
         {
           key: `fix-${code}`,

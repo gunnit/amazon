@@ -1033,6 +1033,7 @@ export type BrandAnalysisMode =
 
 export type BrandAnalysisErrorCode =
   | 'internal_data_missing'
+  | 'brand_not_sold_by_account'
   | 'missing_2024_data'
   | 'missing_2025_data'
   | 'insufficient_yearly_data'

@@ -100,6 +100,7 @@ class AmazonAccountDataSource:
     discovery_errors: list[str] = field(default_factory=list)
     year_diagnostics: dict[int, dict[str, Any]] = field(default_factory=dict)
     _scope_asins_cache: Optional[set[str]] = None
+    _scope_ever_sold_cache: Optional[bool] = None
     _account_marketplace_id_cache: Optional[str] = None
     _brand_analytics_cache: Optional[dict] = None
     _brand_analytics_attempted: bool = False
@@ -163,6 +164,17 @@ class AmazonAccountDataSource:
                 year=year,
                 source_name=self.source_name,
                 detail=self._year_gap_detail(year, account_summary, scoped_asins=len(scope_asins)),
+            )
+
+        # Inthezon only holds the connected account's own sales. A brand this
+        # account never sold has unknown revenue, not zero revenue: building
+        # the deck anyway shows "€0, 100% inactive" as if it were exact.
+        if scope_asins and not sales_by_asin and not await self._scope_ever_sold(scope_asins):
+            raise InsufficientDataError(
+                year=year,
+                source_name=self.source_name,
+                detail=self._never_sold_detail(len(scope_asins)),
+                error_code="brand_not_sold_by_account",
             )
 
         candidate_asins = sorted(scope_asins | set(sales_by_asin)) if scope_asins else sorted(sales_by_asin)
@@ -482,6 +494,31 @@ class AmazonAccountDataSource:
             "complete_year": complete_year,
             "missing_periods": missing_periods,
         }
+
+    async def _scope_ever_sold(self, scope_asins: set[str]) -> bool:
+        """Whether this account has any sales_data row for the scope, in any year."""
+        if self._scope_ever_sold_cache is None:
+            result = await self.db.execute(
+                select(SalesData.asin)
+                .where(
+                    and_(
+                        SalesData.account_id == self.account_id,
+                        SalesData.asin.in_(sorted(scope_asins)),
+                    )
+                )
+                .limit(1)
+            )
+            self._scope_ever_sold_cache = bool(result.all())
+        return self._scope_ever_sold_cache
+
+    def _never_sold_detail(self, scoped_asins: int) -> str:
+        scope = f"'{self.brand_filter}'" if self.brand_filter else "the requested ASINs"
+        return (
+            f"This Amazon account has never sold {scope} ({scoped_asins} ASINs found), so Inthezon "
+            "has no revenue for them and every figure would show as 0. Pick the account that sells "
+            "this brand, or upload 2024 and 2025 product exports with estimated sales "
+            "(for example from Helium 10)."
+        )
 
     def _year_gap_detail(self, year: int, summary: dict[str, Any], scoped_asins: int = 0) -> str:
         asin_clause = f" Scope currently contains {scoped_asins} ASINs." if scoped_asins else ""

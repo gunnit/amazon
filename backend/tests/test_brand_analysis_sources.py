@@ -360,3 +360,83 @@ def test_amazon_account_data_source_marks_partial_catalog_enrichment():
 
     _run(source.fetch_year(2025))
     assert source.enrichment_partial is True
+
+
+class FakeDbWithHistory(FakeDb):
+    """FakeDb whose "has this account ever sold the scope" probe has its own rows."""
+
+    def __init__(self, rows, ever_sold_rows, **kwargs):
+        super().__init__(rows, **kwargs)
+        self.ever_sold_rows = ever_sold_rows
+
+    async def execute(self, statement):
+        statement_text = str(statement)
+        if "FROM sales_data" in statement_text and "LIMIT" in statement_text:
+            self.execute_calls += 1
+            return FakeResult(rows=self.ever_sold_rows)
+        return await super().execute(statement)
+
+
+class _BrandSearchClient:
+    def __init__(self, brand):
+        self.brand = brand
+
+    def search_catalog_by_keyword(self, query, max_results=80, brand_names=None):
+        return [
+            {"asin": "B010", "title": f"{self.brand} Paste", "brand": self.brand, "category": "Baby"},
+            {"asin": "B011", "title": f"{self.brand} Wipes", "brand": self.brand, "category": "Baby"},
+        ]
+
+
+def _brand_source(db, brand):
+    source = AmazonAccountDataSource(
+        db=db,
+        account_id=uuid4(),
+        organization_id=uuid4(),
+        brand_filter=brand,
+    )
+    catalog_calls: list[str] = []
+
+    async def fake_client():
+        return _BrandSearchClient(brand)
+
+    async def fake_catalog(asin: str):
+        catalog_calls.append(asin)
+        return source._catalog_cache.get(asin, {"asin": asin, "brand": brand, "title": asin})
+
+    source._build_sp_api_client = fake_client  # type: ignore[method-assign]
+    source._fetch_catalog_via_market_research = fake_catalog  # type: ignore[method-assign]
+    return source, catalog_calls
+
+
+def test_amazon_account_data_source_refuses_brand_the_account_never_sold():
+    # The account has plenty of its own sales, but none for the analysed
+    # brand: its revenue is unknown, not zero, so the job must stop and ask
+    # for external data instead of building a "€0, 100% inactive" deck.
+    account_with_sales = (500, 40, date(2025, 1, 1), date(2025, 12, 31))
+    db = FakeDbWithHistory(rows=[], ever_sold_rows=[], year_summary=account_with_sales)
+    source, catalog_calls = _brand_source(db, "Fiocchi")
+
+    try:
+        _run(source.fetch_year(2024))
+    except InsufficientDataError as exc:
+        assert exc.error_code == "brand_not_sold_by_account"
+        assert exc.year == 2024
+        assert exc.source_name == "internal"
+        assert "Fiocchi" in str(exc)
+    else:
+        raise AssertionError("Expected InsufficientDataError")
+    assert catalog_calls == []
+
+
+def test_amazon_account_data_source_keeps_zero_year_for_brand_sold_in_other_years():
+    # An own brand with no sales in one year still gets zero-revenue rows:
+    # the account did sell it, so zero is a real figure for that year.
+    account_with_sales = (500, 40, date(2025, 1, 1), date(2025, 12, 31))
+    db = FakeDbWithHistory(rows=[], ever_sold_rows=[("B010",)], year_summary=account_with_sales)
+    source, _ = _brand_source(db, "Acme")
+
+    parsed = _run(source.fetch_year(2024))
+
+    assert sorted(parsed.rows["asin"]) == ["B010", "B011"]
+    assert set(parsed.rows["revenue"]) == {0}
