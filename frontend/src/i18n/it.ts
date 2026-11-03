@@ -1870,7 +1870,7 @@ const it: Record<string, string> = {
   'brandAnalysis.chart.empty.revenue': 'Servono i fatturati 2024 e 2025 per rappresentare la variazione anno su anno.',
   'brandAnalysis.chart.empty.asinStatus': 'Il conteggio degli ASIN attivi e inattivi non è ancora disponibile.',
   'brandAnalysis.chart.empty.topAsins': 'Il fatturato per singolo ASIN non è ancora disponibile.',
-  'brandAnalysis.accountNoneHint': 'Nessun account selezionato: per un brand non collegato usa la modalità «Export annuali» qui sotto, oppure collega il brand in Impostazioni → Account.',
+  'brandAnalysis.accountNoneHint': 'Nessun account selezionato: per un brand non collegato usa il pulsante «Analizza un brand non collegato (carica export)» qui sotto, oppure collega il brand in Impostazioni → Account.',
   'brandAnalysis.history.openRow': 'Apri l’analisi di {brand}',
   'brandAnalysis.history.downloadRow': 'Scarica il deck di {brand}',
   'brandAnalysis.history.progressLabel': 'Avanzamento {pct}%',

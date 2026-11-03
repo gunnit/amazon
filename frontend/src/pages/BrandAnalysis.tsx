@@ -80,6 +80,20 @@ const runningStatuses: BrandAnalysisStatus[] = [
   'cancelling',
 ]
 
+// The backend leaves a job "pending" both when nobody has started it yet
+// (just created, or exports just uploaded) and once /start has queued it.
+// Only the queued one is in flight: the others wait for the user to press
+// Avvia, so they must not hide or disable that button.
+const pendingWaitingSteps = new Set(['waiting for source data', 'waiting for processing'])
+
+function isJobInFlight(job: Pick<BrandAnalysisJob, 'status' | 'progress_step'> | undefined): boolean {
+  if (!job) return false
+  if (job.status === 'pending' && pendingWaitingSteps.has((job.progress_step || '').trim().toLowerCase())) {
+    return false
+  }
+  return runningStatuses.includes(job.status)
+}
+
 type StatusGroup =
   | 'preparing'
   | 'analyzing'
@@ -326,8 +340,11 @@ export default function BrandAnalysis() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [file2024, setFile2024] = useState<File | null>(null)
   const [file2025, setFile2025] = useState<File | null>(null)
-  const [showAdvancedUpload, setShowAdvancedUpload] = useState(false)
   const [activeTab, setActiveTab] = useState<'overview' | 'data' | 'files'>('overview')
+  // The run panel renders below the form, out of view: opening the Files tab
+  // also scrolls to it, or the upload button looks like it did nothing.
+  const [revealFiles, setRevealFiles] = useState(false)
+  const runTabsRef = useRef<HTMLDivElement>(null)
 
   const { data: accounts } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -364,13 +381,16 @@ export default function BrandAnalysis() {
     queryKey: ['brand-analysis', selectedJobId],
     queryFn: () => brandAnalysisApi.get(selectedJobId!),
     enabled: !!selectedJobId,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status
-      return status && runningStatuses.includes(status) ? 3000 : false
-    },
+    refetchInterval: (query) => (isJobInFlight(query.state.data) ? 3000 : false),
   })
 
   const selectedJob = selectedJobQuery.data
+
+  useEffect(() => {
+    if (!revealFiles || activeTab !== 'files' || !runTabsRef.current) return
+    runTabsRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setRevealFiles(false)
+  }, [revealFiles, activeTab, selectedJob])
 
   // Fire a one-shot toast when the polled job crosses into a terminal state.
   const notifiedRef = useRef<string | null>(null)
@@ -401,7 +421,7 @@ export default function BrandAnalysis() {
   const selectedJobDataSource = modeToDataSource(selectedJob?.mode)
   const sourceYears = new Set(selectedJob?.source_files.map((file) => file.year) || [])
   const hasBothManualFiles = sourceYears.has(2024) && sourceYears.has(2025)
-  const isRunning = selectedJob ? runningStatuses.includes(selectedJob.status) : false
+  const isRunning = isJobInFlight(selectedJob)
   const isWaitingForUser = selectedJob?.status === 'waiting_for_user_action'
   const canStart = !!selectedJob && (selectedJobDataSource === 'internal' || hasBothManualFiles)
   const asinList = useMemo(() => parseAsins(asinText), [asinText])
@@ -422,22 +442,24 @@ export default function BrandAnalysis() {
   const errorCodeMessage =
     errorCodeTranslated && errorCodeTranslated !== errorCodeKey ? errorCodeTranslated : null
 
-  const validateForm = (): string | null => {
+  const validateForm = (mode: DataSource): string | null => {
     if (!brandName.trim()) return t('brandAnalysis.field.brandName')
     if (marketType === 'asin' && asinList.length === 0) return t('brandAnalysis.error.asinListRequired')
-    if (dataSource === 'internal' && selectedAccount === 'none') {
+    if (mode === 'internal' && selectedAccount === 'none') {
       return t('brandAnalysis.error.connectedAccountRequired')
     }
     return null
   }
 
   const createMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (mode: DataSource) =>
       brandAnalysisApi.create({
         brand_name: brandName.trim(),
-        account_id: selectedAccount === 'none' ? undefined : selectedAccount,
+        // An export-based analysis is for a brand no connected account sells,
+        // so it is not tied to the account picked in the form.
+        account_id: mode === 'manual' || selectedAccount === 'none' ? undefined : selectedAccount,
         language,
-        mode: dataSource,
+        mode,
         market_type: marketType,
         market_query: brandName.trim(),
         asin_list: marketType === 'asin' ? asinList : undefined,
@@ -532,20 +554,50 @@ export default function BrandAnalysis() {
     },
   })
 
+  const goToUpload = () => {
+    setActiveTab('files')
+    setRevealFiles(true)
+  }
+
   const handleAnalyze = async () => {
-    const validationError = validateForm()
+    const validationError = validateForm(dataSource)
     if (validationError) {
       toast({ variant: 'destructive', title: validationError })
       return
     }
-    const job = await createMutation.mutateAsync()
+    const job = await createMutation.mutateAsync(dataSource)
     setSelectedJobId(job.id)
     if (modeToDataSource(job.mode) === 'internal') {
       await startMutation.mutateAsync(job.id)
     } else {
-      setShowAdvancedUpload(true)
-      setActiveTab('files')
+      goToUpload()
     }
+  }
+
+  // "Analizza un brand non collegato": create an export-based analysis for the
+  // brand in the form and open its Files tab, where the 2024 and 2025 exports
+  // are uploaded. A selected export-based run of the same brand that still
+  // misses a file is reused instead of creating a duplicate.
+  const handleUploadExternal = async () => {
+    const reusable =
+      !!selectedJob &&
+      selectedJobDataSource === 'manual' &&
+      !hasBothManualFiles &&
+      selectedJob.brand_name === brandName.trim()
+    if (reusable) {
+      goToUpload()
+      return
+    }
+    const validationError = validateForm('manual')
+    if (validationError) {
+      toast({ variant: 'destructive', title: validationError })
+      return
+    }
+    const job = await createMutation.mutateAsync('manual')
+    setSelectedJobId(job.id)
+    setFile2024(null)
+    setFile2025(null)
+    goToUpload()
   }
 
   const handleUpload = (year: 2024 | 2025) => {
@@ -690,17 +742,12 @@ export default function BrandAnalysis() {
   ]
   const missingPermissions = (capabilityMatrix.missing_roles || []) as string[]
   const limitationItems = (limitations.items || []) as Array<{ area?: string; message?: string }>
-  const showUploadZone = !!selectedJob && (showAdvancedUpload || selectedJobDataSource === 'manual' || isWaitingForUser)
   const progressPct = selectedJob?.progress_pct || 0
   const hasCapabilityData = capabilityKeys.some((key) => capabilityMatrix[key] !== undefined)
 
   // Error-specific fixes come first: when the job failed with a known error
   // code, the most relevant repair action leads the list instead of leaving
   // the user to map the error onto a generic action themselves.
-  const goToUpload = () => {
-    setShowAdvancedUpload(true)
-    setActiveTab('files')
-  }
   const errorFixActions = (() => {
     const code = selectedJob?.error_code
     if (!code) return []
@@ -1032,10 +1079,8 @@ export default function BrandAnalysis() {
                 variant="outline"
                 size="lg"
                 className={ghostButton}
-                onClick={() => {
-                  setShowAdvancedUpload((value) => !value)
-                  if (selectedJobId) setActiveTab('files')
-                }}
+                onClick={handleUploadExternal}
+                disabled={createMutation.isPending || startMutation.isPending}
               >
                 <Upload className="mr-2 h-4 w-4" />
                 {t('brandAnalysis.cta.uploadExternal')}
@@ -1207,7 +1252,12 @@ export default function BrandAnalysis() {
               </div>
             ) : null}
 
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="space-y-6">
+            <Tabs
+              ref={runTabsRef}
+              value={activeTab}
+              onValueChange={(v) => setActiveTab(v as typeof activeTab)}
+              className="scroll-mt-6 space-y-6"
+            >
               <TabsList className="h-auto w-full justify-start gap-7 rounded-none border-b border-foreground/15 bg-transparent p-0 text-muted-foreground">
                 <TabsTrigger value="overview" className={tabTrigger}>
                   {t('brandAnalysis.label.metricsPreview')}
@@ -1511,6 +1561,7 @@ export default function BrandAnalysis() {
                         </div>
                         <div className="mt-5 flex flex-col gap-2 sm:flex-row">
                           <Input
+                            key={`${selectedJobId}-${year}`}
                             type="file"
                             accept=".csv,.xlsx,.xls"
                             disabled={!selectedJob}
@@ -1543,20 +1594,6 @@ export default function BrandAnalysis() {
               </TabsContent>
             </Tabs>
           </div>
-        </section>
-      ) : null}
-
-      {/* ─── Standalone upload zone (legacy fallback when no job) ─────── */}
-      {showUploadZone && !selectedJobId ? (
-        <section className="ba-rise ba-rise-3 border-t border-foreground/15 pt-6">
-          <p className={eyebrow}>{t('brandAnalysis.upload.title')}</p>
-          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted-foreground">
-            {t('brandAnalysis.upload.description')}
-          </p>
-          <Alert className="mt-4">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{t('brandAnalysis.upload.createFirst')}</AlertDescription>
-          </Alert>
         </section>
       ) : null}
 

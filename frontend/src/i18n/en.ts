@@ -1866,7 +1866,7 @@ const en: Record<string, string> = {
   'brandAnalysis.chart.empty.revenue': 'Revenue for both 2024 and 2025 is needed to chart year-over-year change.',
   'brandAnalysis.chart.empty.asinStatus': 'Active and inactive ASIN counts are not available yet.',
   'brandAnalysis.chart.empty.topAsins': 'Per-ASIN revenue is not available yet.',
-  'brandAnalysis.accountNoneHint': 'No account selected: for an unconnected brand use the "Annual exports" mode below, or connect the brand in Settings → Accounts.',
+  'brandAnalysis.accountNoneHint': 'No account selected: for an unconnected brand use the "Analyze an unconnected brand (upload exports)" button below, or connect the brand in Settings → Accounts.',
   'brandAnalysis.history.openRow': 'Open {brand} analysis',
   'brandAnalysis.history.downloadRow': 'Download {brand} deck',
   'brandAnalysis.history.progressLabel': 'Progress {pct}%',
