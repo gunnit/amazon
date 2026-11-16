@@ -45,6 +45,7 @@ import { BulkUpdateCard } from '@/components/catalog/BulkUpdateCard'
 import { ImportCard } from '@/components/catalog/ImportCard'
 import { PricesCard } from '@/components/catalog/PricesCard'
 import { AvailabilityCard } from '@/components/catalog/AvailabilityCard'
+import { ListingHealthCard } from '@/components/catalog/ListingHealthCard'
 
 type StringSortKey = 'asin' | 'title' | 'sku' | 'brand'
 type NumberSortKey = 'current_price' | 'current_bsr'
@@ -188,6 +189,7 @@ export default function Catalog() {
       <Tabs defaultValue="products" className="space-y-4">
         <TabsList>
           <TabsTrigger value="products">{t('catalog.tab.products')}</TabsTrigger>
+          <TabsTrigger value="health">{t('catalog.tab.health')}</TabsTrigger>
           <TabsTrigger value="import">{t('catalog.tab.import')}</TabsTrigger>
           <TabsTrigger value="bulk">{t('catalog.tab.bulk')}</TabsTrigger>
           <TabsTrigger value="prices">{t('catalog.tab.prices')}</TabsTrigger>
@@ -405,6 +407,10 @@ export default function Catalog() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="health">
+          <ListingHealthCard {...sharedProps} />
         </TabsContent>
 
         <TabsContent value="import">

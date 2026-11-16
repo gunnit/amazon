@@ -694,10 +694,18 @@ import type {
   BulkResult,
   CatalogChangeLogEntry,
   ImportResult,
+  ListingQualityResponse,
   PriceUpdateResult,
 } from '@/components/catalog/types'
 
 export const catalogApi = {
+  getListingQuality: async (accountId: string, limit = 500): Promise<ListingQualityResponse> => {
+    const response = await api.get('/catalog/listing-quality', {
+      params: { account_id: accountId, limit },
+    })
+    return response.data
+  },
+
   getProducts: async (params?: {
     search?: string
     category?: string
