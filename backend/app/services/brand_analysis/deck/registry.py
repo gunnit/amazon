@@ -63,3 +63,29 @@ def default_blocks() -> list[Block]:
         ConclusionsBlock(),
         MethodologyAppendixBlock(),
     ]
+
+
+def prospect_blocks() -> list[Block]:
+    """Scenario deck for a brand analysed from estimated-sales exports (a prospect)."""
+    from app.services.brand_analysis.deck.blocks import prospect
+
+    return [
+        prospect.ProspectCoverBlock(),
+        prospect.ProspectOverviewBlock(),
+        prospect.ProspectSalesBlock(),
+        prospect.ProspectAreasBlock(),
+        prospect.ProspectTopProductsBlock(),
+        prospect.ProspectConcentrationBlock(),
+        prospect.ProspectSeasonalityBlock(),
+        prospect.ProspectBuyBoxBlock(),
+        prospect.ProspectFormatsBlock(),
+        prospect.ProspectYoYBlock(),
+        prospect.ProspectListingHealthBlock(),
+        prospect.ProspectSynthesisBlock(),
+        prospect.ProspectMethodologyBlock(),
+    ]
+
+
+def blocks_for(metrics: dict) -> list[Block]:
+    """Prospect deck when the analysis came from uploaded exports, else the managed-brand deck."""
+    return prospect_blocks() if (metrics or {}).get("prospect") else default_blocks()

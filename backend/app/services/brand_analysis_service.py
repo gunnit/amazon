@@ -144,6 +144,10 @@ OPTIONAL_CANONICAL_COLUMNS = (
     "fee_source",
     "fee_confidence",
     "fee_limitation",
+    "best_sales_period",
+    "pack_form",
+    "manufacturer",
+    "unit_count",
 )
 
 COMPLETENESS_OPTIONAL_FIELDS = (
@@ -311,6 +315,9 @@ COLUMN_ALIASES = {
     ],
     "rating": [
         "rating",
+        "ratings",
+        "reviews rating",
+        "review rating",
         "average rating",
         "avg rating",
         "product rating",
@@ -464,6 +471,24 @@ COLUMN_ALIASES = {
         "fee limitation",
         "fba fee limitation",
     ],
+    # Helium 10 export fields the prospect deck reads (seasonality, formats,
+    # brand owner). Absent from other exports, where they simply stay None.
+    "best_sales_period": [
+        "best sales period",
+        "peak sales month",
+    ],
+    "pack_form": [
+        "pack form",
+        "item form",
+    ],
+    "manufacturer": [
+        "manufacturer",
+    ],
+    "unit_count": [
+        "unit count",
+        "number of items",
+        "units per pack",
+    ],
 }
 
 NUMERIC_COLUMNS = {
@@ -483,6 +508,7 @@ NUMERIC_COLUMNS = {
     "aplus_module_count",
     "text_module_count",
     "image_module_count",
+    "unit_count",
 }
 
 
@@ -782,6 +808,10 @@ def parse_brand_export(
                 "fee_source": _first_present(group["fee_source"]) if mapping.get("fee_source") else None,
                 "fee_confidence": _first_present(group["fee_confidence"]) if mapping.get("fee_confidence") else None,
                 "fee_limitation": _first_present(group["fee_limitation"]) if mapping.get("fee_limitation") else None,
+                "best_sales_period": _first_present(group["best_sales_period"]) if mapping.get("best_sales_period") else None,
+                "pack_form": _first_present(group["pack_form"]) if mapping.get("pack_form") else None,
+                "manufacturer": _first_present(group["manufacturer"]) if mapping.get("manufacturer") else None,
+                "unit_count": _max_present(group["unit_count"]) if mapping.get("unit_count") else None,
             }
         )
 
@@ -3476,6 +3506,14 @@ def process_brand_analysis_job(job_id: str) -> None:
                 metrics = calculate_brand_metrics(
                     parsed_2024, parsed_2025, brand_name=job.brand_name, language=job.language
                 )
+                if parsed_2025.source_name == "manual_upload":
+                    # Uploaded estimated-sales exports describe a brand from the
+                    # outside (usually a prospect): build the scenario deck.
+                    from app.services.brand_analysis.prospect import build_prospect_metrics
+
+                    metrics["prospect"] = build_prospect_metrics(
+                        parsed_2024.rows, parsed_2025.rows, brand_name=job.brand_name
+                    )
                 completeness = assess_data_completeness(parsed_2024, parsed_2025)
                 metrics["data_completeness"] = completeness
                 metrics["capability_matrix"] = capability_matrix

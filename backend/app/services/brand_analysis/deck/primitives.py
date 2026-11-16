@@ -143,6 +143,7 @@ class DeckBuilder:
         line = DeckTheme.HAIRLINE if is_light else None
         self.rect(slide, x, y, w, h, block_fill, line=line)
         value_size = DeckTheme.TYPE["kpi_value"] if h >= 1.35 else DeckTheme.TYPE["kpi_value_small"]
+        value_size = fit_size(str(value or ""), w - 0.2, value_size)
         label_text = f"{label}  ·  {chip}" if chip else label
         value_h = h * 0.62
         self.text(slide, x + 0.1, y + 0.06, w - 0.2, value_h, value,
@@ -232,3 +233,19 @@ def _signed_color(value) -> Optional[RGB]:
     if text.startswith("-") and len(text) > 1 and text[1].isdigit():
         return DeckTheme.NEGATIVE
     return None
+
+
+# Average bold glyph width as a fraction of the point size (Nunito/DejaVu digits).
+_BOLD_GLYPH_EM = 0.64
+
+
+def fit_size(text: str, width_in: float, size: float, *, minimum: float = 14) -> float:
+    """Largest point size, up to ``size``, at which ``text`` fits on one line of
+    ``width_in`` inches. Keeps "€ 1.465.670" inside its KPI tile instead of
+    wrapping over the label below."""
+    if not text:
+        return size
+    needed = len(text) * size * _BOLD_GLYPH_EM / 72.0
+    if needed <= width_in:
+        return size
+    return max(minimum, round(size * width_in / needed, 1))

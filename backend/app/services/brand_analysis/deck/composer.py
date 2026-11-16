@@ -14,13 +14,13 @@ from typing import Any
 from app.services.brand_analysis.deck.block import SECTION_TITLES, Block
 from app.services.brand_analysis.deck.context import DeckContext
 from app.services.brand_analysis.deck.primitives import DeckBuilder
-from app.services.brand_analysis.deck.registry import SECTION_ORDER, default_blocks
+from app.services.brand_analysis.deck.registry import SECTION_ORDER, blocks_for
 
 
 class DeckComposer:
     def __init__(self, ctx: DeckContext, blocks: list[Block] | None = None) -> None:
         self.ctx = ctx
-        self.blocks = blocks if blocks is not None else default_blocks()
+        self.blocks = blocks if blocks is not None else blocks_for(ctx.metrics)
 
     def _plan(self) -> tuple[list[Block], list[tuple[Block, str]], dict[str, bool]]:
         """Return (available_blocks, skipped_blocks, section_present)."""
