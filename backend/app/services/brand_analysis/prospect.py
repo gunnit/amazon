@@ -486,6 +486,9 @@ def _buy_box(all_rows, selling, total: float) -> dict[str, Any]:
     return {
         "available": True,
         "brand_asins": len(brand_rows),
+        # Amazon retail holding the Buy Box is the brand's own channel for a vendor brand.
+        "amazon_asins": sum(1 for r in all_rows if r["buy_box_type"] == "amazon"),
+        "first_party_share": _share(by_type["brand"] + by_type["amazon"], total),
         "brand_asins_fba": sum(1 for r in brand_rows if str(r.get("fulfillment") or "").upper() == "FBA"),
         "third_party_asins": sum(s["asins"] for s in sellers.values()),
         "third_party_sellers": len(sellers),

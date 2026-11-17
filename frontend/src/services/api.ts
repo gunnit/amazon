@@ -1098,17 +1098,38 @@ export const competitorsApi = {
   },
 }
 
+export interface Helium10Market {
+  id: number
+  name: string
+  marketplace: string | null
+  type: 'keywords' | 'brands' | 'asins' | 'automatic' | 'subcategories' | 'other'
+  products: number | null
+}
+
+export interface Helium10MarketsResponse {
+  connected: boolean
+  markets: Helium10Market[]
+  error: string | null
+}
+
 export const brandAnalysisApi = {
   create: async (params: {
     brand_name: string
     account_id?: string
     language?: 'en' | 'it'
-    mode?: 'internal' | 'manual'
+    mode?: 'internal' | 'manual' | 'helium10_mt360'
     market_type?: 'brand' | 'asin'
     market_query?: string
     asin_list?: string[]
+    helium10_market_id?: number
   }): Promise<BrandAnalysisJob> => {
     const response = await api.post('/brand-analysis', params)
+    return response.data
+  },
+
+  // Market Tracker 360 markets of the connected Helium 10 account.
+  helium10Markets: async (): Promise<Helium10MarketsResponse> => {
+    const response = await api.get('/brand-analysis/helium10/markets')
     return response.data
   },
 

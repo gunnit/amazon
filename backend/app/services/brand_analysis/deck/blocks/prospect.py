@@ -71,6 +71,14 @@ STRINGS: dict[str, dict[str, Any]] = {
         "cover_title": "{brand} su Amazon.it",
         "cover_subtitle": "Posizionamento, assortimento e offerta osservata",
         "cover_meta": "Vendite stimate 2024 e 2025 · fonte: export di prodotto caricati",
+        "cover_meta__h10": "Vendite stimate 2024 e 2025 · fonte: Helium 10 Market Tracker 360",
+        "source_snapshot__h10": "Vendite stimate Amazon.it 2025 · prezzo, valutazioni e Buy Box: ultimo rilevamento Helium 10",
+        "source_yoy__h10": "Vendite stimate Amazon.it 2024 e 2025 · Helium 10 Market Tracker 360",
+        "method_source_items__h10": [
+            "Vendite e unità: stime annuali 2024 e 2025 di Helium 10 Market Tracker 360 (mercato {market}).",
+            "Buy Box, venditori, prezzo, valutazioni, recensioni e immagini: ultimo rilevamento Helium 10.",
+            "Valori stimati: non sono dati di vendita del marchio.",
+        ],
         "cover_footer": "Inthezon · Libera Brand Building Group",
         "eyebrow_overview": "IL BRAND",
         "eyebrow_sales": "VENDITE",
@@ -88,14 +96,14 @@ STRINGS: dict[str, dict[str, Any]] = {
         "kpi_revenue": "Vendite stimate 2025",
         "kpi_yoy": "Variazione sul 2024",
         "kpi_asins": "ASIN con vendite",
-        "kpi_brand_bb": "Vendite con Buy Box del marchio",
+        "kpi_brand_bb": "Vendite con Buy Box del marchio o di Amazon",
         "card_who": "Chi produce",
         "card_where": "Dove si vende",
         "card_growth": "Come cresce",
         "overview_areas": "Prime aree di prodotto: {areas}.",
         "who_manufacturer": "Produttore indicato nelle schede: {name}.",
         "who_categories": "Categorie Amazon principali: {cats}.",
-        "where_brand": "Il {share} delle vendite stimate passa da schede con Buy Box del marchio.",
+        "where_brand": "Il {share} delle vendite stimate passa da schede con Buy Box del marchio o di Amazon.",
         "where_third": "{sellers} venditori terzi detengono la Buy Box su {asins} ASIN.",
         "where_missing": "L'export non riporta la Buy Box.",
         "growth_total": "Vendite stimate da {a} a {b} ({pct}).",
@@ -121,11 +129,11 @@ STRINGS: dict[str, dict[str, Any]] = {
         "source_areas_subcategory": "Vendite stimate · Amazon.it · 2025 · aree = sottocategorie Amazon",
         "top_title": "I primi {n} ASIN valgono il {share}% delle vendite stimate",
         "top_title_rating": ", con valutazioni tra {low} e {high}",
-        "legend_brand": "Buy Box del marchio",
+        "legend_brand": "Buy Box del marchio o di Amazon",
         "legend_third": "Buy Box di un venditore terzo",
         "top_first": "{name} pesa da solo il {share} delle vendite stimate",
         "top_first_reviews": ", con {n} recensioni.",
-        "top_brand_bb": "{k} ASIN su {n} hanno la Buy Box del marchio.",
+        "top_brand_bb": "{k} ASIN su {n} hanno la Buy Box del marchio o di Amazon.",
         "top_exception": "Fa eccezione {name}, con Buy Box di {owner}.",
         "top_growth": "Crescita più forte tra i primi: {name} ({pct}).",
         "source_snapshot": "Vendite stimate Amazon.it 2025 · prezzo, valutazioni e Buy Box: istantanea al momento dell'export",
@@ -147,16 +155,18 @@ STRINGS: dict[str, dict[str, Any]] = {
         "season_areas": "Picco estivo per {areas}.",
         "season_rest": "Il resto del portafoglio ha picchi distribuiti nell'anno, legati a bisogni non stagionali.",
         "source_season": "Vendite stimate Amazon.it 2025 · ASIN raggruppati per mese di picco storico (Best sales period)",
-        "bb_title": "Buy Box del marchio su {b} ASIN; altri {k} ASIN fanno capo a {s} venditori terzi",
+        "bb_title": "Buy Box del marchio o di Amazon su {b} ASIN; altri {k} ASIN fanno capo a {s} venditori terzi",
         "bb_types": {"brand": "Marchio", "pharmacy": "Farmacie e parafarmacie", "other": "Altri rivenditori",
                      "amazon": "Amazon", "none": "Nessuna Buy Box"},
         "bb_col_seller": "Venditore", "bb_col_type": "Tipo", "bb_col_asins": "ASIN", "bb_col_share": "Vendite",
         "bb_type_short": {"pharmacy": "Farmacia", "other": "Rivenditore"},
-        "bb_brand": "Le schede con Buy Box del marchio valgono il {share} delle vendite stimate",
+        "bb_brand": "Le schede con Buy Box del marchio o di Amazon valgono il {share} delle vendite stimate",
         "bb_brand_fba_all": ", tutte in FBA.",
         "bb_brand_fba": "; {n} sono in FBA.",
         "bb_sellers": "Venditori terzi: {pharm} farmacie e parafarmacie, {other} altri rivenditori.",
         "bb_range": "Sui quattro ASIN principali sono attivi da {a} a {b} venditori.",
+        "bb_range_same": "Sui quattro ASIN principali è attivo un solo venditore.",
+        "bb_range_same_n": "Sui quattro ASIN principali sono attivi {a} venditori ciascuno.",
         "formats_title_mp": "I multipack valgono il {share}% delle vendite stimate; {k} su {n} hanno Buy Box di terzi",
         "formats_title_set": "Cofanetti e kit valgono il {share}% delle vendite stimate",
         "format_labels": ["Formato singolo", "Multipack", "Cofanetti e kit"],
@@ -222,6 +232,14 @@ STRINGS: dict[str, dict[str, Any]] = {
         "cover_title": "{brand} on Amazon",
         "cover_subtitle": "Positioning, assortment and observed offer",
         "cover_meta": "Estimated sales 2024 and 2025 · source: uploaded product exports",
+        "cover_meta__h10": "Estimated sales 2024 and 2025 · source: Helium 10 Market Tracker 360",
+        "source_snapshot__h10": "Estimated Amazon sales 2025 · price, ratings and Buy Box: latest Helium 10 reading",
+        "source_yoy__h10": "Estimated Amazon sales 2024 and 2025 · Helium 10 Market Tracker 360",
+        "method_source_items__h10": [
+            "Sales and units: 2024 and 2025 yearly estimates from Helium 10 Market Tracker 360 (market {market}).",
+            "Buy Box, sellers, price, ratings, reviews and images: latest Helium 10 reading.",
+            "Estimated values: not the brand's own sales data.",
+        ],
         "cover_footer": "Inthezon · Libera Brand Building Group",
         "eyebrow_overview": "THE BRAND",
         "eyebrow_sales": "SALES",
@@ -239,14 +257,14 @@ STRINGS: dict[str, dict[str, Any]] = {
         "kpi_revenue": "Estimated sales 2025",
         "kpi_yoy": "Change vs 2024",
         "kpi_asins": "ASINs with sales",
-        "kpi_brand_bb": "Sales with the brand's Buy Box",
+        "kpi_brand_bb": "Sales with the brand's or Amazon's Buy Box",
         "card_who": "Who makes it",
         "card_where": "Where it sells",
         "card_growth": "How it grows",
         "overview_areas": "Leading product areas: {areas}.",
         "who_manufacturer": "Manufacturer on the listings: {name}.",
         "who_categories": "Main Amazon categories: {cats}.",
-        "where_brand": "{share} of estimated sales comes from listings with the brand's Buy Box.",
+        "where_brand": "{share} of estimated sales comes from listings with the brand's or Amazon's Buy Box.",
         "where_third": "{sellers} third-party sellers hold the Buy Box on {asins} ASINs.",
         "where_missing": "The export carries no Buy Box data.",
         "growth_total": "Estimated sales moved from {a} to {b} ({pct}).",
@@ -272,11 +290,11 @@ STRINGS: dict[str, dict[str, Any]] = {
         "source_areas_subcategory": "Estimated sales · Amazon · 2025 · areas = Amazon subcategories",
         "top_title": "The top {n} ASINs make {share}% of estimated sales",
         "top_title_rating": ", rated between {low} and {high}",
-        "legend_brand": "Brand's Buy Box",
+        "legend_brand": "Brand's or Amazon's Buy Box",
         "legend_third": "Third-party Buy Box",
         "top_first": "{name} alone makes {share} of estimated sales",
         "top_first_reviews": ", with {n} reviews.",
-        "top_brand_bb": "{k} of {n} ASINs have the brand's Buy Box.",
+        "top_brand_bb": "{k} of {n} ASINs have the brand's or Amazon's Buy Box.",
         "top_exception": "The exception is {name}, with the Buy Box held by {owner}.",
         "top_growth": "Strongest growth among the top: {name} ({pct}).",
         "source_snapshot": "Estimated Amazon sales 2025 · price, ratings and Buy Box: snapshot at export time",
@@ -298,16 +316,18 @@ STRINGS: dict[str, dict[str, Any]] = {
         "season_areas": "Summer peak for {areas}.",
         "season_rest": "The rest of the portfolio peaks across the year, on non-seasonal needs.",
         "source_season": "Estimated Amazon sales 2025 · ASINs grouped by historical peak month (Best sales period)",
-        "bb_title": "Brand's Buy Box on {b} ASINs; another {k} ASINs belong to {s} third-party sellers",
+        "bb_title": "Brand or Amazon holds the Buy Box on {b} ASINs; another {k} ASINs belong to {s} third-party sellers",
         "bb_types": {"brand": "Brand", "pharmacy": "Pharmacies", "other": "Other resellers",
                      "amazon": "Amazon", "none": "No Buy Box"},
         "bb_col_seller": "Seller", "bb_col_type": "Type", "bb_col_asins": "ASINs", "bb_col_share": "Sales",
         "bb_type_short": {"pharmacy": "Pharmacy", "other": "Reseller"},
-        "bb_brand": "Listings with the brand's Buy Box make {share} of estimated sales",
+        "bb_brand": "Listings with the brand's or Amazon's Buy Box make {share} of estimated sales",
         "bb_brand_fba_all": ", all fulfilled by Amazon.",
         "bb_brand_fba": "; {n} are fulfilled by Amazon.",
         "bb_sellers": "Third-party sellers: {pharm} pharmacies, {other} other resellers.",
         "bb_range": "{a} to {b} sellers are active on the four main ASINs.",
+        "bb_range_same": "Each of the four main ASINs has a single seller.",
+        "bb_range_same_n": "Each of the four main ASINs has {a} active sellers.",
         "formats_title_mp": "Multipacks make {share}% of estimated sales; {k} of {n} have a third-party Buy Box",
         "formats_title_set": "Gift sets and kits make {share}% of estimated sales",
         "format_labels": ["Single unit", "Multipack", "Gift sets and kits"],
@@ -368,11 +388,27 @@ STRINGS: dict[str, dict[str, Any]] = {
 
 def _s(ctx, key: str) -> Any:
     table = STRINGS["it" if ctx.language == "it" else "en"]
+    source = (ctx.metrics.get("prospect") or {}).get("source") or {}
+    if source.get("kind") == "helium10_mt360" and f"{key}__h10" in table:
+        # Helium 10 decks name their source instead of "uploaded exports".
+        value = table[f"{key}__h10"]
+        market = source.get("market_name") or "Market Tracker 360"
+        if isinstance(value, list):
+            return [item.replace("{market}", market) for item in value]
+        return value.replace("{market}", market)
     return table.get(key, STRINGS["en"].get(key, key))
 
 
 def _p(ctx) -> dict[str, Any]:
     return ctx.metrics.get("prospect") or {}
+
+
+def _first_party_share(buy_box: dict[str, Any]) -> float:
+    """Share of sales whose Buy Box is held by the brand or by Amazon retail."""
+    if buy_box.get("first_party_share") is not None:
+        return buy_box["first_party_share"]
+    shares = buy_box.get("revenue_share_by_type") or {}
+    return (shares.get("brand") or 0) + (shares.get("amazon") or 0)
 
 
 def _brand(ctx) -> str:
@@ -516,7 +552,7 @@ class ProspectOverviewBlock(ProspectBlock):
             brand=_brand(ctx), asins=ctx.fmt.integer(p.get("asins_with_sales_2025")), areas=len(areas))
         slide = _frame(ctx, deck, page, "eyebrow_overview", headline, _s(ctx, "source_snapshot"))
         buy_box = p.get("buy_box") or {}
-        brand_share = (buy_box.get("revenue_share_by_type") or {}).get("brand") if buy_box.get("available") else None
+        brand_share = _first_party_share(buy_box) if buy_box.get("available") else None
         tiles = [
             (_s(ctx, "kpi_revenue"), ctx.fmt.currency(p.get("revenue_2025"))),
             (_s(ctx, "kpi_yoy"), ctx.fmt.percent_signed(p.get("yoy_revenue_pct"))),
@@ -793,14 +829,15 @@ class ProspectBuyBoxBlock(ProspectBlock):
     def render(self, ctx, deck, page: int) -> BlockResult:
         p = _p(ctx)
         bb = p["buy_box"]
-        headline = _s(ctx, "bb_title").format(b=bb["brand_asins"], k=bb["third_party_asins"],
+        headline = _s(ctx, "bb_title").format(b=bb["brand_asins"] + bb.get("amazon_asins", 0),
+                                              k=bb["third_party_asins"],
                                               s=bb["third_party_sellers"])
         slide = _frame(ctx, deck, page, "eyebrow_buy_box", headline, _s(ctx, "source_snapshot"))
         types = _s(ctx, "bb_types")
         shares = bb.get("revenue_share_by_type") or {}
         segments = [(types[key], shares.get(key, 0), TYPE_COLORS[key])
                     for key in ("brand", "pharmacy", "other", "amazon", "none") if shares.get(key, 0) >= 0.5]
-        png = charts.donut(segments, center=ctx.fmt.share(shares.get("brand", 0)), w_in=3.6, h_in=3.6)
+        png = charts.donut(segments, center=ctx.fmt.share(_first_party_share(bb)), w_in=3.6, h_in=3.6)
         _picture(deck, slide, png, M, BODY_Y + 0.2, 3.7, 4.4)
 
         sellers = bb.get("top_sellers") or []
@@ -812,15 +849,20 @@ class ProspectBuyBoxBlock(ProspectBlock):
                        [_s(ctx, "bb_col_seller"), _s(ctx, "bb_col_type"), _s(ctx, "bb_col_asins"), _s(ctx, "bb_col_share")],
                        rows, [2.0, 1.1, 0.55, 0.85], max_rows=7)
 
-        lead = _s(ctx, "bb_brand").format(share=ctx.fmt.share(shares.get("brand", 0)))
-        if bb["brand_asins"] and bb["brand_asins_fba"] == bb["brand_asins"]:
+        lead = _s(ctx, "bb_brand").format(share=ctx.fmt.share(_first_party_share(bb)))
+        if not bb["brand_asins"]:
+            lead += "."  # Amazon-held listings are fulfilled by Amazon by definition
+        elif bb["brand_asins_fba"] == bb["brand_asins"]:
             lead += _s(ctx, "bb_brand_fba_all")
         else:
             lead += _s(ctx, "bb_brand_fba").format(n=bb["brand_asins_fba"])
         bullets = [lead, _s(ctx, "bb_sellers").format(pharm=bb["pharmacy_sellers"], other=bb["other_sellers"])]
         if bb.get("top4_sellers_range"):
             low, high = bb["top4_sellers_range"]
-            bullets.append(_s(ctx, "bb_range").format(a=low, b=high))
+            if low != high:
+                bullets.append(_s(ctx, "bb_range").format(a=low, b=high))
+            else:
+                bullets.append(_s(ctx, "bb_range_same" if low == 1 else "bb_range_same_n").format(a=low))
         _emerges(ctx, deck, slide, bullets)
         return BlockResult(rendered=True)
 

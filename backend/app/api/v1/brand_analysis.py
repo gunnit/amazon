@@ -2,14 +2,18 @@
 
 Brand Analysis is autonomous: it uses Inthezon's internal Amazon/SP-API
 data + Market Research enrichment for the main flow, and manual upload
-of external yearly product exports as a fallback. Helium10 is not a
-required dependency and is not exposed in this API surface.
+of external yearly product exports as a fallback. A prospect deck can also
+be built from a Helium 10 Market Tracker 360 market when Helium 10 is
+connected (optional; see app/core/helium10.py).
 """
 from __future__ import annotations
 
 import io
 import logging
+import threading
+import time
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
@@ -37,6 +41,48 @@ from workers.tasks.brand_analysis import process_brand_analysis
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Market Tracker 360 market types (DSA MarketTypeEnum).
+_MT360_TYPES = {1: "keywords", 2: "brands", 3: "asins", 4: "automatic", 5: "subcategories"}
+_MARKETS_CACHE_SECONDS = 600  # each listing costs one call of the 1,000/month quota
+_markets_cache: dict[str, Any] = {"at": 0.0, "markets": None}
+_markets_lock = threading.Lock()
+
+
+@router.get("/helium10/markets")
+async def list_helium10_markets(current_user: CurrentUser, organization: CurrentOrganization):
+    """Market Tracker 360 markets of the connected Helium 10 account."""
+    import asyncio
+
+    from app.core import helium10
+
+    client = helium10.get_client()
+    if client is None:
+        return {"connected": False, "markets": [], "error": None}
+    now = time.time()
+    with _markets_lock:
+        cached = _markets_cache["markets"]
+        fresh = cached is not None and now - _markets_cache["at"] < _MARKETS_CACHE_SECONDS
+    if not fresh:
+        try:
+            rows = await asyncio.to_thread(client.list_markets)
+        except Exception as exc:  # network, auth or tool error: show it, don't 500
+            logger.warning("Helium 10 market list failed: %s", exc)
+            return {"connected": True, "markets": [], "error": "helium10_unavailable"}
+        cached = [
+            {
+                "id": int(row["id"]),
+                "name": str(row.get("name") or row["id"]),
+                "marketplace": row.get("marketplace"),
+                "type": _MT360_TYPES.get(row.get("type"), "other"),
+                "products": row.get("numberOfProducts"),
+            }
+            for row in rows
+            if row.get("id") is not None
+        ]
+        with _markets_lock:
+            _markets_cache.update(at=now, markets=cached)
+    return {"connected": True, "markets": cached, "error": None}
 
 
 def _source_to_response(source) -> BrandAnalysisSourceFileResponse:
@@ -232,6 +278,14 @@ async def start_brand_analysis_processing(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Upload both 2024 and 2025 yearly product exports before starting manual processing",
         )
+    if canonical == "helium10_mt360":
+        from app.core import helium10
+
+        if not helium10.is_configured():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Helium 10 is not connected",
+            )
     if canonical == "internal" and not job.account_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

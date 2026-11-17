@@ -45,6 +45,12 @@ def _canonical_mode(mode: Optional[str]) -> str:
     return mode or "internal"
 
 
+HELIUM10_MODE = "helium10_mt360"
+# Sources describing a brand from the outside with estimated sales (uploaded
+# exports or Helium 10): they may hold competitor rows and feed the prospect deck.
+EXTERNAL_ESTIMATE_SOURCES = {"manual_upload", HELIUM10_MODE}
+
+
 STATUS_PROGRESS = {
     "pending": 0,
     "capability_checking": 8,
@@ -544,6 +550,14 @@ def brand_matches(candidate: Any, target: Any) -> bool:
     from difflib import SequenceMatcher
 
     return SequenceMatcher(None, candidate_norm, target_norm).ratio() >= 0.88
+
+
+def brand_rows(rows: pd.DataFrame, brand_name: str) -> pd.DataFrame:
+    """Rows of the given brand, or all rows when none of them match it."""
+    if rows is None or rows.empty or "brand" not in rows.columns:
+        return rows
+    mask = rows["brand"].apply(lambda value: brand_matches(value, brand_name))
+    return rows[mask].copy() if bool(mask.any()) else rows
 
 
 NORMALIZED_ALIASES = {
@@ -1520,7 +1534,10 @@ def calculate_brand_metrics(
     mask24 = _brand_mask(market_df24)
     mask25 = _brand_mask(market_df25)
     can_filter_external_market = (
-        (export_2024.source_name == "manual_upload" or export_2025.source_name == "manual_upload")
+        (
+            export_2024.source_name in EXTERNAL_ESTIMATE_SOURCES
+            or export_2025.source_name in EXTERNAL_ESTIMATE_SOURCES
+        )
         and (mask24 is not None or mask25 is not None)
     )
     df24 = market_df24[mask24].copy() if can_filter_external_market and mask24 is not None else market_df24.copy()
@@ -2814,7 +2831,15 @@ class BrandAnalysisService:
             if not result.scalar_one_or_none():
                 raise ValueError("Account not found or does not belong to organization")
 
-        if data.market_type == "asin" and not data.asin_list:
+        mode = _canonical_mode(data.mode)
+        market_query = (data.market_query or data.brand_name).strip()
+        if mode == HELIUM10_MODE:
+            if not getattr(data, "helium10_market_id", None):
+                raise ValueError("helium10_market_id is required for a Helium 10 analysis")
+            # The job keeps the Market Tracker 360 market id in market_query.
+            market_query = str(int(data.helium10_market_id))
+            account_id = None
+        elif data.market_type == "asin" and not data.asin_list:
             raise ValueError("asin_list is required when market_type is asin")
         if data.market_type == "brand" and not (data.market_query or data.brand_name):
             raise ValueError("market_query or brand_name is required when market_type is brand")
@@ -2825,10 +2850,10 @@ class BrandAnalysisService:
             account_id=account_id,
             brand_name=data.brand_name.strip(),
             language=data.language,
-            mode=_canonical_mode(data.mode),
-            market_type=data.market_type,
-            market_query=(data.market_query or data.brand_name).strip(),
-            asin_list=data.asin_list or None,
+            mode=mode,
+            market_type="brand" if mode == HELIUM10_MODE else data.market_type,
+            market_query=market_query,
+            asin_list=None if mode == HELIUM10_MODE else (data.asin_list or None),
             status="pending",
             progress_step="Waiting for source data",
             progress_pct=0,
@@ -3158,6 +3183,7 @@ def process_brand_analysis_job(job_id: str) -> None:
     from app.db.session import db_url as _db_url
     from app.services.brand_analysis_sources import (
         AmazonAccountDataSource,
+        Helium10MarketDataSource,
         ManualUploadDataSource,
     )
     from app.services.brand_analysis_capabilities import detect_brand_analysis_capabilities
@@ -3266,6 +3292,13 @@ def process_brand_analysis_job(job_id: str) -> None:
         in the UI but old DB rows still resolve cleanly.
         """
         mode = _canonical_mode(job.mode)
+
+        if mode == HELIUM10_MODE:
+            try:
+                market_id = int(job.market_query or "")
+            except ValueError as exc:
+                raise BrandAnalysisDataError("Helium 10 analysis has no Market Tracker 360 market") from exc
+            return Helium10MarketDataSource(market_id=market_id)
 
         has_complete_manual_fallback = {2024, 2025}.issubset(source_by_year)
         if mode == "manual" or has_complete_manual_fallback:
@@ -3490,7 +3523,7 @@ def process_brand_analysis_job(job_id: str) -> None:
                 if parsed_2025.validation and 2025 in source_by_year:
                     source_by_year[2025].column_validation = parsed_2025.validation.to_dict()
 
-                if parsed_2024.source_name != "manual_upload":
+                if parsed_2024.source_name not in EXTERNAL_ESTIMATE_SOURCES:
                     await _set_status("enriching_catalog", "Enriching catalog from Market Research")
 
                 # Track partial catalog enrichment so the UI can flag a
@@ -3506,14 +3539,24 @@ def process_brand_analysis_job(job_id: str) -> None:
                 metrics = calculate_brand_metrics(
                     parsed_2024, parsed_2025, brand_name=job.brand_name, language=job.language
                 )
-                if parsed_2025.source_name == "manual_upload":
-                    # Uploaded estimated-sales exports describe a brand from the
-                    # outside (usually a prospect): build the scenario deck.
+                if parsed_2025.source_name in EXTERNAL_ESTIMATE_SOURCES:
+                    # Estimated-sales data describes a brand from the outside
+                    # (usually a prospect): build the scenario deck.
                     from app.services.brand_analysis.prospect import build_prospect_metrics
 
+                    rows_2024, rows_2025 = parsed_2024.rows, parsed_2025.rows
+                    if parsed_2025.source_name == HELIUM10_MODE:
+                        # A Market Tracker 360 market can mix brands: keep the
+                        # analysed brand when it is there, else the whole market.
+                        rows_2024 = brand_rows(rows_2024, job.brand_name)
+                        rows_2025 = brand_rows(rows_2025, job.brand_name)
                     metrics["prospect"] = build_prospect_metrics(
-                        parsed_2024.rows, parsed_2025.rows, brand_name=job.brand_name
+                        rows_2024, rows_2025, brand_name=job.brand_name
                     )
+                    metrics["prospect"]["source"] = {
+                        "kind": parsed_2025.source_name,
+                        "market_name": (adapter.describe().get("details") or {}).get("market_name"),
+                    }
                 completeness = assess_data_completeness(parsed_2024, parsed_2025)
                 metrics["data_completeness"] = completeness
                 metrics["capability_matrix"] = capability_matrix

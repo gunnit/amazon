@@ -40,6 +40,7 @@ from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.services.brand_analysis_service import (
+    BrandAnalysisDataError,
     InsufficientDataError,
     ParsedBrandExport,
     brand_matches,
@@ -844,4 +845,160 @@ class ManualUploadDataSource:
         return {
             "name": self.source_name,
             "details": {"years": sorted(self.source_files.keys())},
+        }
+
+
+# Row keys produced by parse_brand_export; Helium 10 rows use the same shape so
+# metrics, provenance and the prospect deck read them without special cases.
+EXPORT_ROW_KEYS = (
+    "asin", "product_name", "brand", "category", "subcategory", "revenue", "units", "price",
+    "rating", "reviews", "images", "sellers", "offer_count", "buy_box_owner", "bsr", "status",
+    "bullets", "bullet_count", "description", "aplus_content", "has_aplus_content",
+    "aplus_module_count", "text_module_count", "image_module_count", "aplus_source",
+    "aplus_limitation", "fulfillment", "fba_fees", "actual_fba_fees", "estimated_fba_fees",
+    "fee_source", "fee_confidence", "fee_limitation", "best_sales_period", "pack_form",
+    "manufacturer", "unit_count",
+)
+MT360_COLUMNS = [
+    "asin", "title", "brand", "subCategories", "totalRevenue", "totalSales", "price", "rating",
+    "reviews", "numberOfImages", "sellersQty", "bbSeller", "bsr", "FBA", "fbaFee", "bestMonth",
+    "manufacturer", "packageQuantity",
+]
+
+
+def mt360_latest_end(today: date) -> date:
+    """Latest MT360 end date: Mon-Fri the Saturday of the week before last, weekends last Saturday."""
+    last_saturday = today - timedelta(days=(today.weekday() - 5) % 7)
+    return last_saturday if today.weekday() >= 5 else last_saturday - timedelta(days=7)
+
+
+def _positive(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _clean_text(value: Any) -> Optional[str]:
+    text = str(value).strip() if value is not None else ""
+    return text if text and text != "-" else None
+
+
+def mt360_row(item: dict) -> dict[str, Any]:
+    """One MT360 product row in the parse_brand_export shape."""
+    row: dict[str, Any] = {key: None for key in EXPORT_ROW_KEYS}
+    subcategories = [s for s in (item.get("subCategories") or []) if isinstance(s, dict)]
+    first = subcategories[0] if subcategories else {}
+    path = first.get("pathByName") or []
+    row.update(
+        {
+            "asin": str(item.get("asin") or "").strip().upper(),
+            "product_name": _clean_text(item.get("title")) or str(item.get("asin") or ""),
+            "brand": _clean_text(item.get("brand")),
+            "category": _clean_text(path[0]) if path else None,
+            "subcategory": _clean_text(first.get("title")) or "Uncategorized",
+            "revenue": float(item.get("totalRevenue") or 0.0),
+            "units": float(item.get("totalSales") or 0.0),
+            "price": _positive(item.get("price")),
+            "rating": _positive(item.get("rating")),
+            "reviews": _positive(item.get("reviews")),
+            "images": _positive(item.get("numberOfImages")),
+            "sellers": _positive(item.get("sellersQty")),
+            "buy_box_owner": _clean_text(item.get("bbSeller")),
+            "bsr": _positive(item.get("bsr")),
+            "fulfillment": _clean_text(item.get("FBA")) if isinstance(item.get("FBA"), str) else None,
+            "fba_fees": _positive(item.get("fbaFee")),
+            "best_sales_period": _clean_text(item.get("bestMonth")),
+            "manufacturer": _clean_text(item.get("manufacturer")),
+            "unit_count": _positive(item.get("packageQuantity")),
+        }
+    )
+    return row
+
+
+@dataclass
+class Helium10MarketDataSource:
+    """Adapter backed by a Helium 10 Market Tracker 360 market.
+
+    For each calendar year it reads every product of the market with its
+    estimated revenue and units for that year (``get_market_products``,
+    about two calls per year). Helium 10 figures are modelled estimates, like
+    the exports Gioia used to upload; rows from other brands in the market
+    are filtered out downstream by brand name.
+    """
+
+    market_id: int
+    client: Any = None  # app.core.helium10.Helium10Client; resolved lazily
+    source_name: str = "helium10_mt360"
+    market: Optional[dict] = None
+    today: Optional[date] = None
+
+    def _client(self):
+        if self.client is None:
+            from app.core import helium10
+
+            self.client = helium10.get_client()
+        if self.client is None:
+            raise BrandAnalysisDataError(
+                "Helium 10 is not connected: set HELIUM10_CLIENT_ID and HELIUM10_REFRESH_TOKEN"
+            )
+        return self.client
+
+    def _load_market(self) -> dict:
+        if self.market is None:
+            markets = self._client().list_markets()
+            match = next((m for m in markets if str(m.get("id")) == str(self.market_id)), None)
+            if match is None:
+                raise BrandAnalysisDataError(
+                    f"Market Tracker 360 market {self.market_id} is not in the connected Helium 10 account"
+                )
+            self.market = match
+        return self.market
+
+    def _fetch_rows(self, year: int) -> list[dict]:
+        market = self._load_market()
+        start = date(year, 1, 1)
+        end = min(date(year, 12, 31), mt360_latest_end(self.today or date.today()))
+        if (end - start).days + 1 < 28:
+            raise BrandAnalysisDataError(f"Market Tracker 360 has fewer than 28 days of {year} so far")
+        return self._client().market_products(
+            self.market_id,
+            start.isoformat(),
+            end.isoformat(),
+            parent_data_mode=bool(market.get("parentDataMode")),
+        )
+
+    async def fetch_year(self, year: int) -> ParsedBrandExport:
+        import asyncio
+
+        from app.core.helium10 import Helium10Error
+
+        try:
+            items = await asyncio.to_thread(self._fetch_rows, year)
+        except Helium10Error as exc:
+            raise BrandAnalysisDataError(f"Helium 10 request failed: {exc}") from exc
+        rows = [mt360_row(item) for item in items if item.get("asin")]
+        if not any(row["revenue"] > 0 for row in rows):
+            name = (self.market or {}).get("name") or self.market_id
+            raise BrandAnalysisDataError(f"Market Tracker 360 has no {year} sales for market '{name}'")
+        frame = pd.DataFrame(rows, columns=list(EXPORT_ROW_KEYS))
+        frame = frame.drop_duplicates(subset="asin", keep="first")
+        return ParsedBrandExport(
+            rows=frame,
+            columns=MT360_COLUMNS,
+            row_count=len(frame),
+            source_name=self.source_name,
+            year=year,
+        )
+
+    def describe(self) -> dict:
+        market = self.market or {}
+        return {
+            "name": self.source_name,
+            "details": {
+                "market_id": self.market_id,
+                "market_name": market.get("name"),
+                "marketplace": market.get("marketplace"),
+            },
         }

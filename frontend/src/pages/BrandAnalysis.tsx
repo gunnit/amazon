@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
   AlertTriangle,
+  BarChart3,
   CheckCircle2,
   Download,
   FileSpreadsheet,
@@ -47,7 +48,7 @@ import { useFilterStore } from '@/store/filterStore'
 import { ReportTable, type ReportColumn } from '@/components/shared/ReportTable'
 import { SectionMark } from '@/components/shared/SectionMark'
 import { BrandOverviewCharts } from '@/components/brand-analysis/BrandOverviewCharts'
-import { accountsApi, brandAnalysisApi } from '@/services/api'
+import { accountsApi, brandAnalysisApi, type Helium10Market } from '@/services/api'
 import type {
   AmazonAccount,
   BrandAnalysisJob,
@@ -56,7 +57,9 @@ import type {
   BrandAnalysisStatus,
 } from '@/types'
 
-type DataSource = 'internal' | 'manual'
+type DataSource = 'internal' | 'manual' | 'helium10'
+// Sources the brief form creates directly; Helium 10 runs have their own panel.
+type FormDataSource = Exclude<DataSource, 'helium10'>
 type ReadinessState = 'ready' | 'warning' | 'missing' | 'unknown'
 
 const runningStatuses: BrandAnalysisStatus[] = [
@@ -170,6 +173,7 @@ const progressSteps = [
 function modeToDataSource(mode: BrandAnalysisMode | undefined): DataSource {
   if (!mode) return 'internal'
   if (mode === 'manual') return 'manual'
+  if (mode === 'helium10_mt360') return 'helium10'
   if (mode === 'helium10' || mode === 'helium10_api') return 'manual'
   return 'internal'
 }
@@ -334,7 +338,7 @@ export default function BrandAnalysis() {
   const [brandName, setBrandName] = useState('')
   const [selectedAccount, setSelectedAccount] = useState<string>('none')
   const [language, setLanguage] = useState<'en' | 'it'>(uiLanguage)
-  const [dataSource, setDataSource] = useState<DataSource>('internal')
+  const [dataSource, setDataSource] = useState<FormDataSource>('internal')
   const [marketType, setMarketType] = useState<'brand' | 'asin'>('brand')
   const [asinText, setAsinText] = useState('')
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
@@ -345,6 +349,18 @@ export default function BrandAnalysis() {
   // also scrolls to it, or the upload button looks like it did nothing.
   const [revealFiles, setRevealFiles] = useState(false)
   const runTabsRef = useRef<HTMLDivElement>(null)
+  // Helium 10 panel: the market list costs Helium 10 quota, so it loads only
+  // once the panel is opened.
+  const [showHelium10, setShowHelium10] = useState(false)
+  const [helium10MarketId, setHelium10MarketId] = useState<string>('')
+
+  const helium10MarketsQuery = useQuery({
+    queryKey: ['brand-analysis', 'helium10-markets'],
+    queryFn: () => brandAnalysisApi.helium10Markets(),
+    enabled: showHelium10,
+    staleTime: 10 * 60 * 1000,
+  })
+  const helium10Markets = helium10MarketsQuery.data?.markets ?? []
 
   const { data: accounts } = useQuery<AmazonAccount[]>({
     queryKey: ['accounts'],
@@ -423,7 +439,9 @@ export default function BrandAnalysis() {
   const hasBothManualFiles = sourceYears.has(2024) && sourceYears.has(2025)
   const isRunning = isJobInFlight(selectedJob)
   const isWaitingForUser = selectedJob?.status === 'waiting_for_user_action'
-  const canStart = !!selectedJob && (selectedJobDataSource === 'internal' || hasBothManualFiles)
+  const canStart =
+    !!selectedJob &&
+    (selectedJobDataSource === 'internal' || selectedJobDataSource === 'helium10' || hasBothManualFiles)
   const asinList = useMemo(() => parseAsins(asinText), [asinText])
   const currentStatus: BrandAnalysisStatus =
     selectedJob?.status || selectedJobFromList?.status || 'pending'
@@ -452,7 +470,7 @@ export default function BrandAnalysis() {
   }
 
   const createMutation = useMutation({
-    mutationFn: (mode: DataSource) =>
+    mutationFn: (mode: FormDataSource) =>
       brandAnalysisApi.create({
         brand_name: brandName.trim(),
         // An export-based analysis is for a brand no connected account sells,
@@ -493,6 +511,43 @@ export default function BrandAnalysis() {
       })
     },
   })
+
+  // "Crea da Helium 10": one Market Tracker 360 market becomes a prospect
+  // deck; the brand field picks the brand's rows when the market mixes brands.
+  const helium10Mutation = useMutation({
+    mutationFn: async (market: Helium10Market) => {
+      const job = await brandAnalysisApi.create({
+        brand_name: brandName.trim() || market.name,
+        language,
+        mode: 'helium10_mt360',
+        market_type: 'brand',
+        helium10_market_id: market.id,
+      })
+      setSelectedJobId(job.id)
+      return brandAnalysisApi.start(job.id)
+    },
+    onSuccess: (job) => {
+      setSelectedJobId(job.id)
+      queryClient.invalidateQueries({ queryKey: ['brand-analysis'] })
+    },
+    onError: (error) => {
+      queryClient.invalidateQueries({ queryKey: ['brand-analysis'] })
+      toast({
+        variant: 'destructive',
+        title: t('brandAnalysis.error.createFailed'),
+        description: getErrorMessage(error),
+      })
+    },
+  })
+
+  const handleHelium10 = () => {
+    const market = helium10Markets.find((item) => String(item.id) === helium10MarketId)
+    if (!market) {
+      toast({ variant: 'destructive', title: t('brandAnalysis.helium10.pickMarket') })
+      return
+    }
+    helium10Mutation.mutate(market)
+  }
 
   const startMutation = useMutation({
     mutationFn: (id: string) => brandAnalysisApi.start(id),
@@ -1085,7 +1140,81 @@ export default function BrandAnalysis() {
                 <Upload className="mr-2 h-4 w-4" />
                 {t('brandAnalysis.cta.uploadExternal')}
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                className={cn(ghostButton, showHelium10 && 'border-foreground')}
+                onClick={() => setShowHelium10((open) => !open)}
+                aria-expanded={showHelium10}
+              >
+                <BarChart3 className="mr-2 h-4 w-4" />
+                {t('brandAnalysis.cta.helium10')}
+              </Button>
             </div>
+
+            {showHelium10 ? (
+              <div className="border-l-2 border-foreground/40 pl-5">
+                <p className={eyebrow}>{t('brandAnalysis.helium10.title')}</p>
+                <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  {t('brandAnalysis.helium10.hint')}
+                </p>
+                {helium10MarketsQuery.isLoading ? (
+                  <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {t('brandAnalysis.helium10.loading')}
+                  </p>
+                ) : helium10MarketsQuery.isError || helium10MarketsQuery.data?.error ? (
+                  <p className="mt-4 text-sm text-destructive">{t('brandAnalysis.helium10.unavailable')}</p>
+                ) : helium10MarketsQuery.data && !helium10MarketsQuery.data.connected ? (
+                  <p className="mt-4 text-sm text-muted-foreground">{t('brandAnalysis.helium10.notConnected')}</p>
+                ) : helium10Markets.length === 0 ? (
+                  <p className="mt-4 text-sm text-muted-foreground">{t('brandAnalysis.helium10.empty')}</p>
+                ) : (
+                  <div className="mt-4 flex flex-wrap items-end gap-3">
+                    <div className="w-full max-w-sm">
+                      <Label className={eyebrow}>{t('brandAnalysis.helium10.market')}</Label>
+                      <Select value={helium10MarketId} onValueChange={setHelium10MarketId}>
+                        <SelectTrigger className={cn(fieldInput, 'mt-1 h-11')}>
+                          <SelectValue placeholder={t('brandAnalysis.helium10.marketPlaceholder')} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {helium10Markets.map((market) => (
+                            <SelectItem key={market.id} value={String(market.id)}>
+                              {market.name}
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                {[
+                                  t(`brandAnalysis.helium10.type.${market.type}`),
+                                  market.marketplace,
+                                  market.products != null
+                                    ? t('brandAnalysis.helium10.products', { count: market.products })
+                                    : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      onClick={handleHelium10}
+                      disabled={!helium10MarketId || helium10Mutation.isPending}
+                      size="lg"
+                      className={inkButton}
+                    >
+                      {helium10Mutation.isPending ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="mr-2 h-4 w-4" />
+                      )}
+                      {t('brandAnalysis.helium10.create')}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
 
           {/* Readiness manifest */}
@@ -1129,9 +1258,7 @@ export default function BrandAnalysis() {
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <StatusStamp status={currentStatus} label={statusLabel(currentStatus)} />
                 <span className={monoTag}>
-                  {selectedJobDataSource === 'internal'
-                    ? t('brandAnalysis.mode.internal')
-                    : t('brandAnalysis.mode.manual')}
+                  {t(`brandAnalysis.mode.${selectedJobDataSource}`)}
                 </span>
                 {selectedJob?.market_type ? (
                   <span className={monoTag}>

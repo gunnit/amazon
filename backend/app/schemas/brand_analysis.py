@@ -46,6 +46,8 @@ BrandAnalysisStatus = Literal[
 BrandAnalysisMode = Literal[
     "internal",
     "manual",
+    # Helium 10 Market Tracker 360 market (id in helium10_market_id).
+    "helium10_mt360",
     # Legacy / backwards-compatible aliases:
     "amazon_sp_api",
 ]
@@ -77,6 +79,7 @@ class BrandAnalysisCreate(BaseModel):
     market_type: Literal["brand", "asin"] = "brand"
     market_query: Optional[str] = Field(default=None, max_length=500)
     asin_list: Optional[list[str]] = Field(default=None, max_length=500)
+    helium10_market_id: Optional[int] = Field(default=None, gt=0)
 
 
 class ColumnValidationReport(BaseModel):

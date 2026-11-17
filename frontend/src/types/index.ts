@@ -1027,6 +1027,7 @@ export type BrandAnalysisStatus =
 export type BrandAnalysisMode =
   | 'internal'
   | 'manual'
+  | 'helium10_mt360'
   | 'amazon_sp_api'
   | 'helium10_api'
   | 'helium10'
