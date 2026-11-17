@@ -1,16 +1,13 @@
 """Live probe for the Helium 10 integration — the go/no-go gate.
 
-Run once real credentials exist (HELIUM10_API_KEY in the environment or
+Run once Helium 10 is connected (credentials in the environment or
 backend/.env). Verifies, field by field, what Helium 10 actually returns
 for amazon.it ASINs before trusting the enrichment in production.
 
-HELIUM10_API_KEY must be an OAuth 2.1 access token — Helium 10's MCP server
-does not support API keys. To get one: connect `https://mcp.helium10.com/mcp`
-in an MCP client that does the browser flow (Claude Code:
-`claude mcp add helium10 --transport http https://mcp.helium10.com/mcp`),
-authorize with a Diamond-plan Helium 10 account, then copy the issued access
-token into the env var. Compare the printed payload against
-``helium10._FIELD_KEYS`` and correct any key names that differ.
+Credentials: HELIUM10_CLIENT_ID + HELIUM10_REFRESH_TOKEN from
+scripts/connect_helium10.py (or a pasted HELIUM10_API_KEY access token).
+Compare the printed payload against ``helium10._FIELD_KEYS`` and correct
+any key names that differ.
 
 Usage:
     python scripts/probe_helium10.py B08XYZ1234 B07ABC5678 --marketplace IT
@@ -33,7 +30,7 @@ def main() -> int:
 
     client = helium10.get_client()
     if client is None:
-        print("HELIUM10_API_KEY is not set — nothing to probe.")
+        print("Helium 10 is not connected — nothing to probe.")
         return 1
 
     failures = 0

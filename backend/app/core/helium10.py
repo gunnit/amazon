@@ -6,18 +6,22 @@ protocol directly and exposes a small fill-only API: it populates snapshot
 fields the connected account's SP-API structurally cannot return for
 non-owned ASINs (rating, review count, sales estimates, fallback price).
 
-Disabled unless ``HELIUM10_API_KEY`` is set. Amazon data always wins: fills
-only touch fields that are still ``None``, and every filled field is recorded
-in the snapshot's ``helium10_fields`` provenance list because Helium 10
-values are modeled estimates refreshed ~daily, not live marketplace data.
+It also reads Market Tracker 360 (MT360) markets for the prospect deck
+(``list_markets`` / ``market_products``).
 
-Auth caveat (verified against Helium 10's official MCP README, 2026-07):
-the server is **OAuth 2.1 only** — "API Token is not supported yet". So
-``HELIUM10_API_KEY`` must hold an OAuth *access token* obtained once through
-the browser flow, not a self-service API key (none exists). Tokens expire
-after extended inactivity; on 401/403 this module trips a circuit breaker and
-the platform silently falls back to Amazon-only data until a token is
-re-pasted. Swap to stored refresh tokens when H10 ships token auth.
+Auth (verified live 2026-11-17): the server is OAuth 2.1 only. A one-time
+browser approval (``scripts/connect_helium10.py``) registers a public client
+and yields a refresh token; access tokens live ~18 minutes. Configure
+``HELIUM10_CLIENT_ID`` + ``HELIUM10_REFRESH_TOKEN`` and this client renews the
+access token itself. ``HELIUM10_API_KEY`` (a pasted access token) still works
+but expires within the hour. On a failed renewal or a repeated 401/403 the
+client trips a circuit breaker and the platform falls back to Amazon-only data.
+
+Amazon data always wins: fills only touch fields that are still ``None``, and
+every filled field is recorded in the snapshot's ``helium10_fields``
+provenance list because Helium 10 values are modeled estimates refreshed
+~daily, not live marketplace data. Market Research gap-filling is off unless
+``HELIUM10_MARKET_RESEARCH_FILL`` is set, to keep the monthly quota for decks.
 """
 
 import json
@@ -33,11 +37,16 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 DEFAULT_MCP_URL = "https://mcp.helium10.com/mcp"
+DEFAULT_TOKEN_URL = "https://members.helium10.com/authhub/api/scenarios/mcp/oauth2/token"
 CACHE_TTL_SECONDS = 24 * 3600  # matches Helium 10's ~daily refresh
 AUTH_FAILURE_BACKOFF_SECONDS = 3600
-# Platform-wide quota is 10k calls/month; cap uncached lookups per market
-# search so one request can't burn a day's budget.
+TOKEN_REFRESH_MARGIN_SECONDS = 60
+# The connected account's quota is 1,000 tool calls a month (get_mcp_usage_info,
+# 2026-11); cap uncached lookups per market search so one request can't burn it.
 MARKET_SEARCH_CALL_CAP = 10
+# MT360 product pages: 100 rows each; 10 pages = 1,000 ASINs per market and year.
+MT360_PAGE_SIZE = 100
+MT360_MAX_PAGES = 10
 
 # Snapshot fields this integration is allowed to fill, with the payload key
 # variants Helium 10 may use for each. Keys are matched *normalized* (lowercase,
@@ -76,10 +85,24 @@ class Helium10Error(Exception):
 class Helium10Client:
     """Minimal MCP (streamable HTTP) client for the Helium 10 server."""
 
-    def __init__(self, base_url: str, api_key: str, timeout: float = 30.0):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: Optional[str] = None,
+        timeout: float = 30.0,
+        *,
+        client_id: Optional[str] = None,
+        refresh_token: Optional[str] = None,
+        token_url: str = DEFAULT_TOKEN_URL,
+    ):
         self.base_url = base_url
         self.api_key = api_key
         self.timeout = timeout
+        self.client_id = client_id
+        self.refresh_token = refresh_token
+        self.token_url = token_url
+        self._access_token: Optional[str] = None
+        self._access_expires_at = 0.0
         self._session_id: Optional[str] = None
         self._request_id = 0
         self._lock = threading.Lock()
@@ -90,11 +113,51 @@ class Helium10Client:
     def available(self) -> bool:
         return time.time() >= self._disabled_until
 
+    # -- auth ----------------------------------------------------------
+
+    @property
+    def _can_refresh(self) -> bool:
+        return bool(self.client_id and self.refresh_token)
+
+    def _refresh_access_token(self) -> None:
+        """Swap the refresh token for a fresh access token (public client, no secret)."""
+        response = httpx.post(
+            self.token_url,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": self.refresh_token,
+                "client_id": self.client_id,
+                "resource": DEFAULT_MCP_URL,
+            },
+            timeout=self.timeout,
+        )
+        if response.status_code >= 400:
+            self._disabled_until = time.time() + AUTH_FAILURE_BACKOFF_SECONDS
+            raise Helium10Error(
+                f"Helium 10 token renewal failed ({response.status_code}); reconnect with "
+                f"scripts/connect_helium10.py. Disabled for {AUTH_FAILURE_BACKOFF_SECONDS // 60} minutes"
+            )
+        payload = response.json()
+        self._access_token = payload["access_token"]
+        self._access_expires_at = time.time() + float(payload.get("expires_in") or 600)
+        rotated = payload.get("refresh_token")
+        if rotated and rotated != self.refresh_token:
+            # Kept in memory only; the env value must be updated before a restart.
+            self.refresh_token = rotated
+            logger.warning("Helium 10 rotated the refresh token; update HELIUM10_REFRESH_TOKEN")
+
+    def _bearer(self) -> str:
+        if self._can_refresh:
+            if not self._access_token or time.time() >= self._access_expires_at - TOKEN_REFRESH_MARGIN_SECONDS:
+                self._refresh_access_token()
+            return self._access_token or ""
+        return self.api_key or ""
+
     # -- transport -----------------------------------------------------
 
     def _headers(self) -> Dict[str, str]:
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {self._bearer()}",
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
@@ -109,6 +172,15 @@ class Helium10Client:
             headers=self._headers(),
             timeout=self.timeout,
         )
+        if response.status_code == 401 and self._can_refresh:
+            # Access token revoked or expired early: renew once and retry.
+            self._access_token = None
+            response = httpx.post(
+                self.base_url,
+                json=payload,
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
         if response.status_code in (401, 403):
             self._disabled_until = time.time() + AUTH_FAILURE_BACKOFF_SECONDS
             raise Helium10Error(
@@ -228,15 +300,77 @@ class Helium10Client:
         cached = self._cache.get(key)
         return bool(cached and cached[0] > time.time())
 
+    # -- Market Tracker 360 --------------------------------------------
+
+    @staticmethod
+    def _data(payload: Any, tool: str) -> Any:
+        if not isinstance(payload, dict):
+            raise Helium10Error(f"{tool} returned an unexpected payload")
+        if payload.get("error"):
+            raise Helium10Error(f"{tool} failed: {payload['error']}")
+        return payload.get("data")
+
+    def list_markets(self) -> List[dict]:
+        """The account's MT360 markets (id, name, marketplace, type, products)."""
+        data = self._data(self.call_tool("list_user_markets", {"per_page": 100}), "list_user_markets")
+        rows = data.get("data") if isinstance(data, dict) else data
+        return [row for row in (rows or []) if isinstance(row, dict)]
+
+    def market_products(
+        self,
+        market_id: int,
+        date_from: str,
+        date_to: str,
+        *,
+        parent_data_mode: bool = False,
+        max_pages: int = MT360_MAX_PAGES,
+    ) -> List[dict]:
+        """Every product row of an MT360 market for one date range.
+
+        Rows carry ``totalRevenue`` and ``totalSales`` (units) for the range,
+        already scaled to currency for non-Japan markets. Pages are sorted by
+        revenue; ``has_more`` and ``last_page`` disagree on some ranges, so both
+        are honoured and an empty page always stops.
+        """
+        rows: List[dict] = []
+        for page in range(1, max_pages + 1):
+            data = self._data(
+                self.call_tool(
+                    "get_market_products",
+                    {
+                        "market_id": int(market_id),
+                        "date_from": date_from,
+                        "date_to": date_to,
+                        "page": page,
+                        "per_page": MT360_PAGE_SIZE,
+                        "parent_data_mode": 1 if parent_data_mode else 0,
+                    },
+                ),
+                "get_market_products",
+            ) or {}
+            batch = [row for row in (data.get("data") or []) if isinstance(row, dict)]
+            rows.extend(batch)
+            last_page = data.get("last_page")
+            more = bool(data.get("has_more")) or (isinstance(last_page, int) and page < last_page)
+            if not batch or not more:
+                break
+        return rows
+
 
 _client: Optional[Helium10Client] = None
 _client_lock = threading.Lock()
 
 
+def is_configured() -> bool:
+    return bool(
+        (settings.HELIUM10_CLIENT_ID and settings.HELIUM10_REFRESH_TOKEN) or settings.HELIUM10_API_KEY
+    )
+
+
 def get_client() -> Optional[Helium10Client]:
-    """Singleton client, or None when HELIUM10_API_KEY is not configured."""
+    """Singleton client, or None when no Helium 10 credentials are configured."""
     global _client
-    if not settings.HELIUM10_API_KEY:
+    if not is_configured():
         return None
     if _client is None:
         with _client_lock:
@@ -244,6 +378,9 @@ def get_client() -> Optional[Helium10Client]:
                 _client = Helium10Client(
                     base_url=settings.HELIUM10_API_BASE_URL or DEFAULT_MCP_URL,
                     api_key=settings.HELIUM10_API_KEY,
+                    client_id=settings.HELIUM10_CLIENT_ID,
+                    refresh_token=settings.HELIUM10_REFRESH_TOKEN,
+                    token_url=settings.HELIUM10_TOKEN_URL or DEFAULT_TOKEN_URL,
                 )
     return _client
 
@@ -331,6 +468,8 @@ def fill_snapshot_gaps(snapshot: dict, marketplace: Any) -> bool:
     appended to ``snapshot["helium10_fields"]``. Returns True if anything
     was filled. No-op (False) when the integration is not configured.
     """
+    if not settings.HELIUM10_MARKET_RESEARCH_FILL:
+        return False
     client = get_client()
     asin = snapshot.get("asin")
     country = marketplace_code(marketplace)
@@ -366,6 +505,8 @@ def fill_market_items(items: List[dict], marketplace: Any) -> int:
     """
     # ponytail: per-ASIN calls capped; switch to a batch tool (compare_listings)
     # once its live schema is verified for amazon.it.
+    if not settings.HELIUM10_MARKET_RESEARCH_FILL:
+        return 0
     client = get_client()
     country = marketplace_code(marketplace)
     if client is None or not client.available or not country:

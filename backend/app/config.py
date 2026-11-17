@@ -71,18 +71,22 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     MARKET_RESEARCH_MAX_COMPETITORS: int = 5
 
-    # Helium 10 (third-party product metrics via their MCP server).
-    # Setting HELIUM10_API_KEY enables gap-filling for non-owned ASINs
-    # (rating, review count, sales estimates); see app/core/helium10.py.
-    # NOTE: despite the name, HELIUM10_API_KEY holds an OAuth 2.1 *access
-    # token* — Helium 10's MCP server has no API-key auth ("not supported
-    # yet"), so the value is obtained via a one-off browser authorization and
-    # must be re-pasted when it expires. Empty = integration off.
+    # Helium 10 (MCP server, OAuth 2.1 only; see app/core/helium10.py).
+    # HELIUM10_CLIENT_ID + HELIUM10_REFRESH_TOKEN come from a one-time browser
+    # approval (scripts/connect_helium10.py); the client renews its ~18-minute
+    # access token itself. HELIUM10_API_KEY = a pasted access token (expires
+    # within the hour; legacy). Nothing set = integration off.
+    # HELIUM10_MARKET_RESEARCH_FILL turns on per-ASIN gap-filling in Market
+    # Research, which spends the 1,000 calls/month quota; off by default.
     # USERNAME/PASSWORD/AUTOMATION_ENABLED are legacy and unused.
     HELIUM10_USERNAME: Optional[str] = None
     HELIUM10_PASSWORD: Optional[str] = None
     HELIUM10_API_BASE_URL: Optional[str] = None
     HELIUM10_API_KEY: Optional[str] = None
+    HELIUM10_CLIENT_ID: Optional[str] = None
+    HELIUM10_REFRESH_TOKEN: Optional[str] = None
+    HELIUM10_TOKEN_URL: Optional[str] = None
+    HELIUM10_MARKET_RESEARCH_FILL: bool = False
     HELIUM10_AUTOMATION_ENABLED: bool = False
 
     # Brand Analysis
