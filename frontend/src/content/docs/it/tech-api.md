@@ -1,7 +1,7 @@
 # API surface
 > Generated from the source by `backend/scripts/gen_tech_docs.py`. Re-run it after changing the code; do not edit this page by hand.
 
-152 endpoints across 15 routers, all under `/api/v1`.
+162 endpoints across 16 routers, all under `/api/v1`.
 
 ## accounts
 
@@ -149,6 +149,23 @@ Prefix `/catalog`.
 | PATCH | `/catalog/products/{asin}/availability` |
 | GET | `/catalog/products/{asin}/history` |
 | GET | `/catalog/listing-quality` |
+
+## catalog_monitor
+
+Prefix `/catalog-monitor`.
+
+| Method | Path |
+| --- | --- |
+| GET | `/catalog-monitor/quality` |
+| GET | `/catalog-monitor/quality/export` |
+| GET | `/catalog-monitor/quality/{asin}` |
+| GET | `/catalog-monitor/rules` |
+| PUT | `/catalog-monitor/rules` |
+| PUT | `/catalog-monitor/keywords` |
+| POST | `/catalog-monitor/scan` |
+| GET | `/catalog-monitor/scan` |
+| GET | `/catalog-monitor/capabilities` |
+| POST | `/catalog-monitor/capabilities/check` |
 
 ## competitors
 

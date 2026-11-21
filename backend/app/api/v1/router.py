@@ -10,6 +10,7 @@ from app.api.v1 import (
     brand_intelligence,
     brand_pulse,
     catalog,
+    catalog_monitor,
     competitors,
     exports,
     forecasts,
@@ -26,6 +27,9 @@ api_router.include_router(accounts.router, prefix="/accounts", tags=["Amazon Acc
 api_router.include_router(reports.router, prefix="/reports", tags=["Reports & Data"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(catalog.router, prefix="/catalog", tags=["Catalog Management"])
+api_router.include_router(
+    catalog_monitor.router, prefix="/catalog-monitor", tags=["Catalog Monitor"]
+)
 api_router.include_router(forecasts.router, prefix="/forecasts", tags=["Forecasting"])
 api_router.include_router(exports.router, prefix="/exports", tags=["Exports"])
 api_router.include_router(google_sheets.router, prefix="/google-sheets", tags=["Google Sheets"])
