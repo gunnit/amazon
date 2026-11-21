@@ -83,6 +83,7 @@ Every setting on `Settings` in `app/config.py`. Secrets show `—` instead of a 
 | `CATALOG_SCAN_REQUEST_INTERVAL_S` | `float` | `0.55` |
 | `CATALOG_FEED_THRESHOLD` | `int` | `50` |
 | `PTD_CACHE_DAYS` | `int` | `7` |
+| `DEV_FIXTURE_AMAZON_DIR` | `Optional[str]` | `None` |
 | `BRAND_ANALYSIS_RECOVERY_INTERVAL_MINUTES` | `int` | `10` |
 | `CORS_ORIGINS` | `List[str]` | `['http://localhost:5173', 'http://localhost:3000']` |
 | `SENTRY_DSN` | `Optional[str]` | `None` |

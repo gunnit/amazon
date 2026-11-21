@@ -1,12 +1,14 @@
 """Main FastAPI application entry point."""
 from contextlib import asynccontextmanager
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic_core import PydanticUndefined
 from sqlalchemy import text
 
@@ -15,6 +17,11 @@ from app.api.v1.router import api_router
 from app.db.session import engine
 from app.middleware.request_id import RequestIdMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.services.catalog_monitor.fixture_client import (
+    IMAGES_ROUTE as DEV_FIXTURE_IMAGES_ROUTE,
+    active_fixture_dir,
+    log_fixture_mode,
+)
 from app.observability import configure_logging, init_sentry
 
 # Logging + error tracking must be set up before any other module emits records.
@@ -28,6 +35,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Starting Inthezon Platform API (env=%s)", settings.APP_ENV)
     validate_production_settings(settings)
+    log_fixture_mode()
 
     scheduler = None
     if settings.ENABLE_INPROCESS_SCHEDULER:
@@ -350,6 +358,16 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
+
+# Local development with DEV_FIXTURE_AMAZON_DIR (never in production): the fixture
+# catalogue's images, downloaded by the scan's main-image check and shown by the browser.
+_dev_fixture_dir = active_fixture_dir()
+if _dev_fixture_dir:
+    app.mount(
+        DEV_FIXTURE_IMAGES_ROUTE,
+        StaticFiles(directory=Path(_dev_fixture_dir) / "images", check_dir=False),
+        name="dev-fixture-images",
+    )
 
 
 @app.get("/health")

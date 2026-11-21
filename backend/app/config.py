@@ -148,6 +148,11 @@ class Settings(BaseSettings):
     CATALOG_SCAN_REQUEST_INTERVAL_S: float = 0.55
     CATALOG_FEED_THRESHOLD: int = 50
     PTD_CACHE_DAYS: int = 7
+    # Local development only: a directory of JSON fixtures that answers the
+    # catalogue monitor's Amazon calls instead of SP-API (see
+    # app/services/catalog_monitor/fixture_client.py and
+    # scripts/dev_seed_catalog_monitor.py). Ignored in production.
+    DEV_FIXTURE_AMAZON_DIR: Optional[str] = None
     # How often the in-process scheduler finalizes brand-analysis jobs whose
     # worker/thread stalled (e.g. killed by a deploy mid-run).
     BRAND_ANALYSIS_RECOVERY_INTERVAL_MINUTES: int = 10
