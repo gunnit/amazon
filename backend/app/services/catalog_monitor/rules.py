@@ -240,18 +240,29 @@ def _backend_keywords(c: ListingContent, ctx: RuleContext, cfg: RuleConfig):
     return _res("green", "ok", bytes=size, limit=maximum)
 
 
+_ENTRY_METADATA = frozenset({"marketplace_id", "language_tag"})
+
+
+def _filled(value: Any) -> bool:
+    """An attribute entry holds content: its ``value``, or for objects without one
+    (Amazon's ``item_dimensions``: length, width, height) any filled leaf."""
+    if isinstance(value, dict):
+        if "value" in value:
+            return _filled(value["value"])
+        return any(_filled(v) for k, v in value.items() if k not in _ENTRY_METADATA)
+    if isinstance(value, list):
+        return any(_filled(v) for v in value)
+    if isinstance(value, str):
+        return bool(value.strip())
+    return value is not None
+
+
 def _attributes(c: ListingContent, ctx: RuleContext, cfg: RuleConfig):
     if ctx.required_attributes is None:
         return _res("grey", "unavailable")
 
     def present(name: str) -> bool:
-        for item in c.attributes.get(name) or []:
-            value = item.get("value") if isinstance(item, dict) else item
-            if value not in (None, "", [], {}) and not (
-                isinstance(value, str) and not value.strip()
-            ):
-                return True
-        return False
+        return any(_filled(item) for item in c.attributes.get(name) or [])
 
     missing_required = [a for a in ctx.required_attributes if not present(a)]
     if missing_required:

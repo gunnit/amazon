@@ -194,6 +194,22 @@ def test_attributes_yellow_when_recommended_missing_green_when_complete():
     assert res(good(attributes=full), ctx(), "attributes").state == "green"
 
 
+def test_attributes_count_amazon_dimension_objects_as_present():
+    # Found in the end-to-end run: Catalog Items sends item_dimensions without a
+    # top-level "value", so the attributes light could never turn green.
+    full = {k: [{"value": "v"}] for k in DEFAULT_RULES["attributes"].params["recommended_attributes"]}
+    full["item_dimensions"] = [{
+        "length": {"value": 32, "unit": "centimeters"},
+        "width": {"value": 9, "unit": "centimeters"},
+        "marketplace_id": "APJ6JRA9NG5V4",
+    }]
+    assert res(good(attributes=full), ctx(), "attributes").state == "green"
+    empty = {**full, "item_dimensions": [{"length": {"value": None}, "marketplace_id": "X"}]}
+    assert res(good(attributes=empty), ctx(), "attributes").details["missing"] == ["item_dimensions"]
+    no_value = {**full, "item_weight": [{"value": None, "unit": "kilograms"}]}
+    assert res(good(attributes=no_value), ctx(), "attributes").details["missing"] == ["item_weight"]
+
+
 def test_category_rules():
     assert res(good(classification_path=[]), ctx(), "category").state == "red"
     assert res(good(), ctx(), "category").state == "green"
