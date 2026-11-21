@@ -1,7 +1,7 @@
 # Data model
 > Generated from the source by `backend/scripts/gen_tech_docs.py`. Re-run it after changing the code; do not edit this page by hand.
 
-40 tables, read from the SQLAlchemy metadata.
+49 tables, read from the SQLAlchemy metadata.
 
 ## Tables
 
@@ -22,7 +22,10 @@
 | `brand_intelligence_schedules` | 9 | `amazon_accounts`, `organizations` |
 | `brand_search_terms` | 10 | `amazon_accounts` |
 | `bsr_history` | 6 | `products` |
+| `catalog_anomalies` | 12 | `amazon_accounts` |
+| `catalog_api_capabilities` | 5 | `amazon_accounts` |
 | `catalog_change_log` | 12 | `amazon_accounts`, `organizations`, `users` |
+| `catalog_change_requests` | 21 | `amazon_accounts`, `organizations`, `users` |
 | `competitor_history` | 8 | `competitors` |
 | `competitors` | 12 | `organizations` |
 | `fee_estimates` | 8 | `amazon_accounts` |
@@ -31,7 +34,11 @@
 | `google_sheets_connections` | 13 | `organizations`, `users` |
 | `google_sheets_sync_runs` | 11 | `google_sheets_syncs`, `organizations` |
 | `google_sheets_syncs` | 20 | `google_sheets_connections`, `organizations`, `users` |
+| `image_checks` | 9 | — |
 | `inventory_data` | 13 | `amazon_accounts` |
+| `listing_content_baselines` | 7 | `amazon_accounts`, `users` |
+| `listing_content_versions` | 7 | `amazon_accounts` |
+| `listing_quality_rules` | 10 | `organizations`, `users` |
 | `listing_quality_snapshots` | 7 | `amazon_accounts` |
 | `market_research_reports` | 18 | `amazon_accounts`, `organizations`, `users` |
 | `order_items` | 8 | `orders` |
@@ -39,7 +46,8 @@
 | `organization_members` | 5 | `organizations`, `users` |
 | `organizations` | 6 | — |
 | `price_snapshots` | 12 | `amazon_accounts` |
-| `products` | 17 | `amazon_accounts` |
+| `product_type_definitions_cache` | 6 | — |
+| `products` | 19 | `amazon_accounts` |
 | `returns_data` | 11 | `amazon_accounts` |
 | `sales_data` | 18 | `amazon_accounts` |
 | `scheduled_report_runs` | 21 | `organizations`, `scheduled_reports` |
@@ -47,10 +55,11 @@
 | `strategic_recommendations` | 20 | `amazon_accounts`, `organizations`, `users` |
 | `sync_jobs` | 11 | `amazon_accounts` |
 | `users` | 8 | — |
+| `variation_family_baselines` | 6 | `amazon_accounts` |
 
 ## Migrations
 
-36 revisions, applied on deploy by `alembic upgrade head` in the start command.
+37 revisions, applied on deploy by `alembic upgrade head` in the start command.
 
 - `001_initial_schema`
 - `002_align_schema`
@@ -88,3 +97,4 @@
 - `031_brand_intelligence`
 - `032_account_backfill_tracking`
 - `033_ingestion_expansion`
+- `034_catalog_monitor`

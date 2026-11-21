@@ -1,24 +1,19 @@
 """Listing quality scoring from warehouse data.
 
 Scores each product 0-100 from already-synced catalog fields — no Amazon API
-calls, so it can run live for the endpoint and weekly for trend snapshots.
+calls — for the live ``GET /catalog/listing-quality`` endpoint. Stored
+``ListingQualitySnapshot`` rows are written by the daily catalogue scan
+(``catalog_monitor.scanner``) with the per-rule traffic lights instead.
 """
 from __future__ import annotations
 
-from datetime import date
-import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.amazon_account import AmazonAccount
-from app.models.listing_quality import ListingQualitySnapshot
 from app.models.product import Product
-
-logger = logging.getLogger(__name__)
 
 # Title length thresholds (Amazon recommends descriptive titles; very short
 # titles convert poorly and index for fewer terms).
@@ -108,30 +103,3 @@ class ListingQualityService:
             scored.append(entry)
         scored.sort(key=lambda e: e["score"])
         return scored
-
-    async def snapshot_account(self, account: AmazonAccount) -> int:
-        """Persist today's scores for week-over-week trending. Idempotent."""
-        scored = await self.compute_for_account(account.id)
-        today = date.today()
-        for entry in scored:
-            stmt = pg_insert(ListingQualitySnapshot).values(
-                account_id=account.id,
-                asin=entry["asin"],
-                snapshot_date=today,
-                score=entry["score"],
-                components=entry["components"],
-            )
-            stmt = stmt.on_conflict_do_update(
-                constraint="uq_listing_quality_account_asin_date",
-                set_={
-                    "score": stmt.excluded.score,
-                    "components": stmt.excluded.components,
-                },
-            )
-            await self.db.execute(stmt)
-        await self.db.flush()
-        logger.info(
-            "Listing quality snapshot for %s: %d products",
-            account.account_name, len(scored),
-        )
-        return len(scored)

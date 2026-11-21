@@ -38,6 +38,28 @@ VALID_PRIORITIES = {"high", "medium", "low"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
 
 
+def failing_listing_components(components: Optional[Dict[str, Any]]) -> List[str]:
+    """Names of the failing parts of a stored listing-quality snapshot.
+
+    Daily catalogue-scan rows (``rules.evaluation_to_dict``) list one traffic
+    light per rule: red rules fail. Older weekly rows map each component to
+    ``{earned, max}``: components with no points fail.
+    """
+    components = components or {}
+    results = components.get("results")
+    if isinstance(results, list):
+        return [
+            r["key"]
+            for r in results
+            if isinstance(r, dict) and r.get("state") == "red" and r.get("key")
+        ]
+    return [
+        name
+        for name, detail in components.items()
+        if isinstance(detail, dict) and not detail.get("earned")
+    ]
+
+
 class AIProviderUnavailableError(RuntimeError):
     """The Anthropic provider rejected the request (auth, quota, rate limit, outage).
 
@@ -927,11 +949,7 @@ class StrategicRecommendationsService:
                     {
                         "asin": row.asin,
                         "score": row.score,
-                        "missing_components": [
-                            name
-                            for name, detail in (row.components or {}).items()
-                            if isinstance(detail, dict) and not detail.get("earned")
-                        ],
+                        "missing_components": failing_listing_components(row.components),
                     }
                     for row in worst
                 ],

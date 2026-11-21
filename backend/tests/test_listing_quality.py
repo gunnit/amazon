@@ -52,3 +52,28 @@ def test_unavailable_listing_loses_availability_points():
 def test_component_points_sum_to_100():
     result = score_product(_product())
     assert sum(c["max"] for c in result["components"].values()) == 100
+
+
+def test_strategic_signals_read_daily_scan_snapshots():
+    from app.services.strategic_recommendations_service import failing_listing_components
+
+    daily = {
+        "asin": "B0TEST0001",
+        "state": "red",
+        "score": 40,
+        "results": [
+            {"key": "title", "state": "green", "mandatory": True, "code": "ok", "details": {}},
+            {"key": "bullets", "state": "red", "mandatory": True, "code": "too_few", "details": {}},
+            {"key": "video", "state": "grey", "mandatory": False, "code": "n/a", "details": {}},
+            {"key": "aplus", "state": "red", "mandatory": False, "code": "missing", "details": {}},
+        ],
+    }
+    assert failing_listing_components(daily) == ["bullets", "aplus"]
+
+
+def test_strategic_signals_still_read_older_weekly_snapshots():
+    from app.services.strategic_recommendations_service import failing_listing_components
+
+    weekly = score_product(_product(rating=None, review_count=0))["components"]
+    assert failing_listing_components(weekly) == ["rating", "reviews"]
+    assert failing_listing_components(None) == []

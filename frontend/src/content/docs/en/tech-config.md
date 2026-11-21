@@ -51,6 +51,10 @@ Every setting on `Settings` in `app/config.py`. Secrets show `—` instead of a 
 | `HELIUM10_PASSWORD` | `Optional[str]` | `—` |
 | `HELIUM10_API_BASE_URL` | `Optional[str]` | `None` |
 | `HELIUM10_API_KEY` | `Optional[str]` | `—` |
+| `HELIUM10_CLIENT_ID` | `Optional[str]` | `None` |
+| `HELIUM10_REFRESH_TOKEN` | `Optional[str]` | `—` |
+| `HELIUM10_TOKEN_URL` | `Optional[str]` | `—` |
+| `HELIUM10_MARKET_RESEARCH_FILL` | `bool` | `False` |
 | `HELIUM10_AUTOMATION_ENABLED` | `bool` | `False` |
 | `BRAND_ANALYSIS_MAX_UPLOAD_MB` | `int` | `25` |
 | `BRAND_ANALYSIS_STORAGE_BACKEND` | `str` | `'db'` |
@@ -74,6 +78,11 @@ Every setting on `Settings` in `app/config.py`. Secrets show `—` instead of a 
 | `INPROCESS_SALES_REFRESH_MINUTE_UTC` | `int` | `15` |
 | `SCHEDULED_REPORT_SCAN_INTERVAL_MINUTES` | `int` | `10` |
 | `EXECUTE_TASKS_INLINE` | `bool` | `False` |
+| `CATALOG_SCAN_HOUR_UTC` | `int` | `5` |
+| `CATALOG_SCAN_MINUTE_UTC` | `int` | `0` |
+| `CATALOG_SCAN_REQUEST_INTERVAL_S` | `float` | `0.55` |
+| `CATALOG_FEED_THRESHOLD` | `int` | `50` |
+| `PTD_CACHE_DAYS` | `int` | `7` |
 | `BRAND_ANALYSIS_RECOVERY_INTERVAL_MINUTES` | `int` | `10` |
 | `CORS_ORIGINS` | `List[str]` | `['http://localhost:5173', 'http://localhost:3000']` |
 | `SENTRY_DSN` | `Optional[str]` | `None` |

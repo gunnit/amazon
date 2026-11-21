@@ -75,6 +75,41 @@ async def test_save_version_dedupes_by_hash(db, account):
 
 
 @pytest.mark.asyncio
+async def test_save_version_a_b_a_creates_a_new_row(db, account):
+    repo = CatalogMonitorRepository(db)
+    t1, t2, t3, t4 = (datetime(2026, 11, d, 5, 0, tzinfo=timezone.utc) for d in (21, 22, 23, 24))
+    a1, is_new = await repo.save_version(account.id, "B0TEST0001", _content("A"), t1)
+    assert is_new is True
+    b, is_new = await repo.save_version(account.id, "B0TEST0001", _content("B"), t2)
+    assert is_new is True
+    a2, is_new = await repo.save_version(account.id, "B0TEST0001", _content("A"), t3)
+    assert is_new is True and a2.id not in (a1.id, b.id)
+    assert a2.content_hash == a1.content_hash
+    assert (await repo.latest_versions(account.id))["B0TEST0001"].id == a2.id
+    same, is_new = await repo.save_version(account.id, "B0TEST0001", _content("A"), t4)
+    assert is_new is False and same.id == a2.id and same.last_seen_at == t4
+    assert len(await repo.versions(account.id, "B0TEST0001")) == 3
+
+
+@pytest.mark.asyncio
+async def test_latest_versions_returns_one_row_per_asin(db, account):
+    repo = CatalogMonitorRepository(db)
+    t1, t2 = (datetime(2026, 11, d, 5, 0, tzinfo=timezone.utc) for d in (21, 22))
+    await repo.save_version(account.id, "B0TEST0001", _content("A"), t1)
+    newest_1, _ = await repo.save_version(account.id, "B0TEST0001", _content("B"), t2)
+    newest_2, _ = await repo.save_version(account.id, "B0TEST0002", _content("C"), t1)
+
+    latest = await repo.latest_versions(account.id)
+    assert {asin: row.id for asin, row in latest.items()} == {
+        "B0TEST0001": newest_1.id,
+        "B0TEST0002": newest_2.id,
+    }
+    only = await repo.latest_versions(account.id, ["B0TEST0002"])
+    assert list(only) == ["B0TEST0002"]
+    assert await repo.latest_versions(account.id, []) == {}
+
+
+@pytest.mark.asyncio
 async def test_open_or_touch_anomaly_no_duplicate(db, account):
     repo = CatalogMonitorRepository(db)
     a1, opened = await repo.open_or_touch_anomaly(
@@ -87,6 +122,14 @@ async def test_open_or_touch_anomaly_no_duplicate(db, account):
     assert opened is False and a2.id == a1.id
     open_ = await repo.open_anomalies(account.id)
     assert list(open_) == [("B0TEST0001", "content_changed", "title")]
+    touched, opened = await repo.open_or_touch_anomaly(
+        account.id, "B0TEST0001", "content_changed", "title", "A", "C", NOW
+    )
+    assert opened is False and touched.id == a1.id and touched.live_value == "C"
+    other, opened = await repo.open_or_touch_anomaly(
+        account.id, "B0TEST0001", "content_changed", "description", "A", "B", NOW
+    )
+    assert opened is True and other.id != a1.id
 
 
 @pytest.mark.asyncio

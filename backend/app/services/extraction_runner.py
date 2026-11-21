@@ -1055,6 +1055,20 @@ def _run_seller_job(label: str, per_account, lock: Optional[threading.Lock] = No
 
     Same engine/loop lifecycle as the other scheduled entrypoints. When a lock
     is given (jobs on the shared Reports API quota) a busy lock skips the run."""
+    return _run_per_account_job(label, per_account, list_active_seller_account_ids, lock)
+
+
+def run_for_all_accounts(label: str, per_account, lock: Optional[threading.Lock] = None) -> dict:
+    """Like ``_run_seller_job`` for every active account, Seller and Vendor."""
+    return _run_per_account_job(label, per_account, list_active_account_ids, lock)
+
+
+def _run_per_account_job(
+    label: str, per_account, list_account_ids, lock: Optional[threading.Lock] = None
+) -> dict:
+    """Run ``per_account(account_id, session_factory)`` for each id from ``list_account_ids(db)``.
+
+    A failing account is logged and the loop continues."""
     if lock is not None and not lock.acquire(blocking=False):
         logger.info("%s skipped: another scheduled sync is running", label)
         return {"status": "skipped", "accounts": 0, "records": 0}
@@ -1068,7 +1082,7 @@ def _run_seller_job(label: str, per_account, lock: Optional[threading.Lock] = No
 
         async def _collect() -> List[UUID]:
             async with session_factory() as db:
-                return await list_active_seller_account_ids(db)
+                return await list_account_ids(db)
 
         account_ids = loop.run_until_complete(_collect())
         records = 0
@@ -1147,15 +1161,6 @@ async def _sync_brand_terms_one(account_id: UUID, session_factory) -> int:
     return await _with_account(account_id, session_factory, _run)
 
 
-async def _snapshot_listing_quality_one(account_id: UUID, session_factory) -> int:
-    from app.services.listing_quality_service import ListingQualityService
-
-    async def _run(db, account):
-        return await ListingQualityService(db).snapshot_account(account)
-
-    return await _with_account(account_id, session_factory, _run)
-
-
 def run_asin_economics_sync_all() -> dict:
     """Daily Data Kiosk economics pull (Data Kiosk quota, no report lock)."""
     return _run_seller_job("ASIN economics sync", _sync_economics_one)
@@ -1171,11 +1176,6 @@ def run_brand_search_terms_sync_all() -> dict:
     return _run_seller_job(
         "Brand search terms sync", _sync_brand_terms_one, lock=_SCHEDULED_SYNC_LOCK
     )
-
-
-def run_listing_quality_snapshot_all() -> dict:
-    """Weekly listing-quality snapshots (warehouse data only)."""
-    return _run_seller_job("Listing quality snapshot", _snapshot_listing_quality_one)
 
 
 async def _sync_competitors_org(org_id: UUID, session_factory) -> int:

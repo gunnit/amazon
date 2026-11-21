@@ -1,7 +1,7 @@
 # API surface
 > Generated from the source by `backend/scripts/gen_tech_docs.py`. Re-run it after changing the code; do not edit this page by hand.
 
-151 endpoints across 15 routers, all under `/api/v1`.
+152 endpoints across 15 routers, all under `/api/v1`.
 
 ## accounts
 
@@ -100,6 +100,7 @@ Prefix `/brand-analysis`.
 
 | Method | Path |
 | --- | --- |
+| GET | `/brand-analysis/helium10/markets` |
 | POST | `/brand-analysis` |
 | GET | `/brand-analysis` |
 | POST | `/brand-analysis/{job_id}/upload/{year}` |

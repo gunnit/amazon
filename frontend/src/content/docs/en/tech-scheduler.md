@@ -17,7 +17,7 @@ The API process runs its own scheduler, so there is no Celery worker in producti
 | `market-snapshot` | `run_market_snapshot_all` | `CronTrigger(hour=6, minute=30)` |
 | `competitor-tracking` | `run_competitor_tracking_all` | `CronTrigger(hour=7, minute=15)` |
 | `brand-search-terms-sync` | `run_brand_search_terms_sync_all` | `CronTrigger(day_of_week='wed', hour=7, minute=0)` |
-| `listing-quality-snapshot` | `run_listing_quality_snapshot_all` | `CronTrigger(day_of_week='sun', hour=7, minute=30)` |
+| `catalog-monitor-scan` | `run_catalog_scan_all` | `CronTrigger(hour=settings.CATALOG_SCAN_HOUR_UTC, minute=settings.CATALOG_SCAN_MINUTE_UTC)` |
 | `brand-analysis-recovery` | `run_brand_analysis_recovery` | `IntervalTrigger(minutes=settings.BRAND_ANALYSIS_RECOVERY_INTERVAL_MINUTES)` |
 | `hourly-alert-check` | `run_alert_check` | `CronTrigger(minute=5)` |
 | `daily-digest` | `run_daily_digest` | `CronTrigger(hour=8, minute=0)` |

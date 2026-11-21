@@ -411,8 +411,8 @@ async def get_listing_quality(
 ):
     """Listing-quality fix list for one account, worst scores first.
 
-    Scores are computed live from warehouse data (no Amazon API calls);
-    weekly snapshots in listing_quality_snapshots provide the trend."""
+    Scores are computed live from warehouse data (no Amazon API calls); the
+    daily catalogue scan stores per-rule snapshots in listing_quality_snapshots."""
     await _verify_account_in_org(db, organization.id, account_id)
 
     from app.services.listing_quality_service import ListingQualityService

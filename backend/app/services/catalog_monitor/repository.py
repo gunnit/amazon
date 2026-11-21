@@ -39,20 +39,18 @@ class CatalogMonitorRepository:
     async def latest_versions(
         self, account_id: UUID, asins: Optional[list[str]] = None
     ) -> dict[str, ListingContentVersion]:
+        """Latest version per ASIN (greatest ``last_seen_at``), one query, no history."""
         stmt = select(ListingContentVersion).where(ListingContentVersion.account_id == account_id)
         if asins is not None:
             if not asins:
                 return {}
             stmt = stmt.where(ListingContentVersion.asin.in_(asins))
-        stmt = stmt.order_by(
+        stmt = stmt.distinct(ListingContentVersion.asin).order_by(
             ListingContentVersion.asin,
-            ListingContentVersion.last_seen_at,
-            ListingContentVersion.first_seen_at,
+            ListingContentVersion.last_seen_at.desc(),
+            ListingContentVersion.first_seen_at.desc(),
         )
-        latest: dict[str, ListingContentVersion] = {}
-        for row in (await self.db.execute(stmt)).scalars():
-            latest[row.asin] = row  # ascending order: the last row per ASIN wins
-        return latest
+        return {row.asin: row for row in (await self.db.execute(stmt)).scalars()}
 
     async def save_version(
         self, account_id: UUID, asin: str, content: ListingContent, seen_at: datetime
@@ -168,7 +166,16 @@ class CatalogMonitorRepository:
         live_value: Any,
         now: datetime,
     ) -> tuple[CatalogAnomaly, bool]:
-        existing = (await self.open_anomalies(account_id)).get((asin, kind, field))
+        result = await self.db.execute(
+            select(CatalogAnomaly).where(
+                CatalogAnomaly.account_id == account_id,
+                CatalogAnomaly.asin == asin,
+                CatalogAnomaly.kind == kind,
+                CatalogAnomaly.field == field,
+                CatalogAnomaly.status != "resolved",
+            )
+        )
+        existing = result.scalars().first()
         if existing is not None:
             existing.last_seen_at = now
             existing.live_value = live_value

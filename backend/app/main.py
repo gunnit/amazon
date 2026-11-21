@@ -42,7 +42,6 @@ async def lifespan(app: FastAPI):
                 run_brand_search_terms_sync_all,
                 run_competitor_tracking_all,
                 run_daily_sync_all,
-                run_listing_quality_snapshot_all,
                 run_market_snapshot_all,
                 run_recent_orders_sync_all,
                 run_recent_seller_sales_sync_all,
@@ -53,6 +52,7 @@ async def lifespan(app: FastAPI):
                 run_brand_intelligence_recovery,
                 run_brand_intelligence_scan,
             )
+            from app.services.catalog_monitor.scanner import run_catalog_scan_all
             from app.services.db_maintenance import run_partition_ensure
             from app.services.forecast_service import run_weekly_forecast_generation
             from app.services.google_sheets_service import run_google_sheets_scan
@@ -166,11 +166,16 @@ async def lifespan(app: FastAPI):
                 coalesce=True,
                 misfire_grace_time=3600,
             )
-            # Weekly listing-quality snapshots for trend lines (DB only).
+            # Daily catalogue monitor (R1-R3): live content of every Seller and
+            # Vendor product, traffic lights (also the listing-quality
+            # snapshots), content and variation anomalies (Catalog quota).
             scheduler.add_job(
-                run_listing_quality_snapshot_all,
-                CronTrigger(day_of_week="sun", hour=7, minute=30),
-                id="listing-quality-snapshot",
+                run_catalog_scan_all,
+                CronTrigger(
+                    hour=settings.CATALOG_SCAN_HOUR_UTC,
+                    minute=settings.CATALOG_SCAN_MINUTE_UTC,
+                ),
+                id="catalog-monitor-scan",
                 max_instances=1,
                 coalesce=True,
                 misfire_grace_time=3600,

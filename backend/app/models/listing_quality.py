@@ -1,4 +1,4 @@
-"""Weekly listing-quality score snapshots."""
+"""Daily listing-quality snapshots (traffic lights per rule, R1)."""
 from __future__ import annotations
 
 import uuid
@@ -12,10 +12,10 @@ from app.db.base import Base
 
 
 class ListingQualitySnapshot(Base):
-    """Listing quality score (0-100) for one ASIN at one point in time.
+    """Listing quality score (0-100) for one ASIN on one day.
 
-    The live score is always computed on demand from warehouse data
-    (listing_quality_service); snapshots exist for week-over-week trends.
+    Written by the daily catalogue scan (catalog_monitor.scanner), one row per
+    ASIN per day.
     """
 
     __tablename__ = "listing_quality_snapshots"
@@ -33,7 +33,8 @@ class ListingQualitySnapshot(Base):
     snapshot_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
 
     score: Mapped[int] = mapped_column(Integer, nullable=False)
-    # Per-component detail: {component: {earned, max, detail}, ...}
+    # rules.evaluation_to_dict: {asin, state, score, results: [{key, state, mandatory,
+    # code, details}]}. Rows written before the daily scan: {component: {earned, max, detail}}.
     components: Mapped[dict] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
