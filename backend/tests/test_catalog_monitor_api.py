@@ -297,3 +297,59 @@ def test_quality_detail_and_export(monkeypatch, known_account):
     x = client.get("/catalog-monitor/quality/export", params={"account_id": str(ACCOUNT_ID)})
     assert x.status_code == 200 and x.content[:2] == b"PK"
     assert client.get("/catalog-monitor/quality/B0MISSING", params={"account_id": str(ACCOUNT_ID)}).status_code == 404
+
+
+def test_legacy_snapshot_without_results_is_unscanned():
+    items, unscanned = api.split_scanned(
+        [{"asin": "B0TEST0001", "score": 50, "components": {"title": {"earned": 1, "max": 2}}}]
+    )
+    assert items == [] and unscanned == 1
+
+
+def test_rule_alone_keeps_items_where_that_rule_is_not_green():
+    out = api.filter_items(_rows(), rule="title")
+    assert [i["asin"] for i in out] == ["B0TEST0002", "B0TEST0003", "B0TEST0005"]
+
+
+@pytest.mark.parametrize(
+    "rule_key,params",
+    [
+        ("title", {"max_length": "75"}),
+        ("title", {"max_length": 7.5}),
+        ("title", {"max_length": True}),
+        ("main_image", {"min_fill": "x"}),
+        ("attributes", {"recommended_attributes": "color"}),
+        ("attributes", {"recommended_attributes": ["color", 3]}),
+    ],
+)
+def test_validate_overrides_rejects_wrong_param_types(rule_key, params):
+    with pytest.raises(HTTPException) as exc:
+        api.validate_overrides([api.RuleOverrideIn(rule_key=rule_key, params=params)])
+    assert exc.value.status_code == 422
+
+
+def test_validate_overrides_accepts_numeric_float_and_string_lists():
+    api.validate_overrides([
+        api.RuleOverrideIn(rule_key="main_image", params={"min_fill": 1}),
+        api.RuleOverrideIn(rule_key="attributes", params={"recommended_attributes": ["color"]}),
+    ])
+
+
+_BODY = {"account_id": str(uuid4())}
+_ACCOUNT_ROUTES = [
+    ("get", "/catalog-monitor/quality", "params"),
+    ("get", "/catalog-monitor/quality/export", "params"),
+    ("get", "/catalog-monitor/quality/B0TEST0001", "params"),
+    ("put", "/catalog-monitor/keywords", {**_BODY, "items": []}),
+    ("post", "/catalog-monitor/scan", _BODY),
+    ("get", "/catalog-monitor/scan", "params"),
+    ("get", "/catalog-monitor/capabilities", "params"),
+    ("post", "/catalog-monitor/capabilities/check", _BODY),
+]
+
+
+@pytest.mark.parametrize("method,path,payload", _ACCOUNT_ROUTES)
+def test_every_account_route_404s_for_another_orgs_account(method, path, payload):
+    client, _ = _client(db=_FakeDb(scalar=None))
+    kwargs = {"params": _BODY} if payload == "params" else {"json": payload}
+    assert getattr(client, method)(path, **kwargs).status_code == 404

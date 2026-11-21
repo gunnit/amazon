@@ -8,6 +8,7 @@ summary logic stays pure.
 from __future__ import annotations
 
 import io
+import logging
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -45,7 +46,14 @@ from app.services.catalog_monitor.repository import CatalogMonitorRepository
 from app.services.catalog_monitor.rules import DEFAULT_RULES, RULE_KEYS
 from app.services.catalog_monitor.scanner import scan_state, start_account_scan
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# The quality list summarises, filters and sorts in memory: it loads one light row
+# (no ORM entities) per active product of the account on every request. That is fine
+# for catalogues of a few thousand ASINs; above this size move it into SQL.
+LARGE_CATALOG_ROWS = 10_000
 
 _STATE_ORDER = {"red": 0, "yellow": 1, "grey": 2, "green": 3}
 _STATES = ("green", "yellow", "red", "grey")
@@ -60,10 +68,15 @@ def split_scanned(rows: list[dict]) -> tuple[list[dict], int]:
     unscanned = 0
     for row in rows:
         comp = row.get("components")
-        if not isinstance(comp, dict) or row.get("score") is None:
+        # Legacy snapshots ({component: {earned, max}}) have no "results": not scanned.
+        if (
+            not isinstance(comp, dict)
+            or row.get("score") is None
+            or not isinstance(comp.get("results"), list)
+        ):
             unscanned += 1
             continue
-        results = comp.get("results") if isinstance(comp.get("results"), list) else []
+        results = comp["results"]
         items.append({
             "asin": row["asin"],
             "sku": row.get("sku"),
@@ -94,7 +107,8 @@ def filter_items(
     rule: Optional[str] = None,
     mandatory_only: bool = False,
 ) -> list[dict]:
-    """``state`` alone filters the overall state; with ``rule`` it filters that rule's state.
+    """``state`` alone filters the overall state; with ``rule`` it filters that rule's state;
+    ``rule`` alone keeps the items whose result for that rule is not green.
 
     ``mandatory_only`` trims each item's results to mandatory rules; the state is not recomputed.
     """
@@ -102,6 +116,9 @@ def filter_items(
     for item in items:
         if state and rule:
             if not any(r["key"] == rule and r["state"] == state for r in item["results"]):
+                continue
+        elif rule:
+            if not any(r["key"] == rule and r["state"] != "green" for r in item["results"]):
                 continue
         elif state and item["state"] != state:
             continue
@@ -115,6 +132,18 @@ def sort_items(items: list[dict]) -> list[dict]:
     return sorted(items, key=lambda i: (_STATE_ORDER.get(i["state"], 2), i["score"], i["asin"]))
 
 
+def _param_type_ok(default: Any, value: Any) -> bool:
+    if isinstance(default, bool):
+        return isinstance(value, bool)
+    if isinstance(default, int):
+        return isinstance(value, int) and not isinstance(value, bool)
+    if isinstance(default, float):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if isinstance(default, list):
+        return isinstance(value, list) and all(isinstance(v, str) for v in value)
+    return isinstance(value, type(default))
+
+
 def validate_overrides(overrides: list[RuleOverrideIn]) -> None:
     seen: set[tuple] = set()
     for o in overrides:
@@ -126,6 +155,12 @@ def validate_overrides(overrides: list[RuleOverrideIn]) -> None:
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 f"Unknown params for {o.rule_key}: {', '.join(sorted(unknown))}",
             )
+        for name, value in (o.params or {}).items():
+            if not _param_type_ok(DEFAULT_RULES[o.rule_key].params[name], value):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    f"Invalid value for {o.rule_key}.{name}",
+                )
         scope = (o.marketplace_id or "", o.product_type or "", o.rule_key)
         if scope in seen:
             raise HTTPException(
@@ -206,7 +241,17 @@ async def _load_quality_rows(
         .subquery()
     )
     stmt = (
-        select(Product, ListingQualitySnapshot)
+        select(
+            Product.asin,
+            Product.sku,
+            Product.title,
+            Product.main_keyword,
+            Product.main_keyword_source,
+            ListingQualitySnapshot.score,
+            ListingQualitySnapshot.components,
+            ListingQualitySnapshot.created_at,
+        )
+        .select_from(Product)
         .outerjoin(latest, latest.c.asin == Product.asin)
         .outerjoin(
             ListingQualitySnapshot,
@@ -223,18 +268,14 @@ async def _load_quality_rows(
         stmt = stmt.where(
             or_(Product.asin.ilike(like), Product.sku.ilike(like), Product.title.ilike(like))
         )
-    rows = []
-    for product, snap in (await db.execute(stmt)).all():
-        rows.append({
-            "asin": product.asin,
-            "sku": product.sku,
-            "title": product.title,
-            "main_keyword": product.main_keyword,
-            "main_keyword_source": product.main_keyword_source,
-            "score": snap.score if snap else None,
-            "components": snap.components if snap else None,
-            "created_at": snap.created_at if snap else None,
-        })
+    rows = [dict(r._mapping) for r in (await db.execute(stmt)).all()]
+    if len(rows) > LARGE_CATALOG_ROWS:
+        logger.warning(
+            "Quality list for account %s loads %d rows in memory (limit %d)",
+            account_id,
+            len(rows),
+            LARGE_CATALOG_ROWS,
+        )
     return rows
 
 
