@@ -123,3 +123,122 @@ class CapabilityResponse(BaseModel):
     results: dict
     vendor_code: Optional[str] = None
     checked_at: datetime
+
+
+# ---- content protection, variations and approvals (R2, R3) ----
+
+
+class AnomalyOut(BaseModel):
+    id: UUID
+    account_id: UUID
+    asin: str
+    title: Optional[str] = None
+    kind: str
+    field: str
+    status: str
+    baseline_value: Any = None
+    live_value: Any = None
+    detected_at: datetime
+    last_seen_at: datetime
+    change_request_id: Optional[UUID] = None
+
+
+class AnomalyRestoreRequest(BaseModel):
+    anomaly_ids: list[UUID] = Field(min_length=1)
+
+
+class RestoreNotice(BaseModel):
+    anomaly_id: UUID
+    asin: str
+    field: str
+    reason: str
+
+
+class ChangeRequestOut(BaseModel):
+    id: UUID
+    account_id: UUID
+    batch_id: UUID
+    asin: Optional[str] = None
+    sku: Optional[str] = None
+    kind: str
+    operation: str
+    product_type: Optional[str] = None
+    status: str
+    file_only: bool
+    summary: Any = None
+    validation_issues: Any = None
+    submission_result: Any = None
+    feed_id: Optional[str] = None
+    created_at: datetime
+    approved_at: Optional[datetime] = None
+    submitted_at: Optional[datetime] = None
+
+
+class ChangeBatchResponse(BaseModel):
+    batch_id: Optional[UUID] = None
+    requests: list[ChangeRequestOut]
+    not_restorable: list[RestoreNotice] = Field(default_factory=list)
+    skipped: list[RestoreNotice] = Field(default_factory=list)
+
+
+class FieldChangeOut(BaseModel):
+    field: str
+    change: str
+    baseline: Any = None
+    live: Any = None
+
+
+class HistoryVersionOut(BaseModel):
+    id: UUID
+    content_hash: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    changes: list[FieldChangeOut]
+
+
+class BaselineStatusResponse(BaseModel):
+    asins_with_baseline: int
+    asins_total: int
+    families: int
+
+
+class BaselinesRequest(BaseModel):
+    account_id: UUID
+    asins: Optional[list[str]] = None
+
+
+class BaselinesResponse(BaseModel):
+    count: int
+
+
+class VariationChildOut(BaseModel):
+    asin: str
+    state: str  # ok|detached|unexpected|unknown
+
+
+class VariationOut(BaseModel):
+    parent_asin: str
+    variation_theme: Optional[str] = None
+    status: str  # ok|partial|broken
+    children: list[VariationChildOut]
+    anomaly_ids: list[UUID]
+
+
+class VariationRestoreRequest(BaseModel):
+    account_id: UUID
+    parent_asin: str
+    child_asins: Optional[list[str]] = None
+
+
+class ChangeIdsRequest(BaseModel):
+    ids: list[UUID] = Field(min_length=1)
+
+
+class ChangeActionResponse(BaseModel):
+    requests: list[ChangeRequestOut]
+    skipped: dict[str, str] = Field(default_factory=dict)  # request id -> reason
+
+
+class RefreshFeedRequest(BaseModel):
+    account_id: UUID
+    feed_id: str

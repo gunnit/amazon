@@ -1,7 +1,7 @@
 # API surface
 > Generated from the source by `backend/scripts/gen_tech_docs.py`. Re-run it after changing the code; do not edit this page by hand.
 
-162 endpoints across 16 routers, all under `/api/v1`.
+176 endpoints across 16 routers, all under `/api/v1`.
 
 ## accounts
 
@@ -166,6 +166,20 @@ Prefix `/catalog-monitor`.
 | GET | `/catalog-monitor/scan` |
 | GET | `/catalog-monitor/capabilities` |
 | POST | `/catalog-monitor/capabilities/check` |
+| GET | `/catalog-monitor/anomalies` |
+| POST | `/catalog-monitor/anomalies/restore` |
+| POST | `/catalog-monitor/anomalies/{anomaly_id}/accept` |
+| GET | `/catalog-monitor/history/{asin}` |
+| GET | `/catalog-monitor/baselines/status` |
+| POST | `/catalog-monitor/baselines` |
+| GET | `/catalog-monitor/variations` |
+| POST | `/catalog-monitor/variations/restore` |
+| GET | `/catalog-monitor/changes` |
+| GET | `/catalog-monitor/changes/feed-file` |
+| POST | `/catalog-monitor/changes/approve` |
+| POST | `/catalog-monitor/changes/reject` |
+| POST | `/catalog-monitor/changes/submit` |
+| POST | `/catalog-monitor/changes/refresh-feed` |
 
 ## competitors
 

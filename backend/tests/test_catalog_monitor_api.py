@@ -127,6 +127,9 @@ class _FakeDb:
     async def commit(self):
         self.commits += 1
 
+    async def flush(self):
+        pass
+
 
 def _client(db=None, admin=True):
     db = db or _FakeDb()
@@ -353,3 +356,399 @@ def test_every_account_route_404s_for_another_orgs_account(method, path, payload
     client, _ = _client(db=_FakeDb(scalar=None))
     kwargs = {"params": _BODY} if payload == "params" else {"json": payload}
     assert getattr(client, method)(path, **kwargs).status_code == 404
+
+
+# ---- protection, variations and approvals (R2, R3) ----
+
+from app.models.amazon_account import AccountType  # noqa: E402
+from app.services.catalog_monitor.changes import ChangeItem  # noqa: E402
+from app.services.catalog_monitor.content import (  # noqa: E402
+    ImageRef,
+    ListingContent,
+    content_to_dict,
+)
+
+MP = "APJ6JRA9NG5V4"
+NOW = datetime(2026, 11, 21, 5, tzinfo=timezone.utc)
+
+
+def _anomaly(asin, kind="content_changed", field="title", status="open", base="old", live="new"):
+    return SimpleNamespace(
+        id=uuid4(), account_id=ACCOUNT_ID, asin=asin, kind=kind, field=field, status=status,
+        baseline_value=base, live_value=live, detected_at=NOW, last_seen_at=NOW,
+        change_request_id=None,
+    )
+
+
+def _baseline_row(asin, **kw):
+    content = ListingContent(
+        asin=asin, marketplace_id=MP, title="Base title", bullets=["b1", "b2"],
+        description="Base description", images=[ImageRef("MAIN", "https://x/1.jpg")], **kw,
+    )
+    return SimpleNamespace(content=content_to_dict(content))
+
+
+def _req(status="pending", batch=None, **kw):
+    base = dict(
+        id=uuid4(), account_id=ACCOUNT_ID, batch_id=batch or uuid4(), asin="B0TEST0001",
+        sku="TEST-SKU-001", kind="content_restore", operation="PATCH", product_type="LUGGAGE",
+        status=status, payload={"patches": [{"op": "replace", "path": "/attributes/x"}],
+                                "file_only": status == "file_only"},
+        summary={}, validation_issues=None, submission_result=None, feed_id=None,
+        created_at=NOW, approved_at=None, submitted_at=None,
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def test_restore_groups_fields_per_asin():
+    a1 = _anomaly("B0TEST0001", field="title")
+    a2 = _anomaly("B0TEST0001", field="bullets")
+    a3 = _anomaly("B0TEST0001", field="aplus", base=3, live=0)
+    a4 = _anomaly("B0TEST0002", field="description")
+    baselines = {"B0TEST0001": _baseline_row("B0TEST0001"), "B0TEST0002": _baseline_row("B0TEST0002")}
+    versions = {
+        "B0TEST0001": {"sku": "TEST-SKU-001", "product_type": "LUGGAGE"},
+        "B0TEST0002": {"product_type": None},
+    }
+    items, not_restorable, skipped = api.build_restore_items(
+        [a1, a2, a3, a4], baselines, versions, {"B0TEST0002": "TEST-SKU-002"}
+    )
+    assert [i.asin for i in items] == ["B0TEST0001", "B0TEST0002"]
+    first = items[0]
+    assert first.kind == "content_restore" and first.sku == "TEST-SKU-001"
+    assert first.product_type == "LUGGAGE"
+    assert [p["path"] for p in first.patches] == ["/attributes/item_name", "/attributes/bullet_point"]
+    assert first.anomalies == [a1, a2]
+    assert items[1].sku == "TEST-SKU-002"  # Product.sku when the version has none
+    assert [n["field"] for n in not_restorable] == ["aplus"] and not_restorable[0]["anomaly_id"] == a3.id
+    assert skipped == []
+
+
+def test_restore_skips_asins_without_baseline_or_without_restorable_field():
+    a = _anomaly("B0TEST0001", field="title")
+    b = _anomaly("B0TEST0002", field="aplus")
+    items, not_restorable, skipped = api.build_restore_items(
+        [a, b], {"B0TEST0002": _baseline_row("B0TEST0002")}, {}, {}
+    )
+    assert items == [] and len(not_restorable) == 1
+    assert [(s["asin"], s["reason"]) for s in skipped] == [("B0TEST0001", "no_baseline")]
+
+
+def test_restore_endpoint_creates_validates_and_links(monkeypatch, known_account):
+    a1 = _anomaly("B0TEST0001", field="title")
+    a_other_kind = _anomaly("B0TEST0001", kind="family_broken", field="parent:B0TEST0001")
+    seen = {}
+
+    async def _by_ids(db, organization_id, ids, lock=False):
+        assert lock is True
+        return [a1, a_other_kind]
+
+    async def _baselines(db, account_id):
+        return {"B0TEST0001": _baseline_row("B0TEST0001")}
+
+    async def _versions(db, account_id, asins):
+        return {"B0TEST0001": {"sku": "TEST-SKU-001", "product_type": "LUGGAGE"}}
+
+    async def _products(db, account_id, asins):
+        return {}
+
+    class _Svc:
+        def __init__(self, db):
+            pass
+
+        async def create(self, account, items, user_id, batch_id=None):
+            seen["items"] = items
+            for item in items:
+                for an in item.anomalies:
+                    an.status = "restore_requested"
+            return [_req(batch=uuid4())]
+
+        async def validate(self, account, requests):
+            seen["validated"] = list(requests)
+            for r in requests:
+                r.status = "valid"
+
+    monkeypatch.setattr(api, "_anomalies_by_ids", _by_ids)
+    monkeypatch.setattr(api, "_baselines", _baselines)
+    monkeypatch.setattr(api, "_latest_content_dicts", _versions)
+    monkeypatch.setattr(api, "_products_by_asin", _products)
+    monkeypatch.setattr(api, "ChangeRequestService", _Svc)
+    client, db = _client()
+    res = client.post(
+        "/catalog-monitor/anomalies/restore",
+        json={"anomaly_ids": [str(a1.id), str(a_other_kind.id)]},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["requests"][0]["status"] == "valid"
+    assert [s["reason"] for s in body["skipped"]] == ["not_content_anomaly"]
+    assert len(seen["items"]) == 1 and a1.status == "restore_requested"
+    assert db.commits == 1
+
+
+def test_reopen_anomalies_clears_link_only_for_restore_requested():
+    pending = _anomaly("B0TEST0001", status="restore_requested")
+    pending.change_request_id = uuid4()
+    resolved = _anomaly("B0TEST0002", status="resolved")
+    resolved.change_request_id = uuid4()
+    api.reopen_anomalies([pending, resolved])
+    assert (pending.status, pending.change_request_id) == ("open", None)
+    assert resolved.status == "resolved" and resolved.change_request_id is not None
+
+
+def test_variations_status_from_anomalies():
+    family = SimpleNamespace(
+        parent_asin="B0TEST0010", variation_theme="SIZE_NAME",
+        child_asins=["B0TEST0011", "B0TEST0012", "B0TEST0013"],
+    )
+    detached = _anomaly("B0TEST0011", "child_detached", "parent:B0TEST0010")
+    unexpected = _anomaly("B0TEST0099", "unexpected_child", "parent:B0TEST0010")
+    resolved = _anomaly("B0TEST0012", "child_detached", "parent:B0TEST0010", status="resolved")
+    other_family = _anomaly("B0TEST0050", "child_detached", "parent:B0TEST0020")
+    out = api.build_variations(
+        [family], [detached, unexpected, resolved, other_family], {"B0TEST0011", "B0TEST0012"}
+    )[0]
+    assert out["status"] == "partial"
+    assert {c["asin"]: c["state"] for c in out["children"]} == {
+        "B0TEST0011": "detached", "B0TEST0012": "ok", "B0TEST0013": "unknown",
+        "B0TEST0099": "unexpected",
+    }
+    assert out["anomaly_ids"] == [detached.id, unexpected.id]
+    broken = _anomaly("B0TEST0010", "family_broken", "parent:B0TEST0010")
+    assert api.build_variations([family], [broken, detached], set())[0]["status"] == "broken"
+    assert api.build_variations([family], [], {"B0TEST0011"})[0]["status"] == "ok"
+
+
+def test_variation_restore_items_use_parent_sku_and_flag_missing_skus():
+    items, parent_missing = api.build_variation_items(
+        "B0TEST0010", "SIZE_NAME", MP, "TEST-SKU-010",
+        [("B0TEST0011", "TEST-SKU-011", "LUGGAGE")],
+        {"B0TEST0011": [_anomaly("B0TEST0011", "child_detached", "parent:B0TEST0010")]},
+    )
+    assert not parent_missing
+    item = items[0]
+    assert item.kind == "variation_restore" and item.sku == "TEST-SKU-011"
+    assert item.patches[1]["value"][0]["parent_sku"] == "TEST-SKU-010"
+    assert len(item.anomalies) == 1
+    _, parent_missing = api.build_variation_items(
+        "B0TEST0010", None, MP, None, [("B0TEST0011", "TEST-SKU-011", None)], {}
+    )
+    assert parent_missing
+
+
+def test_variation_restore_endpoint_marks_missing_sku_file_only(monkeypatch):
+    async def _account(db, organization_id, account_id):
+        return SimpleNamespace(id=account_id, organization_id=organization_id, marketplace_id=MP)
+
+    monkeypatch.setattr(api, "_account_or_404", _account)
+    detached = _anomaly("B0TEST0011", "child_detached", "parent:B0TEST0010")
+    created = []
+
+    async def _families(db, account_id):
+        return [SimpleNamespace(parent_asin="B0TEST0010", variation_theme="SIZE_NAME",
+                                child_asins=["B0TEST0011"])]
+
+    async def _anoms(db, account_id):
+        return [detached]
+
+    async def _content(db, account_id, asins):
+        return {a: {"product_type": "LUGGAGE", "sku": None} for a in asins}
+
+    async def _products(db, account_id, asins):
+        return {"B0TEST0011": SimpleNamespace(sku="TEST-SKU-011")}
+
+    class _Svc:
+        def __init__(self, db):
+            pass
+
+        async def create(self, account, items, user_id, batch_id=None):
+            created.extend(items)
+            return [_req(status="pending", kind="variation_restore")]
+
+        async def validate(self, account, requests):
+            pass
+
+    monkeypatch.setattr(api, "_family_baselines", _families)
+    monkeypatch.setattr(api, "_variation_anomalies", _anoms)
+    monkeypatch.setattr(api, "_latest_content_dicts", _content)
+    monkeypatch.setattr(api, "_products_by_asin", _products)
+    monkeypatch.setattr(api, "ChangeRequestService", _Svc)
+    client, _ = _client()
+    res = client.post(
+        "/catalog-monitor/variations/restore",
+        json={"account_id": str(ACCOUNT_ID), "parent_asin": "B0TEST0010"},
+    )
+    assert res.status_code == 200, res.text
+    assert [i.asin for i in created] == ["B0TEST0011"]
+    # the parent has no SKU anywhere: the request is a file, never an API write
+    assert res.json()["requests"][0]["file_only"] is True
+
+
+def test_history_lists_newest_first_with_changes_against_previous_version():
+    def version(title, day):
+        content = ListingContent(asin="B0TEST0001", marketplace_id=MP, title=title)
+        return SimpleNamespace(
+            id=uuid4(), content_hash=title, content=content_to_dict(content),
+            first_seen_at=datetime(2026, 11, day, tzinfo=timezone.utc),
+            last_seen_at=datetime(2026, 11, day, tzinfo=timezone.utc),
+        )
+
+    newest, middle, oldest = version("C", 20), version("B", 10), version("A", 1)
+    out = api.build_history([newest, middle, oldest])
+    assert [v["content_hash"] for v in out] == ["C", "B", "A"]
+    assert out[2]["changes"] == []
+    assert out[1]["changes"][0]["field"] == "title" and out[1]["changes"][0]["baseline"] == "A"
+    assert out[0]["changes"][0]["live"] == "C"
+
+
+def test_submit_requires_admin():
+    client, _ = _client(db=_FakeDb(row=(ORG, UserRole.MEMBER)), admin=False)
+    for action in ("submit", "approve", "refresh-feed"):
+        body = {"ids": [str(uuid4())]} if action != "refresh-feed" else {
+            "account_id": str(ACCOUNT_ID), "feed_id": "F1"}
+        assert client.post(f"/catalog-monitor/changes/{action}", json=body).status_code == 403
+
+
+def _approval_app(monkeypatch, rows):
+    async def _lock(db, organization_id, ids):
+        return [r for r in rows if r.id in set(ids)]
+
+    async def _account(db, organization_id, account_id):
+        return SimpleNamespace(id=account_id, organization_id=organization_id,
+                               marketplace_id=MP, account_type=AccountType.SELLER)
+
+    async def _reopen(db, requests):
+        _reopen.seen = [r.id for r in requests]
+
+    monkeypatch.setattr(api, "_requests_for_update", _lock)
+    monkeypatch.setattr(api, "_account_or_404", _account)
+    monkeypatch.setattr(api, "_reopen_for_requests", _reopen)
+    return _reopen
+
+
+def test_approve_skips_requests_in_other_statuses(monkeypatch):
+    valid, invalid = _req("valid"), _req("invalid")
+    _approval_app(monkeypatch, [valid, invalid])
+    client, db = _client()
+    missing = uuid4()
+    res = client.post(
+        "/catalog-monitor/changes/approve",
+        json={"ids": [str(valid.id), str(invalid.id), str(missing)]},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert valid.status == "approved" and invalid.status == "invalid"
+    assert body["skipped"] == {str(invalid.id): "status_invalid", str(missing): "not_found"}
+    assert db.commits == 1
+
+
+def test_reject_reopens_the_anomalies_of_rejected_requests(monkeypatch):
+    pending, sent = _req("pending"), _req("accepted")
+    reopen = _approval_app(monkeypatch, [pending, sent])
+    client, _ = _client()
+    res = client.post(
+        "/catalog-monitor/changes/reject", json={"ids": [str(pending.id), str(sent.id)]}
+    )
+    assert res.status_code == 200, res.text
+    assert pending.status == "rejected" and sent.status == "accepted"
+    assert res.json()["skipped"] == {str(sent.id): "status_accepted"}
+    assert pending.id in reopen.seen
+
+
+def test_submit_reopens_failed_restores_and_skips_file_only(monkeypatch):
+    approved, file_only = _req("approved"), _req("approved", payload={"patches": [], "file_only": True})
+    reopen = _approval_app(monkeypatch, [approved, file_only])
+
+    class _Svc:
+        def __init__(self, db):
+            pass
+
+        async def submit(self, account, requests):
+            for r in requests:
+                r.status = "failed"
+
+    monkeypatch.setattr(api, "ChangeRequestService", _Svc)
+    client, _ = _client()
+    res = client.post(
+        "/catalog-monitor/changes/submit", json={"ids": [str(approved.id), str(file_only.id)]}
+    )
+    assert res.status_code == 200, res.text
+    assert approved.status == "failed" and file_only.status == "approved"
+    assert res.json()["skipped"] == {str(file_only.id): "file_only"}
+    assert approved.id in reopen.seen
+
+
+def test_feed_file_contains_only_batch_requests(monkeypatch):
+    batch = uuid4()
+    approved = _req("approved", batch=batch, sku="TEST-SKU-001")
+    file_only = _req("file_only", batch=batch, sku="TEST-SKU-002")
+    no_sku = _req("file_only", batch=batch, sku=None)
+    pending = _req("pending", batch=batch, sku="TEST-SKU-003")
+
+    async def _batch(db, organization_id, batch_id):
+        assert batch_id == batch  # requests of other batches are never loaded
+        return [approved, file_only, no_sku, pending]
+
+    async def _account(db, organization_id, account_id):
+        return SimpleNamespace(id=account_id, organization_id=organization_id,
+                               marketplace_id=MP, account_type=AccountType.SELLER)
+
+    async def _capability(db, account_id):
+        return None
+
+    monkeypatch.setattr(api, "_batch_requests", _batch)
+    monkeypatch.setattr(api, "_account_or_404", _account)
+    monkeypatch.setattr(api, "_stored_capability", _capability)
+    monkeypatch.setattr(api, "listing_seller_id", lambda account, cap: "SELLER1")
+    client, _ = _client()
+    res = client.get("/catalog-monitor/changes/feed-file", params={"batch_id": str(batch)})
+    assert res.status_code == 200, res.text
+    assert res.headers["content-disposition"] == f'attachment; filename="listings-feed-{batch}.json"'
+    document = res.json()
+    assert [m["sku"] for m in document["messages"]] == ["TEST-SKU-001", "TEST-SKU-002"]
+    assert document["header"]["sellerId"] == "SELLER1"
+    assert res.headers["x-skipped-requests"] == str(no_sku.id)
+
+
+def test_feed_file_404_when_batch_has_no_downloadable_request(monkeypatch):
+    async def _batch(db, organization_id, batch_id):
+        return [_req("pending")]
+
+    monkeypatch.setattr(api, "_batch_requests", _batch)
+    client, _ = _client()
+    assert client.get(
+        "/catalog-monitor/changes/feed-file", params={"batch_id": str(uuid4())}
+    ).status_code == 404
+
+
+def test_new_account_routes_404_for_another_orgs_account():
+    client, _ = _client(db=_FakeDb(scalar=None))
+    other = {"account_id": str(uuid4())}
+    for method, path, kwargs in [
+        ("get", "/catalog-monitor/anomalies", {"params": other}),
+        ("get", "/catalog-monitor/history/B0TEST0001", {"params": other}),
+        ("get", "/catalog-monitor/baselines/status", {"params": other}),
+        ("post", "/catalog-monitor/baselines", {"json": other}),
+        ("get", "/catalog-monitor/variations", {"params": other}),
+        ("post", "/catalog-monitor/variations/restore", {"json": {**other, "parent_asin": "B0TEST0010"}}),
+        ("get", "/catalog-monitor/changes", {"params": other}),
+        ("post", "/catalog-monitor/changes/refresh-feed", {"json": {**other, "feed_id": "F1"}}),
+    ]:
+        assert getattr(client, method)(path, **kwargs).status_code == 404, path
+
+
+def test_locked_request_load_uses_for_update_in_postgres():
+    from sqlalchemy.dialects import postgresql
+
+    captured = {}
+
+    class _Db:
+        async def execute(self, statement):
+            captured["sql"] = str(statement.compile(dialect=postgresql.dialect()))
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+
+    import asyncio
+
+    asyncio.run(api._requests_for_update(_Db(), uuid4(), [uuid4()]))
+    assert "FOR UPDATE" in captured["sql"] and "organization_id" in captured["sql"]
