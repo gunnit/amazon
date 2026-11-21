@@ -14,8 +14,11 @@ first checked it with ``mode="VALIDATION_PREVIEW"`` and an admin approved it:
 
 A file-only request is never validated or submitted through the API, also once
 approved (``payload["file_only"]`` keeps the mark): ``build_listings_feed`` turns
-it into a file for a manual upload. Patches never erase content: an empty value
-gives no operation, except image slots beyond a new image list, which are deleted.
+it into a file for a manual upload; ``submit`` also requires a passed validation.
+Patches never erase content: an empty value gives no operation. The only deletes
+are image slots past a new image list that the live listing fills, scoped to one
+marketplace; Vendor accounts cannot delete attribute values, so ``create`` drops
+them and lists them in ``summary["manual_image_removal"]``.
 Amazon errors become issues on the request; requests handed to ``validate`` or
 ``submit`` must belong to the given account. Service methods flush, callers commit.
 """
@@ -30,6 +33,7 @@ from typing import Any, Iterable, Literal, Optional
 from uuid import UUID
 
 from app.config import settings
+from app.models.amazon_account import AccountType
 from app.models.catalog_monitor import CatalogAnomaly, CatalogChangeRequest
 from app.services.catalog_monitor.capabilities import listing_seller_id
 from app.services.catalog_monitor.clients import (
@@ -93,9 +97,13 @@ def _clean(value: Any) -> Optional[str]:
     return text or None
 
 
-def _image_patches(urls: Iterable[Any], marketplace_id: str) -> list[dict]:
-    """Main image plus up to 8 others, in order; slots past the list are deleted.
+def _image_patches(
+    urls: Iterable[Any], marketplace_id: str, existing_image_slots: int
+) -> list[dict]:
+    """Main image plus up to 8 others, in order.
 
+    A slot past the new list is deleted only when the live listing fills it
+    (``existing_image_slots`` other images), and only for this marketplace.
     Listings Items holds nine images, so URLs past the ninth are ignored.
     """
     clean = [url for url in (_clean(u) for u in urls or []) if url]
@@ -111,18 +119,28 @@ def _image_patches(urls: Iterable[Any], marketplace_id: str) -> list[dict]:
         name = f"other_product_image_locator_{n}"
         if n <= len(others):
             patches.append(_replace(name, locator(others[n - 1])))
-        else:
-            patches.append({"op": "delete", "path": f"/attributes/{name}"})
+        elif n <= existing_image_slots:
+            patches.append(
+                {
+                    "op": "delete",
+                    "path": f"/attributes/{name}",
+                    "value": [{"marketplace_id": marketplace_id}],
+                }
+            )
     return patches
 
 
-def patches_from_content(fields: dict[str, Any], marketplace_id: str) -> list[dict]:
+def patches_from_content(
+    fields: dict[str, Any], marketplace_id: str, existing_image_slots: int = 0
+) -> list[dict]:
     """``replace`` operations for the given content fields, in the given order.
 
     Keys: title, bullets (list), description, backend_keywords, item_highlights,
     images (URLs, main first) and ``attribute:<name>`` (the raw Amazon value list).
     Empty values give no operation; blank bullets are dropped. Unknown keys raise
-    ``ValueError``.
+    ``ValueError``. ``existing_image_slots`` is how many other images the live
+    listing has: only those slots past the new image list are deleted (none by
+    default).
     """
     patches: list[dict] = []
     for key, value in fields.items():
@@ -137,7 +155,7 @@ def patches_from_content(fields: dict[str, Any], marketplace_id: str) -> list[di
                     _replace("bullet_point", [text_value(b, marketplace_id)[0] for b in bullets])
                 )
         elif key == "images":
-            patches += _image_patches(value, marketplace_id)
+            patches += _image_patches(value, marketplace_id, existing_image_slots)
         elif key.startswith(_ATTRIBUTE_PREFIX) and len(key) > len(_ATTRIBUTE_PREFIX):
             if not value:
                 continue
@@ -149,12 +167,15 @@ def patches_from_content(fields: dict[str, Any], marketplace_id: str) -> list[di
     return patches
 
 
-def restore_patches(baseline: ListingContent, fields: list[str]) -> list[dict]:
+def restore_patches(
+    baseline: ListingContent, fields: list[str], existing_image_slots: int = 0
+) -> list[dict]:
     """Patches that put the baseline value of each field back.
 
     ``fields`` are anomaly fields (title, bullets, description, images,
     backend_keywords, item_highlights, attribute:<name>). A+ is skipped (restored
     by hand); a field the baseline does not hold gives no patch.
+    ``existing_image_slots`` as in ``patches_from_content``.
     """
     values: dict[str, Any] = {}
     for name in fields:
@@ -170,7 +191,7 @@ def restore_patches(baseline: ListingContent, fields: list[str]) -> list[dict]:
             values[name] = baseline.attributes.get(name[len(_ATTRIBUTE_PREFIX) :])
         else:
             raise ValueError(f"cannot restore field {name!r}")
-    return patches_from_content(values, baseline.marketplace_id)
+    return patches_from_content(values, baseline.marketplace_id, existing_image_slots)
 
 
 def variation_patches(parent_sku: str, theme: Optional[str], marketplace_id: str) -> list[dict]:
@@ -218,6 +239,22 @@ def is_file_only(request: CatalogChangeRequest) -> bool:
     return request.status == "file_only" or bool((request.payload or {}).get("file_only"))
 
 
+def can_approve(request: CatalogChangeRequest) -> bool:
+    """Valid and file-only requests can be approved."""
+    return request.status in _APPROVABLE
+
+
+def can_reject(request: CatalogChangeRequest) -> bool:
+    """Anything not yet sent to Amazon can be rejected."""
+    return request.status in _REJECTABLE
+
+
+def _passed_validation(request: CatalogChangeRequest) -> bool:
+    """Amazon checked the request with VALIDATION_PREVIEW and found no error."""
+    issues = request.validation_issues
+    return isinstance(issues, list) and not _has_error(issues)
+
+
 @dataclass
 class ListingsFeed:
     document: dict  # JSON_LISTINGS_FEED body: upload as is, or offer as a download
@@ -234,10 +271,10 @@ def build_listings_feed(
     message_ids: dict[UUID, int] = {}
     skipped: dict[UUID, str] = {}
     for request in requests:
-        if not request.sku:
+        if not _clean(request.sku):
             skipped[request.id] = "no_sku"
             continue
-        if not request.product_type:
+        if not _clean(request.product_type):
             skipped[request.id] = "no_product_type"
             continue
         payload = request.payload or {}
@@ -296,6 +333,10 @@ def _now() -> datetime:
 
 
 def _send(client: Any, seller_id: str, request: CatalogChangeRequest, mode: Optional[str]) -> dict:
+    if not _clean(request.sku):
+        raise ValueError("The request has no SKU")
+    if not _clean(request.product_type):
+        raise ValueError("The request has no product type")
     payload = request.payload or {}
     if request.operation == "PUT":
         response = client.put_listing(
@@ -357,18 +398,30 @@ class ChangeRequestService:
         user_id: Optional[UUID],
         batch_id: Optional[UUID] = None,
     ) -> list[CatalogChangeRequest]:
-        """One pending (or file-only) request per item, all in one batch."""
+        """One pending (or file-only) request per item, all in one batch.
+
+        Vendor accounts cannot delete attribute values: their ``delete`` ops are
+        dropped and listed in ``summary["manual_image_removal"]``.
+        """
         for item in items:
             _check_item(item)
         batch_id = batch_id or uuid.uuid4()
         seller_id = await self._seller_id(account)
+        vendor = account.account_type == AccountType.VENDOR
         rows: list[CatalogChangeRequest] = []
         for item in items:
             file_only = not seller_id or not item.sku
+            summary = dict(item.summary)
             if item.operation == "PUT":
                 payload: dict[str, Any] = {"attributes": dict(item.attributes or {})}
             else:
-                payload = {"patches": list(item.patches)}
+                patches = list(item.patches)
+                if vendor:
+                    removed = [p.get("path") for p in patches if p.get("op") == "delete"]
+                    patches = [p for p in patches if p.get("op") != "delete"]
+                    if removed:
+                        summary["manual_image_removal"] = removed
+                payload = {"patches": patches}
             payload["file_only"] = file_only
             row = CatalogChangeRequest(
                 id=uuid.uuid4(),
@@ -381,7 +434,7 @@ class ChangeRequestService:
                 operation=item.operation,
                 product_type=item.product_type,
                 payload=payload,
-                summary=dict(item.summary),
+                summary=summary,
                 status="file_only" if file_only else "pending",
                 created_by_user_id=user_id,
             )
@@ -425,7 +478,7 @@ class ChangeRequestService:
     ) -> tuple[list[dict], bool]:
         if not seller_id:
             return [_no_listing_access()], False
-        if not request.product_type:
+        if not _clean(request.product_type):
             return [_issue("MISSING_PRODUCT_TYPE", "The product type is unknown")], False
         try:
             response = await asyncio.to_thread(
@@ -435,8 +488,9 @@ class ChangeRequestService:
             return [_api_error(exc)], False
         issues = _issues(response)
         status = response.get("status")
-        ok = status in ("VALID", "ACCEPTED") and not _has_error(issues)
-        if not ok and not _has_error(issues):
+        # A preview answers VALID or INVALID; anything else (ACCEPTED included) is an error.
+        ok = status == "VALID" and not _has_error(issues)
+        if status not in ("VALID", "INVALID") or (not ok and not _has_error(issues)):
             issues.append(_issue("UNEXPECTED_STATUS", f"Amazon answered status {status!r}"))
         return issues, ok
 
@@ -448,7 +502,7 @@ class ChangeRequestService:
             raise PermissionError("Only an admin can approve catalogue changes")
         now = _now()
         for request in requests:
-            if request.status in _APPROVABLE:
+            if can_approve(request):
                 request.status = "approved"
                 request.approved_by_user_id = user_id
                 request.approved_at = now
@@ -458,7 +512,7 @@ class ChangeRequestService:
         """Reject requests not yet sent to Amazon; who and when go in ``submission_result``."""
         now = _now()
         for request in requests:
-            if request.status in _REJECTABLE:
+            if can_reject(request):
                 request.status = "rejected"
                 request.submission_result = {
                     "rejected_by": str(user_id) if user_id else None,
@@ -467,8 +521,14 @@ class ChangeRequestService:
         await self.db.flush()
 
     async def submit(self, account, requests: list[CatalogChangeRequest]) -> None:
-        """Send approved API requests; never raises for Amazon errors (they fail the request)."""
-        todo = [r for r in requests if r.status == "approved" and not is_file_only(r)]
+        """Send approved API requests that passed validation.
+
+        Never raises for Amazon errors: they fail the request.
+        """
+        todo = [
+            r for r in requests
+            if r.status == "approved" and not is_file_only(r) and _passed_validation(r)
+        ]
         if not todo:
             return
         _check_account(account, todo)
@@ -500,12 +560,14 @@ class ChangeRequestService:
                 continue
             issues = _issues(response)
             status = response.get("status")
+            ok = status == "ACCEPTED" and not _has_error(issues)
+            if not ok and not _has_error(issues):
+                issues.append(_issue("UNEXPECTED_STATUS", f"Amazon answered status {status!r}"))
             request.submission_result = {
                 "status": status,
                 "submissionId": response.get("submissionId"),
                 "issues": issues,
             }
-            ok = status == "ACCEPTED" and not _has_error(issues)
             request.status = "accepted" if ok else "failed"
 
     async def _submit_feed(

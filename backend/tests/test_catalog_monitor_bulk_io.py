@@ -8,6 +8,7 @@ import io
 from openpyxl import Workbook, load_workbook
 
 from app.models.product import Product
+from app.services.catalog_monitor import bulk_io
 from app.services.catalog_monitor.bulk_io import (
     EXPORT_COLUMNS,
     LIMITS,
@@ -147,6 +148,52 @@ def test_images_merged_per_slot():
     assert paths["/attributes/main_product_image_locator"]["value"][0]["media_location"].endswith("main.jpg")
     assert paths["/attributes/other_product_image_locator_1"]["value"][0]["media_location"].endswith("new.jpg")
     assert paths["/attributes/other_product_image_locator_2"]["value"][0]["media_location"].endswith("2.jpg")
+
+
+def _six_live_images():
+    return _content(
+        images=[ImageRef("MAIN", "https://img.test/main.jpg")]
+        + [ImageRef(f"PT0{n}", f"https://img.test/{n}.jpg") for n in range(1, 6)]
+    )
+
+
+def test_partial_image_upload_deletes_no_slot_the_live_listing_leaves_empty():
+    """6 live images, a row with 3 image cells: slots are merged, slots 6..8 stay untouched."""
+    row = parse_upload(
+        _xlsx(
+            ["asin", "main_image_url", "image_1", "image_2"],
+            [["B0TEST0001", "https://img.test/m2.jpg", "https://img.test/n1.jpg",
+              "https://img.test/n2.jpg"]],
+        ),
+        "u.xlsx",
+    )[0]
+    item = row_to_change_item(row, _six_live_images(), MKT)
+    assert [p["op"] for p in item.patches] == ["replace"] * 6
+    assert [p["path"].rsplit("/", 1)[1] for p in item.patches] == (
+        ["main_product_image_locator"] + [f"other_product_image_locator_{n}" for n in range(1, 6)]
+    )
+
+
+def test_image_deletes_are_bounded_by_the_live_image_count(monkeypatch):
+    """The live listing's other images (5 of 6) bound the deletes: MAIN + 2 others deletes 3..5."""
+    seen = []
+    real = bulk_io.patches_from_content
+
+    def spy(fields, marketplace_id, existing_image_slots=0):
+        seen.append(existing_image_slots)
+        return real(fields, marketplace_id, existing_image_slots)
+
+    monkeypatch.setattr(bulk_io, "patches_from_content", spy)
+    row = parse_upload(
+        _xlsx(["asin", "image_1"], [["B0TEST0001", "https://img.test/new.jpg"]]), "u.xlsx"
+    )[0]
+    row_to_change_item(row, _six_live_images(), MKT)
+    row_to_change_item(row, None, MKT)
+    assert seen == [5, 0]
+
+    three = ["https://img.test/m.jpg", "https://img.test/a.jpg", "https://img.test/b.jpg"]
+    deletes = [p["path"] for p in real({"images": three}, MKT, seen[0]) if p["op"] == "delete"]
+    assert deletes == [f"/attributes/other_product_image_locator_{n}" for n in (3, 4, 5)]
 
 
 def test_attribute_change_and_main_keyword_ignored():

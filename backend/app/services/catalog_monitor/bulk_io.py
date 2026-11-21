@@ -372,12 +372,14 @@ def row_to_change_item(
 
     if not fields:
         return None
+    # Only image slots the live listing fills may be deleted.
+    live_other_images = sum(1 for url in _live_image_slots(live)[1:] if url)
     return ChangeItem(
         asin=row.asin or (live.asin if live else None),
         sku=row.sku or (live.sku if live else None),
         product_type=row.product_type or (live.product_type if live else None),
         kind="bulk_update",
-        patches=patches_from_content(fields, marketplace_id),
+        patches=patches_from_content(fields, marketplace_id, live_other_images),
         summary={"fields": summary},
     )
 

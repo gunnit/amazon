@@ -19,6 +19,8 @@ from app.services.catalog_monitor.changes import (
     ChangeItem,
     ChangeRequestService,
     build_listings_feed,
+    can_approve,
+    can_reject,
     is_file_only,
     patches_from_content,
     restore_patches,
@@ -193,24 +195,49 @@ def test_text_value_carries_language_and_marketplace():
     }
 
 
+URLS = ["https://img.test/m.jpg", "https://img.test/1.jpg", "https://img.test/2.jpg"]
+
+
+def _deleted_slots(patches):
+    return [
+        int(p["path"].rsplit("_", 1)[1]) for p in patches if p["op"] == "delete"
+    ]
+
+
 def test_images_patch_deletes_missing_slots():
-    urls = ["https://img.test/m.jpg", "https://img.test/1.jpg", "https://img.test/2.jpg"]
-    patches = patches_from_content({"images": urls}, MKT)
+    """Deletes are scoped to one marketplace, so a pan-EU listing keeps its other images."""
+    patches = patches_from_content({"images": URLS}, MKT, existing_image_slots=8)
     by_path = {p["path"]: p for p in patches}
 
     assert len(patches) == 9
     assert by_path["/attributes/main_product_image_locator"] == {
         "op": "replace",
         "path": "/attributes/main_product_image_locator",
-        "value": [{"media_location": urls[0], "marketplace_id": MKT}],
+        "value": [{"media_location": URLS[0], "marketplace_id": MKT}],
     }
-    for n, url in ((1, urls[1]), (2, urls[2])):
+    for n, url in ((1, URLS[1]), (2, URLS[2])):
         assert by_path[f"/attributes/other_product_image_locator_{n}"]["value"] == [
             {"media_location": url, "marketplace_id": MKT}
         ]
     for n in range(3, 9):
         path = f"/attributes/other_product_image_locator_{n}"
-        assert by_path[path] == {"op": "delete", "path": path}
+        assert by_path[path] == {
+            "op": "delete", "path": path, "value": [{"marketplace_id": MKT}]
+        }
+
+
+def test_no_image_deletes_without_existing_slots():
+    patches = patches_from_content({"images": URLS}, MKT)
+    assert [p["op"] for p in patches] == ["replace"] * 3
+    assert _deleted_slots(patches) == []
+
+
+def test_image_deletes_only_up_to_existing_slots():
+    patches = patches_from_content({"images": URLS}, MKT, existing_image_slots=5)
+    assert _deleted_slots(patches) == [3, 4, 5]
+    # A new list as long as the live one deletes nothing.
+    five = URLS + ["https://img.test/3.jpg", "https://img.test/4.jpg", "https://img.test/5.jpg"]
+    assert _deleted_slots(patches_from_content({"images": five}, MKT, 5)) == []
 
 
 def test_patches_from_content_maps_every_field_to_its_attribute():
@@ -293,6 +320,9 @@ def test_restore_patches_put_back_baseline_values():
     # A+ is restored by hand; a field the baseline lacks gives no patch.
     assert "/attributes/product_description" not in by_path
     assert not any("aplus" in p["path"] for p in patches)
+    assert _deleted_slots(patches) == []
+    # Live images past the baseline's are deleted only when the caller says they exist.
+    assert _deleted_slots(restore_patches(baseline, ["images"], existing_image_slots=3)) == [2, 3]
     with pytest.raises(ValueError):
         restore_patches(baseline, ["shipping"])
 
@@ -346,6 +376,26 @@ async def test_vendor_with_vendor_code_writes_through_listings():
     assert rows[0].status == "pending"
     await svc.validate(_vendor(), rows)
     assert client.calls[0][1] == VENDOR_CODE
+
+
+@pytest.mark.asyncio
+async def test_vendor_create_strips_deletes_and_records_manual_image_removal():
+    """Amazon does not let vendors delete attribute values: the deletes become manual work."""
+    patches = patches_from_content({"images": URLS}, MKT, existing_image_slots=5)
+    paths = [f"/attributes/other_product_image_locator_{n}" for n in (3, 4, 5)]
+    item = _item(1, patches=patches, summary={"fields": {"images": {}}})
+    text_only = _item(2)
+
+    svc, _, _ = _service(repo=FakeRepo(vendor_code=VENDOR_CODE))
+    vendor_rows = await svc.create(_vendor(), [item, text_only], USER)
+    assert [p["op"] for p in vendor_rows[0].payload["patches"]] == ["replace"] * 3
+    assert vendor_rows[0].summary == {"fields": {"images": {}}, "manual_image_removal": paths}
+    assert "manual_image_removal" not in vendor_rows[1].summary
+
+    svc, _, _ = _service()
+    [seller_row] = await svc.create(_seller(), [item], USER)
+    assert seller_row.payload["patches"] == patches
+    assert "manual_image_removal" not in seller_row.summary
 
 
 @pytest.mark.asyncio
@@ -427,6 +477,30 @@ async def test_validate_turns_api_errors_into_issues_and_never_raises():
 
 
 @pytest.mark.asyncio
+async def test_validate_treats_a_preview_answering_accepted_as_invalid():
+    client = FakeClient(
+        responses={(_sku(1), "VALIDATION_PREVIEW"): {"status": "ACCEPTED", "issues": []}}
+    )
+    svc, _, _ = _service(client)
+    rows = await svc.create(_seller(), [_item(1)], USER)
+    await svc.validate(_seller(), rows)
+    assert rows[0].status == "invalid"
+    assert [(i["code"], i["severity"]) for i in rows[0].validation_issues] == [
+        ("UNEXPECTED_STATUS", "ERROR")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_validate_refuses_a_blank_sku_without_calling_amazon():
+    svc, client, _ = _service()
+    rows = await svc.create(_seller(), [_item(1, sku="   "), _item(2, product_type=" ")], USER)
+    await svc.validate(_seller(), rows)
+    assert [r.status for r in rows] == ["invalid", "invalid"]
+    assert all(r.validation_issues[0]["severity"] == "ERROR" for r in rows)
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_validate_put_uses_validation_preview():
     attrs = {"item_name": text_value("Nuovo", MKT)}
     svc, client, _ = _service()
@@ -460,6 +534,20 @@ async def test_approve_requires_admin():
     assert rows[1].approved_by_user_id is None
     # An approved file-only request stays file only: it is exported, never sent.
     assert is_file_only(rows[2]) and not is_file_only(rows[0])
+
+
+def test_can_approve_and_can_reject():
+    def row(status):
+        return CatalogChangeRequest(status=status)
+
+    approvable = {"valid", "file_only"}
+    rejectable = {"pending", "valid", "invalid", "approved", "file_only"}
+    for status in (
+        "pending", "valid", "invalid", "approved", "rejected", "submitted", "accepted",
+        "failed", "file_only",
+    ):
+        assert can_approve(row(status)) is (status in approvable)
+        assert can_reject(row(status)) is (status in rejectable)
 
 
 @pytest.mark.asyncio
@@ -502,6 +590,29 @@ async def test_submit_small_batch_patches_each():
         ("patch", _sku(1), None), ("patch", _sku(2), None), ("patch", _sku(3), None)
     ]
     assert db.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_fails_a_live_answer_that_is_not_accepted():
+    client = FakeClient(responses={(_sku(1), None): {"status": "VALID", "issues": []}})
+    svc, client, _ = _service(client)
+    rows = await _approved(svc, _seller(), [_item(1)])
+    await svc.submit(_seller(), rows)
+    assert rows[0].status == "failed"
+    assert [i["code"] for i in rows[0].submission_result["issues"]] == ["UNEXPECTED_STATUS"]
+
+
+@pytest.mark.asyncio
+async def test_submit_refuses_an_approved_request_that_did_not_pass_validation():
+    svc, client, _ = _service()
+    never_checked, with_error = await svc.create(_seller(), [_item(1), _item(2)], USER)
+    never_checked.status = "approved"  # validation_issues is None
+    with_error.status, with_error.validation_issues = "approved", [ERROR]
+
+    await svc.submit(_seller(), [never_checked, with_error])
+
+    assert client.writes() == []
+    assert [never_checked.status, with_error.status] == ["approved", "approved"]
 
 
 @pytest.mark.asyncio
