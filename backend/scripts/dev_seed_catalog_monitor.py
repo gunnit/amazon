@@ -13,8 +13,9 @@ What it creates; a re-run resets the demo to the same state:
   variation family: parent B0TEST0010 with children B0TEST0011 and B0TEST0012),
   nine months of daily sales (per ASIN plus the daily total row), Sponsored Products
   campaigns, returns and Brand Analytics search terms;
-* vendor account "TEST Vendor IT" with B0TEST0001..B0TEST0004 and no vendor code,
-  so its writes become "file only";
+* vendor account "TEST Vendor IT" (vendor code TESTVENDOR) with B0TEST0001..B0TEST0004:
+  the first three have vendor SKUs, so their writes are checked through Listings
+  Items; B0TEST0004 has none, so its writes become "file only";
 * two tracked competitors with price and BSR history;
 * the fixture directory: Catalog and Listings payloads, one product type schema per
   product type, PNG images (one main image fills 60% of the frame, one sits on grey).
@@ -28,7 +29,8 @@ detached from its parent), scans again and prints the traffic lights and anomali
     set -a; . var/dev.env; set +a   # DATABASE_URL, SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD, ...
     .venv/bin/python scripts/dev_seed_catalog_monitor.py
 
-var/ is gitignored: keep the local secrets there. Start the API with
+var/ is gitignored: keep the local secrets there, with TZ=UTC as in production
+(timestamps come from naive datetime.utcnow(), read as local time). Start the API with
 DEV_FIXTURE_AMAZON_DIR set to the same directory (default var/dev_fixtures) so
 "Scan now", restores and submissions keep answering from the fixtures, and on port
 8000, where the fixture image URLs point.
@@ -99,7 +101,14 @@ SALES_DAYS = 275  # about nine months
 SEARCH_TERM_WEEKS = 8
 SELLER_NAME = "TEST Seller IT"
 VENDOR_NAME = "TEST Vendor IT"
-VENDOR_ASINS = ("B0TEST0001", "B0TEST0002", "B0TEST0003", "B0TEST0004")
+VENDOR_CODE = "TESTVENDOR"
+# Vendor products and their vendor SKU; None: no SKU, so writes are file only.
+VENDOR_SKUS: dict[str, Optional[str]] = {
+    "B0TEST0001": "TEST-VSKU-001",
+    "B0TEST0002": "TEST-VSKU-002",
+    "B0TEST0003": "TEST-VSKU-003",
+    "B0TEST0004": None,
+}
 UTENSILS = "Utensili da cucina"
 STORAGE = "Conservazione alimenti"
 REQUIRED_BY_TYPE = {
@@ -554,8 +563,8 @@ def catalog_payload(p: DemoProduct, image_base_url: str) -> dict:
     }
 
 
-def listing_payload(p: DemoProduct) -> dict:
-    """A seller's Listings Items payload: backend keywords, status and issues."""
+def listing_payload(p: DemoProduct, sku: Optional[str] = None) -> dict:
+    """A Listings Items payload (the seller's SKU, or ``sku``): backend keywords, status, issues."""
     attributes: dict[str, Any] = {"item_name": _text(p.title), "brand": _text(p.brand)}
     if p.backend_keywords:
         attributes["generic_keyword"] = _text(p.backend_keywords)
@@ -568,7 +577,7 @@ def listing_payload(p: DemoProduct) -> dict:
             "attributeNames": ["material"],
         })
     return {
-        "sku": p.sku,
+        "sku": sku or p.sku,
         "summaries": [{
             "marketplaceId": MP,
             "asin": p.asin,
@@ -636,10 +645,13 @@ def write_fixtures(config: SeedConfig) -> None:
         _main_png(root / "images" / f"{p.asin}-main.png", p.main_image, color)
         for n in range(1, p.other_images + 1):
             _other_png(root / "images" / f"{p.asin}-pt{n:02d}.png", n, color)
+    for asin, sku in VENDOR_SKUS.items():
+        if sku:
+            _dump(root / "listings" / f"{sku}.json", listing_payload(PRODUCT_BY_ASIN[asin], sku))
     for product_type in REQUIRED_BY_TYPE:
         _dump(root / "product_types" / f"{product_type}.json", product_type_schema(product_type))
     _dump(root / "client.json", {
-        "vendor_code": None,
+        "vendor_code": VENDOR_CODE,
         "aplus_modules": {p.asin: p.aplus_modules for p in PRODUCTS},
     })
 
@@ -751,7 +763,7 @@ async def _account(db: AsyncSession, org: Organization, name: str, account_type:
 
 
 async def _products(db: AsyncSession, account: AmazonAccount, products: list[DemoProduct],
-                    with_sku: bool) -> None:
+                    skus: dict[str, Optional[str]]) -> None:
     existing = {
         p.asin: p for p in (await db.execute(
             select(Product).where(Product.account_id == account.id)
@@ -762,7 +774,7 @@ async def _products(db: AsyncSession, account: AmazonAccount, products: list[Dem
         if row is None:
             row = Product(account_id=account.id, asin=spec.asin)
             db.add(row)
-        row.sku = spec.sku if with_sku else None
+        row.sku = skus.get(spec.asin)
         row.title = spec.title
         row.brand = spec.brand
         row.category = spec.category
@@ -962,8 +974,8 @@ async def seed_database(db: AsyncSession, config: SeedConfig) -> Seeded:
     org, user = await _organization_and_admin(db, config)
     seller = await _account(db, org, SELLER_NAME, AccountType.SELLER, "TESTSELLER")
     vendor = await _account(db, org, VENDOR_NAME, AccountType.VENDOR, None)
-    await _products(db, seller, list(PRODUCTS), with_sku=True)
-    await _products(db, vendor, [PRODUCT_BY_ASIN[a] for a in VENDOR_ASINS], with_sku=False)
+    await _products(db, seller, list(PRODUCTS), {p.asin: p.sku for p in PRODUCTS})
+    await _products(db, vendor, [PRODUCT_BY_ASIN[a] for a in VENDOR_SKUS], VENDOR_SKUS)
     await _reset_monitor(db, org, [seller.id, vendor.id], config)
 
     start = config.today - timedelta(days=SALES_DAYS)

@@ -82,6 +82,15 @@ class Stack:
                 sleep=lambda _: None,
             ).scan_account(account)
 
+    async def baseline(self, account_id: str, asin: str) -> dict:
+        from app.models.catalog_monitor import ListingContentBaseline
+
+        async with self.sessions() as db:
+            return (await db.execute(select(ListingContentBaseline.content).where(
+                ListingContentBaseline.account_id == uuid.UUID(account_id),
+                ListingContentBaseline.asin == asin,
+            ))).scalar_one()
+
     async def anomalies(self, account_id: str, **params) -> list[dict]:
         return await self.get("/catalog-monitor/anomalies", account_id=account_id, **params)
 
@@ -179,9 +188,15 @@ async def test_quality_anomalies_history_and_variations(stack):
     main_image = {r["key"]: r for r in by_asin["B0TEST0005"]["results"]}["main_image"]
     assert (main_image["state"], main_image["details"]["fill_ratio"]) == ("yellow", 0.6)
 
+    access = await stack.get("/catalog-monitor/capabilities", account_id=stack.vendor_id)
+    assert access["vendor_code"] == "TESTVENDOR" and access["results"]["listings_read"]["ok"]
     vendor = await stack.get("/catalog-monitor/quality", account_id=stack.vendor_id)
-    for item in vendor["items"]:  # no vendor code: catalogue content, grey (not red) keywords
-        assert {r["key"]: r["state"] for r in item["results"]}["backend_keywords"] == "grey"
+    keywords = {
+        i["asin"]: {r["key"]: r["state"] for r in i["results"]}["backend_keywords"] for i in vendor["items"]
+    }
+    # Read through Listings with the vendor code; grey (not red) where there is no SKU.
+    assert keywords["B0TEST0004"] == "grey"
+    assert all(state != "grey" for asin, state in keywords.items() if asin != "B0TEST0004")
 
     anomalies = await stack.anomalies(stack.seller_id)
     assert sorted(_key(a) for a in anomalies) == EXPECTED_SELLER_ANOMALIES
@@ -225,10 +240,13 @@ async def test_content_restores_go_through_approval_and_resolve_on_rescan(stack)
         ("images", requests["B0TEST0004"]["id"]), ("title", requests["B0TEST0002"]["id"]),
     ])
 
-    # The vendor has no vendor code: the same restore can only travel as a file.
-    vendor_bullets = next(a for a in await stack.anomalies(stack.vendor_id) if a["field"] == "bullets")
-    vendor_batch = await stack.post("/catalog-monitor/anomalies/restore", {"anomaly_ids": [vendor_bullets["id"]]})
-    assert [(r["status"], r["file_only"]) for r in vendor_batch["requests"]] == [("file_only", True)]
+    # Vendor: checked with the vendor code where there is a SKU, a file where there is none.
+    vendor = {a["asin"]: a for a in await stack.anomalies(stack.vendor_id) if a["asin"] != "B0TEST0002"}
+    vendor_batch = await stack.post("/catalog-monitor/anomalies/restore",
+                                    {"anomaly_ids": [a["id"] for a in vendor.values()]})
+    assert sorted((r["asin"], r["status"], r["file_only"]) for r in vendor_batch["requests"]) == [
+        ("B0TEST0003", "valid", False), ("B0TEST0004", "file_only", True),
+    ]
 
 
 @pytest.mark.asyncio
@@ -299,6 +317,39 @@ async def test_bulk_export_edit_upload_approve_submit(stack):
     bullets = [b["value"] for b in client.get_catalog_item_full("B0TEST0001")["attributes"]["bullet_point"]]
     assert len(bullets) == 5 and bullets[1] == new_bullet
     assert bullets[0] == stack.seed.PRODUCT_BY_ASIN["B0TEST0001"].bullets[0]
+
+    # The approved change is now the protected content: the next scan does not flag it.
+    assert (await stack.baseline(stack.seller_id, "B0TEST0001"))["bullets"] == bullets
+    summary = await stack.rescan(stack.seller_id)
+    assert summary.anomalies_opened == 0
+    assert sorted(_key(a) for a in await stack.anomalies(stack.seller_id)) == EXPECTED_SELLER_ANOMALIES
+
+
+@pytest.mark.asyncio
+async def test_a_change_marked_as_uploaded_by_hand_keeps_the_baseline(stack):
+    response = await stack.client.get("/api/v1/catalog-monitor/export", params={"account_id": stack.vendor_id})
+    workbook = load_workbook(io.BytesIO(response.content))
+    sheet = workbook["Catalogo"]
+    headers = [c.value for c in sheet[1]]
+    row = next(r for r in sheet.iter_rows(min_row=2) if r[headers.index("asin")].value == "B0TEST0004")
+    row[headers.index("bullet_2")].value = "Testo caricato a mano su Vendor Central"
+    edited = io.BytesIO()
+    workbook.save(edited)
+    upload = await stack.client.post(
+        "/api/v1/catalog-monitor/bulk/upload",
+        data={"account_id": stack.vendor_id, "mode": "update"},
+        files={"file": ("catalogo.xlsx", edited.getvalue(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert upload.status_code == 200, upload.text
+    [request] = upload.json()["requests"]
+    assert (request["asin"], request["status"]) == ("B0TEST0004", "file_only")  # no vendor SKU
+    before = await stack.baseline(stack.vendor_id, "B0TEST0004")
+    await stack.post("/catalog-monitor/changes/approve", {"ids": [request["id"]]})
+    marked = await stack.post("/catalog-monitor/changes/mark-uploaded", {"ids": [request["id"]]})
+    assert [r["status"] for r in marked["requests"]] == ["submitted"]
+    # We cannot know it went live: the baseline stays, the next scan decides.
+    assert await stack.baseline(stack.vendor_id, "B0TEST0004") == before
 
 
 @pytest.mark.asyncio

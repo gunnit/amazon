@@ -75,7 +75,12 @@ def test_fixtures_hold_every_product_and_its_listing(fixtures):
     assert sorted(p.stem for p in (fixtures / "catalog").glob("*.json")) == [
         f"B0TEST{n:04d}" for n in range(1, 13)
     ]
-    assert len(list((fixtures / "listings").glob("*.json"))) == 12
+    listings = sorted(p.stem for p in (fixtures / "listings").glob("*.json"))
+    assert len(listings) == 12 + 3  # the seller's, and the vendor's with a SKU
+    assert {"TEST-VSKU-001", "TEST-VSKU-002", "TEST-VSKU-003"} <= set(listings)
+    vendor = seed.FixtureClient(str(fixtures), seed.MP, account_type="vendor")
+    assert vendor.resolve_vendor_code() == "TESTVENDOR"
+    assert vendor.get_listing("TESTVENDOR", "TEST-VSKU-002")["summaries"][0]["asin"] == "B0TEST0002"
     child = _content(fixtures, "B0TEST0012")
     assert (child.parent_asins, child.variation_theme) == (["B0TEST0010"], "COLOR")
     assert _content(fixtures, "B0TEST0010").child_asins == ["B0TEST0011", "B0TEST0012"]
