@@ -31,6 +31,17 @@ from app.models.economics import AsinEconomics
 from app.models.market_snapshot import FeeEstimate, PriceSnapshot
 from app.models.brand_search_term import BrandSearchTerm
 from app.models.listing_quality import ListingQualitySnapshot
+from app.models.catalog_monitor import (
+    CatalogAnomaly,
+    CatalogApiCapability,
+    CatalogChangeRequest,
+    ImageCheck,
+    ListingContentBaseline,
+    ListingContentVersion,
+    ListingQualityRule,
+    ProductTypeDefinitionCache,
+    VariationFamilyBaseline,
+)
 
 __all__ = [
     "User",
@@ -72,4 +83,13 @@ __all__ = [
     "PriceSnapshot",
     "BrandSearchTerm",
     "ListingQualitySnapshot",
+    "ListingContentVersion",
+    "ListingContentBaseline",
+    "VariationFamilyBaseline",
+    "CatalogAnomaly",
+    "CatalogChangeRequest",
+    "ListingQualityRule",
+    "ProductTypeDefinitionCache",
+    "ImageCheck",
+    "CatalogApiCapability",
 ]

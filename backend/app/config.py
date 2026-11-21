@@ -141,6 +141,13 @@ class Settings(BaseSettings):
     # enabled (i.e. a deploy with no separate Celery worker). The stuck-job
     # recovery sweep heals threads lost to a web-process restart.
     EXECUTE_TASKS_INLINE: bool = False
+
+    # Catalogue monitoring (R1-R4)
+    CATALOG_SCAN_HOUR_UTC: int = 5
+    CATALOG_SCAN_MINUTE_UTC: int = 0
+    CATALOG_SCAN_REQUEST_INTERVAL_S: float = 0.55
+    CATALOG_FEED_THRESHOLD: int = 50
+    PTD_CACHE_DAYS: int = 7
     # How often the in-process scheduler finalizes brand-analysis jobs whose
     # worker/thread stalled (e.g. killed by a deploy mid-run).
     BRAND_ANALYSIS_RECOVERY_INTERVAL_MINUTES: int = 10

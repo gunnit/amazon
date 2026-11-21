@@ -43,6 +43,10 @@ class Product(Base):
     # Provenance: 'amazon_sync' (default) or 'manual_import'
     source: Mapped[str] = mapped_column(String(32), nullable=True, default="amazon_sync", server_default="amazon_sync")
 
+    # Main keyword for listing-quality checks: 'manual' or 'brand_analytics'
+    main_keyword: Mapped[str] = mapped_column(String(255), nullable=True)
+    main_keyword_source: Mapped[str] = mapped_column(String(20), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
