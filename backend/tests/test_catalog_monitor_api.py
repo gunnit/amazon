@@ -549,7 +549,8 @@ def test_variation_restore_endpoint_marks_missing_sku_file_only(monkeypatch):
         return [SimpleNamespace(parent_asin="B0TEST0010", variation_theme="SIZE_NAME",
                                 child_asins=["B0TEST0011"])]
 
-    async def _anoms(db, account_id):
+    async def _anoms(db, account_id, lock=False):
+        assert lock is True
         return [detached]
 
     async def _content(db, account_id, asins):
@@ -752,3 +753,177 @@ def test_locked_request_load_uses_for_update_in_postgres():
 
     asyncio.run(api._requests_for_update(_Db(), uuid4(), [uuid4()]))
     assert "FOR UPDATE" in captured["sql"] and "organization_id" in captured["sql"]
+
+
+# ---- review follow-ups ----
+
+
+class _ScalarsDb(_FakeDb):
+    """Returns the given rows for every select (enough for the reopen query)."""
+
+    def __init__(self, rows):
+        super().__init__()
+        self.rows = rows
+
+    async def execute(self, statement):
+        rows = self.rows
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
+
+
+def test_second_variation_restore_creates_nothing(monkeypatch):
+    pending = _anomaly("B0TEST0011", "child_detached", "parent:B0TEST0010", status="restore_requested")
+    created = []
+
+    async def _account(db, organization_id, account_id):
+        return SimpleNamespace(id=account_id, organization_id=organization_id, marketplace_id=MP)
+
+    async def _families(db, account_id):
+        return [SimpleNamespace(parent_asin="B0TEST0010", variation_theme=None,
+                                child_asins=["B0TEST0011"])]
+
+    async def _anoms(db, account_id, lock=False):
+        assert lock is True
+        return [pending]
+
+    class _Svc:
+        def __init__(self, db):
+            pass
+
+        async def create(self, *a, **k):
+            created.append(a)
+            return []
+
+    monkeypatch.setattr(api, "_account_or_404", _account)
+    monkeypatch.setattr(api, "_family_baselines", _families)
+    monkeypatch.setattr(api, "_variation_anomalies", _anoms)
+    monkeypatch.setattr(api, "ChangeRequestService", _Svc)
+    client, _ = _client()
+    for body in (
+        {"account_id": str(ACCOUNT_ID), "parent_asin": "B0TEST0010"},
+        {"account_id": str(ACCOUNT_ID), "parent_asin": "B0TEST0010", "child_asins": ["B0TEST0011"]},
+    ):
+        res = client.post("/catalog-monitor/variations/restore", json=body)
+        assert res.status_code == 200, res.text
+        assert res.json()["requests"] == [] and res.json()["batch_id"] is None
+        assert [s["reason"] for s in res.json()["skipped"]] == ["status_restore_requested"]
+    assert created == []
+
+
+def test_existing_image_slots_is_highest_filled_other_slot():
+    def content(*variants):
+        return {"images": [{"variant": v, "url": f"https://x/{v}.jpg"} for v in variants]}
+
+    assert api.existing_image_slots(None) == 0
+    assert api.existing_image_slots(content("MAIN")) == 0
+    assert api.existing_image_slots(content("MAIN", "PT01", "PT03")) == 3
+    assert api.existing_image_slots(content("MAIN", "PT08")) == 8
+
+
+def test_image_restore_deletes_only_live_filled_slots():
+    anomaly = _anomaly("B0TEST0001", field="images")
+    baselines = {"B0TEST0001": _baseline_row("B0TEST0001")}  # baseline: MAIN only
+    live = {"images": [{"variant": v, "url": "https://x/a.jpg"} for v in ("MAIN", "PT01", "PT02")]}
+    items, _, _ = api.build_restore_items([anomaly], baselines, {"B0TEST0001": live}, {})
+    deletes = [p["path"] for p in items[0].patches if p["op"] == "delete"]
+    assert deletes == [
+        "/attributes/other_product_image_locator_1",
+        "/attributes/other_product_image_locator_2",
+    ]
+    items, _, _ = api.build_restore_items([anomaly], baselines, {}, {})
+    assert [p for p in items[0].patches if p["op"] == "delete"] == []
+
+
+def test_feed_file_excludes_requests_with_missing_parent_sku(monkeypatch):
+    batch = uuid4()
+    good = _req("file_only", batch=batch, sku="TEST-SKU-001")
+    bad = _req("file_only", batch=batch, sku="TEST-SKU-002", summary={"parent_sku_missing": True})
+
+    async def _batch(db, organization_id, batch_id):
+        return [good, bad]
+
+    async def _account(db, organization_id, account_id):
+        return SimpleNamespace(id=account_id, organization_id=organization_id, marketplace_id=MP)
+
+    async def _capability(db, account_id):
+        return None
+
+    monkeypatch.setattr(api, "_batch_requests", _batch)
+    monkeypatch.setattr(api, "_account_or_404", _account)
+    monkeypatch.setattr(api, "_stored_capability", _capability)
+    monkeypatch.setattr(api, "listing_seller_id", lambda account, cap: "SELLER1")
+    client, _ = _client()
+    res = client.get("/catalog-monitor/changes/feed-file", params={"batch_id": str(batch)})
+    assert [m["sku"] for m in res.json()["messages"]] == ["TEST-SKU-001"]
+    assert res.headers["x-skipped-requests"] == str(bad.id)
+
+
+def test_restore_invalid_at_create_reopens_its_anomaly(monkeypatch, known_account):
+    anomaly = _anomaly("B0TEST0001", field="title")
+
+    async def _by_ids(db, organization_id, ids, lock=False):
+        return [anomaly]
+
+    async def _baselines(db, account_id):
+        return {"B0TEST0001": _baseline_row("B0TEST0001")}
+
+    async def _contents(db, account_id, asins):
+        return {"B0TEST0001": {"sku": "TEST-SKU-001", "product_type": "LUGGAGE"}}
+
+    async def _products(db, account_id, asins):
+        return {}
+
+    class _Svc:
+        def __init__(self, db):
+            pass
+
+        async def create(self, account, items, user_id, batch_id=None):
+            row = _req("pending")
+            for an in items[0].anomalies:
+                an.status, an.change_request_id = "restore_requested", row.id
+            return [row]
+
+        async def validate(self, account, requests):
+            requests[0].status = "invalid"
+
+    monkeypatch.setattr(api, "_anomalies_by_ids", _by_ids)
+    monkeypatch.setattr(api, "_baselines", _baselines)
+    monkeypatch.setattr(api, "_latest_content_dicts", _contents)
+    monkeypatch.setattr(api, "_products_by_asin", _products)
+    monkeypatch.setattr(api, "ChangeRequestService", _Svc)
+    # the real _reopen_for_requests runs against a db that returns the linked anomaly
+    client, _ = _client(db=_ScalarsDb([anomaly]))
+    res = client.post("/catalog-monitor/anomalies/restore", json={"anomaly_ids": [str(anomaly.id)]})
+    assert res.status_code == 200, res.text
+    assert res.json()["requests"][0]["status"] == "invalid"
+    assert (anomaly.status, anomaly.change_request_id) == ("open", None)
+
+
+def test_refresh_feed_failure_reopens_anomalies(monkeypatch, known_account):
+    anomaly = _anomaly("B0TEST0001", status="restore_requested")
+    row = _req("submitted", feed_id="F1")
+    anomaly.change_request_id = row.id
+
+    class _Svc:
+        def __init__(self, db, repo=None):
+            pass
+
+        async def refresh_feed(self, account, feed_id):
+            row.status = "failed"
+
+    class _Repo:
+        def __init__(self, db):
+            pass
+
+        async def change_requests_for_feed(self, account_id, feed_id):
+            return [row]
+
+    monkeypatch.setattr(api, "ChangeRequestService", _Svc)
+    monkeypatch.setattr(api, "CatalogMonitorRepository", _Repo)
+    client, db = _client(db=_ScalarsDb([anomaly]))
+    res = client.post(
+        "/catalog-monitor/changes/refresh-feed", json={"account_id": str(ACCOUNT_ID), "feed_id": "F1"}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()[0]["status"] == "failed"
+    assert (anomaly.status, anomaly.change_request_id) == ("open", None)
+    assert db.commits == 1

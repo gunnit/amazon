@@ -67,11 +67,11 @@ from app.schemas.catalog_monitor import (
 from app.services.catalog_monitor.baselines import accept_anomaly, approve_live_as_baseline
 from app.services.catalog_monitor.capabilities import check_account_capabilities, listing_seller_id
 from app.services.catalog_monitor.changes import (
-    _APPROVABLE,
-    _REJECTABLE,
     ChangeItem,
     ChangeRequestService,
     build_listings_feed,
+    can_approve,
+    can_reject,
     is_file_only,
     restore_patches,
     variation_patches,
@@ -626,6 +626,17 @@ def request_out(row: Any) -> ChangeRequestOut:
     )
 
 
+def existing_image_slots(content: Optional[dict]) -> int:
+    """Highest filled other-image slot of the live content (PT01..PT08 -> 1..8, none -> 0)."""
+    numbers = [
+        int(variant[2:])
+        for image in (content or {}).get("images") or []
+        for variant in [str(image.get("variant") or "")]
+        if image.get("url") and variant.startswith("PT") and variant[2:].isdigit()
+    ]
+    return min(max(numbers, default=0), 8)
+
+
 def _notice(anomaly: Any, reason: str) -> dict:
     return {"anomaly_id": anomaly.id, "asin": anomaly.asin, "field": anomaly.field, "reason": reason}
 
@@ -659,11 +670,13 @@ def build_restore_items(
             skipped += [_notice(a, "no_baseline") for a in restorable]
             continue
         baseline = content_from_dict(row.content)
-        patches = restore_patches(baseline, [a.field for a in restorable])
+        live = versions.get(asin) or {}
+        patches = restore_patches(
+            baseline, [a.field for a in restorable], existing_image_slots(live)
+        )
         if not patches:
             skipped += [_notice(a, "nothing_to_restore") for a in restorable]
             continue
-        live = versions.get(asin) or {}
         items.append(
             ChangeItem(
                 asin=asin,
@@ -788,11 +801,11 @@ def reopen_anomalies(anomalies: list[Any]) -> None:
 
 
 def approve_skip_reason(row: Any) -> Optional[str]:
-    return None if row.status in _APPROVABLE else f"status_{row.status}"
+    return None if can_approve(row) else f"status_{row.status}"
 
 
 def reject_skip_reason(row: Any) -> Optional[str]:
-    return None if row.status in _REJECTABLE else f"status_{row.status}"
+    return None if can_reject(row) else f"status_{row.status}"
 
 
 def submit_skip_reason(row: Any) -> Optional[str]:
@@ -866,8 +879,10 @@ async def _family_baselines(db, account_id: UUID) -> list[VariationFamilyBaselin
     return await CatalogMonitorRepository(db).family_baselines(account_id)
 
 
-async def _variation_anomalies(db, account_id: UUID) -> list[CatalogAnomaly]:
-    result = await db.execute(
+async def _variation_anomalies(
+    db, account_id: UUID, lock: bool = False
+) -> list[CatalogAnomaly]:
+    stmt = (
         select(CatalogAnomaly)
         .where(
             CatalogAnomaly.account_id == account_id,
@@ -876,6 +891,9 @@ async def _variation_anomalies(db, account_id: UUID) -> list[CatalogAnomaly]:
         )
         .order_by(CatalogAnomaly.detected_at, CatalogAnomaly.id)
     )
+    if lock:
+        stmt = stmt.with_for_update()
+    result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
@@ -1154,12 +1172,22 @@ async def restore_variation(
     if family is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Variation family not found")
     mine = [
-        a for a in await _variation_anomalies(db, account.id) if _family_of(a) == family.parent_asin
+        a
+        for a in await _variation_anomalies(db, account.id, lock=True)
+        if _family_of(a) == family.parent_asin
     ]
+    # Only open or acknowledged anomalies can be restored; a pending restore is not repeated.
     by_child: dict[str, list[Any]] = defaultdict(list)
+    skipped: list[dict] = []
+    pending: set[str] = set()
     for anomaly in mine:
-        if anomaly.kind == "child_detached":
+        if anomaly.kind != "child_detached":
+            continue
+        if anomaly.status in _RESTORABLE_STATUSES:
             by_child[anomaly.asin].append(anomaly)
+        else:
+            pending.add(anomaly.asin)
+            skipped.append(_notice(anomaly, f"status_{anomaly.status}"))
     if body.child_asins is None:
         selected = sorted(by_child)
     else:
@@ -1169,9 +1197,9 @@ async def restore_variation(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 f"Not children of {family.parent_asin}: {', '.join(sorted(unknown))}",
             )
-        selected = list(dict.fromkeys(body.child_asins))
+        selected = [a for a in dict.fromkeys(body.child_asins) if a not in pending]
     if not selected:
-        return ChangeBatchResponse(requests=[])
+        return ChangeBatchResponse(requests=[], skipped=skipped)
     asins = [family.parent_asin, *selected]
     contents = await _latest_content_dicts(db, account.id, asins)
     products = await _products_by_asin(db, account.id, asins)
@@ -1198,7 +1226,9 @@ async def restore_variation(
     await service.validate(account, rows)
     await _reopen_for_requests(db, rows)
     await db.commit()
-    return ChangeBatchResponse(batch_id=batch_id, requests=[request_out(r) for r in rows])
+    return ChangeBatchResponse(
+        batch_id=batch_id, requests=[request_out(r) for r in rows], skipped=skipped
+    )
 
 
 # ---- approval queue ----
@@ -1235,12 +1265,18 @@ async def download_feed_file(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No approved or file-only requests in batch")
     account = await _account_or_404(db, organization.id, rows[0].account_id)
     seller_id = listing_seller_id(account, await _stored_capability(db, account.id)) or ""
-    feed = build_listings_feed([r for r in rows if r.account_id == account.id], seller_id, account.marketplace_id)
+    # A request whose parent SKU is unknown would upload an invalid parent SKU: never in the file.
+    unusable = {r.id for r in rows if (r.summary or {}).get("parent_sku_missing")}
+    feed = build_listings_feed(
+        [r for r in rows if r.account_id == account.id and r.id not in unusable],
+        seller_id,
+        account.marketplace_id,
+    )
     return JSONResponse(
         feed.document,
         headers={
             "Content-Disposition": f'attachment; filename="listings-feed-{batch_id}.json"',
-            "X-Skipped-Requests": ",".join(str(i) for i in feed.skipped),
+            "X-Skipped-Requests": ",".join(str(i) for i in [*feed.skipped, *sorted(unusable, key=str)]),
         },
     )
 
