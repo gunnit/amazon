@@ -92,8 +92,8 @@ def test_quarterly_period_is_previous_full_quarter(reference, start, end):
 
 
 def test_quarterly_period_uses_local_date():
-    # 31 Dec 23:30 UTC is already 1 Jan in Rome: the previous quarter is Q4 either way,
-    # but 31 Mar 23:30 UTC is 1 Apr in Rome, so Q1 is the report period there.
+    # 31 Mar 23:30 UTC is already 1 Apr in Rome, so the previous full quarter is Q1 there,
+    # while in UTC it is still 31 Mar and the previous full quarter is Q4 of the year before.
     reference = datetime(2026, 3, 31, 23, 30, tzinfo=timezone.utc)
     assert resolve_report_period("quarterly", "Europe/Rome", reference=reference) == (
         date(2026, 1, 1),

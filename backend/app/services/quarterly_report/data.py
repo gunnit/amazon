@@ -35,6 +35,7 @@ from app.models.returns_data import ReturnData
 from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.quarterly_report.deck import t
+from app.services.product_scope import product_scope_conditions
 from app.services.sales_metrics import display_revenue_expr, display_units_expr
 
 Provenance = Literal["actual", "estimated"]
@@ -210,10 +211,7 @@ async def fetch_scope_asins(db, account_ids: list[UUID], brand: Optional[str],
     if not brand and not category:
         return wanted
     query = select(Product.asin).where(Product.account_id.in_(account_ids)).distinct()
-    if brand:
-        query = query.where(func.lower(Product.brand) == brand.strip().lower())
-    if category:
-        query = query.where(Product.category == category)
+    query = query.where(*product_scope_conditions(brand, category))
     if wanted:
         query = query.where(Product.asin.in_(wanted))
     return sorted({row.asin for row in (await db.execute(query)).all()})

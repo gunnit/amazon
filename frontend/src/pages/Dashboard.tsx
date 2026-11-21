@@ -385,7 +385,7 @@ export default function Dashboard() {
   const productFiltered = Boolean(dashboardBrand || dashboardCategory)
 
   // Choices of the brand and category filters: those of the accounts in scope.
-  const { data: brandOptions = [] } = useQuery<string[]>({
+  const { data: brandOptions = [], isSuccess: brandOptionsLoaded } = useQuery<string[]>({
     queryKey: ['catalog-brands', effectiveAccountIds],
     queryFn: () =>
       catalogApi.getBrands({
@@ -393,7 +393,7 @@ export default function Dashboard() {
       }),
     enabled: queriesEnabled,
   })
-  const { data: scopedProducts = [] } = useQuery({
+  const { data: scopedProducts = [], isSuccess: productsLoaded } = useQuery({
     queryKey: ['catalog-products-categories', effectiveAccountIds],
     queryFn: () =>
       catalogApi.getProducts({
@@ -405,6 +405,17 @@ export default function Dashboard() {
   const categoryOptions = Array.from(
     new Set(scopedProducts.map((product) => product.category).filter((value): value is string => Boolean(value)))
   ).sort((a, b) => a.localeCompare(b))
+
+  // A selection kept from an earlier session may no longer exist in the current
+  // accounts: drop it once the options are known, instead of filtering on nothing.
+  useEffect(() => {
+    if (!brandOptionsLoaded || !dashboardBrand) return
+    if (!brandOptions.includes(dashboardBrand)) setDashboardBrand('')
+  }, [brandOptionsLoaded, brandOptions, dashboardBrand, setDashboardBrand])
+  useEffect(() => {
+    if (!productsLoaded || !dashboardCategory) return
+    if (!categoryOptions.includes(dashboardCategory)) setDashboardCategory('')
+  }, [productsLoaded, categoryOptions, dashboardCategory, setDashboardCategory])
 
   // Vendor accounts only get monthly, already-settled data, so a recent window can
   // legitimately read 0. Surface a note whenever the current scope includes a vendor.

@@ -147,7 +147,7 @@ def test_brands_are_sorted_distinct_and_non_empty():
 def test_dashboard_brand_filter_applied():
     scoped = _sql(analytics._sales_period_query(select(1), date(2026, 7, 1), date(2026, 9, 30), brand="TestBrand"))
     assert "JOIN products" in scoped
-    assert "lower(products.brand) = 'testbrand'" in scoped
+    assert "lower(trim(products.brand)) = 'testbrand'" in scoped
     # per-ASIN rows only: the daily-total row is excluded, never summed with them
     assert f"sales_data.asin != '{DAILY_TOTAL_ASIN}'" in scoped
     assert "products.category" not in scoped
@@ -159,8 +159,8 @@ def test_dashboard_brand_and_category_combine():
             select(1), date(2026, 7, 1), date(2026, 9, 30), category="Toys", brand="TESTBRAND"
         )
     )
-    assert "lower(products.brand) = 'testbrand'" in scoped
-    assert "products.category = 'Toys'" in scoped
+    assert "lower(trim(products.brand)) = 'testbrand'" in scoped
+    assert "trim(products.category) = 'Toys'" in scoped
     assert f"sales_data.asin != '{DAILY_TOTAL_ASIN}'" in scoped
 
 
@@ -205,3 +205,83 @@ def test_quarterly_schedule_accepts_hour_and_minute_only():
 def test_quarterly_schedule_rejects_invalid_combinations(overrides):
     with pytest.raises(ValueError):
         _schedule(**overrides)
+
+
+# ---- trimmed matching and the other scoped paths ----
+
+
+class _EmptyDb:
+    def __init__(self):
+        self.statements = []
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return _Result([])
+
+
+def test_scope_conditions_trim_brand_and_category():
+    from app.services.product_scope import product_scope_conditions
+
+    sql = " ".join(_sql(c) for c in product_scope_conditions(" TestBrand ", " Toys "))
+    assert "lower(trim(products.brand)) = 'testbrand'" in sql
+    assert "trim(products.category) = 'Toys'" in sql
+
+
+def test_quarterly_scope_asins_use_the_shared_trimmed_predicate():
+    import asyncio
+
+    from app.services.quarterly_report.data import fetch_scope_asins
+
+    db = _EmptyDb()
+    asyncio.run(fetch_scope_asins(db, [ACC_1], "TestBrand", "Toys", None))
+    sql = _sql(db.statements[0])
+    assert "lower(trim(products.brand)) = 'testbrand'" in sql
+    assert "trim(products.category) = 'Toys'" in sql
+
+
+@pytest.mark.asyncio
+async def test_returns_count_scoped_path_joins_products():
+    db = _EmptyDb()
+    db.execute_result = None
+
+    async def execute(statement):
+        db.statements.append(statement)
+        return SimpleNamespace(scalar=lambda: 0)
+
+    db.execute = execute
+    await analytics._get_returns_period_count(
+        db, select(1), date(2026, 7, 1), date(2026, 9, 30), category="Toys", brand="TESTBRAND"
+    )
+    sql = _sql(db.statements[0])
+    assert "JOIN products" in sql
+    assert "lower(trim(products.brand)) = 'testbrand'" in sql
+    assert "trim(products.category) = 'Toys'" in sql
+
+
+@pytest.mark.asyncio
+async def test_trends_endpoint_scoped_path_uses_asin_rows():
+    db = _EmptyDb()
+    await analytics.get_trends(
+        current_user=USER, organization=ORG, db=db, metrics=["revenue", "units"],
+        start_date=date(2026, 7, 1), end_date=date(2026, 9, 30), account_ids=None,
+        brand="TESTBRAND", category=None,
+    )
+    sql = _sql(db.statements[-1])
+    assert "JOIN products" in sql
+    assert "lower(trim(products.brand)) = 'testbrand'" in sql
+    assert f"sales_data.asin != '{DAILY_TOTAL_ASIN}'" in sql
+
+
+@pytest.mark.asyncio
+async def test_product_trends_sales_timeseries_scoped_path():
+    from app.services.product_trends_service import ProductTrendsService
+
+    db = _EmptyDb()
+    await ProductTrendsService(db)._sales_timeseries(
+        account_ids=[ACC_1], start_date=date(2026, 7, 1), end_date=date(2026, 9, 30),
+        brand="TESTBRAND", category="Toys",
+    )
+    sql = _sql(db.statements[0])
+    assert "JOIN products" in sql
+    assert "lower(trim(products.brand)) = 'testbrand'" in sql
+    assert "trim(products.category) = 'Toys'" in sql

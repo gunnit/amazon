@@ -3,7 +3,7 @@ from typing import List, Optional
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select, func, Date, cast
 from sqlalchemy.orm import selectinload
 
@@ -495,8 +495,8 @@ async def generate_quarterly_report(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     filename = quarterly_filename(payload.year, payload.quarter)
-    return StreamingResponse(
-        iter([deck]),
+    return Response(
+        content=deck,
         media_type=PPTX_CONTENT_TYPE,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

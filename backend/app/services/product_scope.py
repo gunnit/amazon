@@ -33,7 +33,7 @@ def product_scope_conditions(brand: Optional[str], category: Optional[str]) -> l
     brand = clean_scope_value(brand)
     category = clean_scope_value(category)
     if brand:
-        conditions.append(func.lower(Product.brand) == brand.lower())
+        conditions.append(func.lower(func.trim(Product.brand)) == brand.lower())
     if category:
-        conditions.append(Product.category == category)
+        conditions.append(func.trim(Product.category) == category)
     return conditions
