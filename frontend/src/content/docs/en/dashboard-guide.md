@@ -26,7 +26,7 @@ The left-hand menu is split into three groups: **Analytics** (the numbers), **In
 
 **Accounts** — The list of connected Amazon accounts, with their status and the progress of the historical load. This is where you connect a new account and where you find out whether an account has a problem.
 
-**Catalog** — The products synced from Amazon: codes, titles, prices. Use it to check that everything is there and that the data matches Amazon.
+**Catalog** — The products synced from Amazon: codes, titles, prices. Use it to check that everything is there and that the data matches Amazon. It also holds the listing quality check, content protection, variations, bulk updates and approvals.
 
 **Alerts** — Automatic notifications: sales drops, competitor price changes, anomalies. This is where you find them even when email sending is not active.
 

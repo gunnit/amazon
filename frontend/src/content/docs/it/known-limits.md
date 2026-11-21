@@ -20,11 +20,24 @@ Non è un dato mancante per errore: Amazon non fornisce queste informazioni per 
 
 Restano invece normalmente disponibili **prezzo** e **posizione di vendita** dei concorrenti, che sono i due indicatori su cui puoi lavorare davvero.
 
-## Gestione delle immagini di catalogo
+## Cosa Amazon non ci lascia verificare
 
-Non è possibile caricare, modificare o gestire le immagini dei prodotti da Inthezon.
+Il controllo di Qualità listing è grigio («non verificabile») quando Amazon non fornisce il dato tramite le API:
 
-Servirebbe un archivio esterno di file dedicato, che non fa parte del perimetro attuale della piattaforma. Le immagini si gestiscono direttamente su Seller Central o Vendor Central.
+- **Video**: non è esposto, quindi non è mai verificabile.
+- **Testo promozionale sull'immagine principale**: non viene controllato. Sfondo bianco e riempimento sì.
+- **Item highlights**: verificabili solo quando Amazon li restituisce per quella scheda.
+- **Keyword backend**: leggibili solo se l'account ha accesso alla scheda (codice vendor e SKU).
+
+Il pulsante **Verifica accesso Amazon** in Catalogo mostra cosa è disponibile per ogni account.
+
+## Modifiche e ripristini del catalogo
+
+- **Contenuti A+**: li rileviamo e li mostriamo, ma il ripristino è sempre a mano su Seller Central o Vendor Central.
+- **Modelli NIS ufficiali di Amazon**: non ancora supportati. I nuovi articoli si validano sul tipo di prodotto Amazon (attributi obbligatori e verifica di Amazon).
+- **Immagini**: si sostituiscono dall'aggiornamento massivo tramite URL, ma sugli account Vendor le rimozioni vanno fatte a mano su Vendor Central.
+- **Account senza accesso in scrittura** (per esempio Vendor senza codice vendor o SKU): le modifiche approvate escono come file da caricare a mano su Vendor Central.
+- **Notifiche di Amazon**: non le usiamo. Il catalogo si controlla con una scansione giornaliera, quindi una modifica può essere segnalata fino al giorno dopo.
 
 ## Le funzioni di intelligenza artificiale
 

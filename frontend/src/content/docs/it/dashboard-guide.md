@@ -26,7 +26,7 @@ Il menu a sinistra è diviso in tre gruppi: **Analytics** (i numeri), **Intellig
 
 **Account** — L'elenco degli account Amazon collegati, con il loro stato e l'avanzamento del caricamento storico. È il punto da cui colleghi un nuovo account e da cui capisci se un account ha un problema.
 
-**Catalogo** — I prodotti sincronizzati da Amazon: codici, titoli, prezzi. Serve a verificare che ci sia tutto e che i dati coincidano con quelli su Amazon.
+**Catalogo** — I prodotti sincronizzati da Amazon: codici, titoli, prezzi. Serve a verificare che ci sia tutto e che i dati coincidano con quelli su Amazon. Qui trovi anche il controllo della qualità dei listing, la protezione dei contenuti, le variazioni, gli aggiornamenti massivi e le approvazioni.
 
 **Avvisi** — Le segnalazioni automatiche: cali di vendita, variazioni di prezzo dei concorrenti, anomalie. È qui che le trovi anche quando l'invio via e-mail non è attivo.
 

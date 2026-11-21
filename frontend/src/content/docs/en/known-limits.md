@@ -20,11 +20,24 @@ This is not data missing by mistake: Amazon does not provide this information fo
 
 What normally does stay available is competitors' **price** and **sales rank**, which are the two indicators you can actually act on.
 
-## Catalog image management
+## What Amazon does not let us verify
 
-You cannot upload, edit or manage product images from Inthezon.
+The Listing quality check is grey ("cannot be verified") when Amazon does not provide the data through its APIs:
 
-It would require a dedicated external file store, which is not part of the platform's current scope. Images are managed directly on Seller Central or Vendor Central.
+- **Video**: not exposed, so never verifiable.
+- **Promotional text on the main image**: not checked. White background and fill are.
+- **Item highlights**: verifiable only when Amazon returns them for that listing.
+- **Backend keywords**: readable only if the account has access to the listing (vendor code and SKU).
+
+The **Check Amazon access** button in Catalog shows what is available for each account.
+
+## Catalogue changes and restores
+
+- **A+ content**: we detect and show it, but restoring is always by hand on Seller Central or Vendor Central.
+- **Amazon's official NIS templates**: not supported yet. New items are validated against the Amazon product type (required attributes and Amazon's own check).
+- **Images**: replaced from the bulk update by URL, but on Vendor accounts removals must be done by hand on Vendor Central.
+- **Accounts without write access** (for example Vendor without a vendor code or SKU): approved changes come out as a file to upload by hand on Vendor Central.
+- **Amazon notifications**: not used. The catalogue is checked by a daily scan, so a change can be flagged up to the next day.
 
 ## The artificial intelligence features
 
