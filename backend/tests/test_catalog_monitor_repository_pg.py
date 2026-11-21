@@ -203,3 +203,28 @@ async def test_change_requests_are_stored_and_found_by_feed(db, account):
     assert {r.id for r in found} == {rows[0].id, rows[1].id}
     assert found[0].payload == {"patches": patches, "file_only": False}
     assert await repo.change_requests_for_feed(uuid.uuid4(), "FEED1") == []
+
+
+@pytest.mark.asyncio
+async def test_access_check_sample_prefers_a_product_with_a_sku(db, account):
+    # Found in the end-to-end run: the newest product had no SKU, so the Listings
+    # check was skipped ("no_listing_identity") for an account with Listings access.
+    from datetime import timedelta
+
+    from app.models.product import Product
+    from app.services.catalog_monitor.capabilities import _pick_sample
+
+    db.add(Product(account_id=account.id, asin="B0TEST0001", sku="TEST-SKU-001",
+                   updated_at=NOW - timedelta(days=2)))
+    db.add(Product(account_id=account.id, asin="B0TEST0004", sku=None, updated_at=NOW))
+    await db.flush()
+    assert await _pick_sample(db, account.id) == ("B0TEST0001", "TEST-SKU-001")
+
+    other = AmazonAccount(organization_id=account.organization_id, account_name=f"{account.account_name} V",
+                          account_type=AccountType.VENDOR, marketplace_id="APJ6JRA9NG5V4",
+                          marketplace_country="IT")
+    db.add(other)
+    await db.flush()
+    db.add(Product(account_id=other.id, asin="B0TEST0005", sku=None, updated_at=NOW))
+    await db.flush()
+    assert await _pick_sample(db, other.id) == ("B0TEST0005", None)  # no SKU anywhere: still a sample

@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.amazon_account import AccountType, AmazonAccount
@@ -102,10 +102,12 @@ def _sample_product_type(catalog_payload: dict) -> Optional[str]:
 
 
 async def _pick_sample(db: AsyncSession, account_id) -> tuple[Optional[str], Optional[str]]:
+    """The newest active product, preferring one with a SKU: without a SKU the Listings
+    check cannot run, although the account may well have Listings access."""
     result = await db.execute(
         select(Product)
         .where(Product.account_id == account_id, Product.is_active.is_(True), Product.asin.isnot(None))
-        .order_by(Product.updated_at.desc())
+        .order_by(func.nullif(Product.sku, "").is_(None), Product.updated_at.desc())
         .limit(1)
     )
     product = result.scalar_one_or_none()
