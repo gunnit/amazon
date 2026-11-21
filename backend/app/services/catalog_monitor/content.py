@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from typing import Any, Optional
 
 # Attributes that change with offers, stock or shipping rather than with the
@@ -219,12 +219,49 @@ def with_aplus(
     return replace(content, aplus_module_count=module_count, aplus_available=available)
 
 
+def carry_forward(
+    content: ListingContent,
+    previous: Optional[ListingContent],
+    listing_fetched: bool,
+    aplus_fetched: bool,
+) -> ListingContent:
+    """Fill fields an Amazon call could not supply today from the previous version.
+
+    Keeps the content hash stable when the Listings or A+ call fails; fresh
+    values always win. Inputs are not mutated.
+    """
+    if previous is None:
+        return content
+    result = content
+    if not listing_fetched:
+        extra = {
+            k: v for k, v in previous.attributes.items() if k not in content.attributes
+        }
+        result = replace(
+            result,
+            sku=previous.sku,
+            backend_keywords=previous.backend_keywords,
+            backend_keywords_readable=previous.backend_keywords_readable,
+            listing_status=previous.listing_status,
+            listing_issues=[dict(i) for i in previous.listing_issues],
+            attributes={**content.attributes, **extra},
+        )
+    if not aplus_fetched:
+        result = replace(
+            result,
+            aplus_available=previous.aplus_available,
+            aplus_module_count=previous.aplus_module_count,
+        )
+    return result
+
+
 def content_to_dict(content: ListingContent) -> dict:
     return asdict(content)
 
 
 def content_from_dict(data: dict) -> ListingContent:
-    data = dict(data)
+    names = {f.name for f in fields(ListingContent)}
+    data = {k: v for k, v in data.items() if k in names}
     data["images"] = [ImageRef(**i) for i in data.get("images") or []]
     return ListingContent(**data)
 

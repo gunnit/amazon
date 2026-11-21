@@ -7,6 +7,7 @@ from app.services.catalog_monitor.content import (
     VOLATILE_ATTRIBUTES,
     ListingContent,
     attribute_text,
+    carry_forward,
     content_from_catalog,
     content_from_dict,
     content_hash,
@@ -98,6 +99,10 @@ def test_hash_ignores_issues_but_tracks_bullet_order():
     swapped = content_from_dict(content_to_dict(c))
     swapped.bullets[0], swapped.bullets[1] = swapped.bullets[1], swapped.bullets[0]
     assert content_hash(swapped) != h
+    from dataclasses import replace as _r
+
+    assert content_hash(_r(c, listing_status=["DISCOVERABLE"])) == h
+    assert content_hash(_r(c, backend_keywords="altro")) != h
 
 
 def test_round_trip_dict():
@@ -127,3 +132,48 @@ def test_attribute_text_filters_marketplace_in_order():
     assert values == [f"Punto elenco {i}" for i in range(1, 6)]
     assert len(attribute_text(attrs, "bullet_point")) == 6
     assert attribute_text(attrs, "missing", MP) == []
+
+
+def _previous():
+    return with_aplus(
+        merge_listing(content_from_catalog(load("catalog_child.json"), MP), load("listing_seller.json")),
+        3,
+        True,
+    )
+
+
+def test_carry_forward_after_failed_listing_keeps_hash():
+    prev = _previous()
+    fresh = with_aplus(content_from_catalog(load("catalog_child.json"), MP), 3, True)
+    assert content_hash(fresh) != content_hash(prev)
+    before = content_to_dict(fresh)
+    out = carry_forward(fresh, prev, listing_fetched=False, aplus_fetched=True)
+    assert content_hash(out) == content_hash(prev)
+    assert out.backend_keywords == prev.backend_keywords and out.sku == prev.sku
+    assert content_to_dict(fresh) == before
+    assert carry_forward(fresh, None, False, False) is fresh
+
+
+def test_carry_forward_after_failed_aplus_keeps_hash():
+    prev = _previous()
+    fresh = merge_listing(content_from_catalog(load("catalog_child.json"), MP), load("listing_seller.json"))
+    out = carry_forward(fresh, prev, listing_fetched=True, aplus_fetched=False)
+    assert out.aplus_module_count == 3 and out.aplus_available is True
+    assert content_hash(out) == content_hash(prev)
+
+
+def test_carry_forward_does_not_override_fresh_values():
+    prev = _previous()
+    fresh = with_aplus(
+        merge_listing(content_from_catalog(load("catalog_child.json"), MP), {**load("listing_seller.json"), "sku": "TEST-SKU-002"}),
+        5,
+        True,
+    )
+    out = carry_forward(fresh, prev, listing_fetched=True, aplus_fetched=True)
+    assert out == fresh and out.sku == "TEST-SKU-002" and out.aplus_module_count == 5
+
+
+def test_content_from_dict_ignores_unknown_keys():
+    d = content_to_dict(_previous())
+    d["removed_field"] = "x"
+    assert content_from_dict(d) == _previous()
