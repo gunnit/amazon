@@ -9,6 +9,7 @@ import type { TabProps } from '@/components/catalog/types'
 const POLL_MS = 5000
 
 const scanKey = (accountId: string) => ['catalog-monitor', 'scan', accountId]
+const SCAN_OUTPUTS = ['quality', 'anomalies', 'variations', 'baselines', 'history']
 
 export function ScanButton({ accountId, t, toast }: Pick<TabProps, 'accountId' | 't' | 'toast'>) {
   const queryClient = useQueryClient()
@@ -22,11 +23,18 @@ export function ScanButton({ accountId, t, toast }: Pick<TabProps, 'accountId' |
   })
   const running = scanQuery.data?.running === true
 
-  // When a scan that we saw running ends, reload the matrix.
+  // When a scan that we saw running ends, reload what the scan writes: lights,
+  // content anomalies, variation families and the protected-content counts.
   const wasRunning = useRef(false)
+  // A scan seen on the previous account must not announce "done" for this one.
+  useEffect(() => {
+    wasRunning.current = false
+  }, [accountId])
   useEffect(() => {
     if (wasRunning.current && !running) {
-      void queryClient.invalidateQueries({ queryKey: ['catalog-monitor', 'quality'] })
+      for (const key of SCAN_OUTPUTS) {
+        void queryClient.invalidateQueries({ queryKey: ['catalog-monitor', key] })
+      }
       const summary = scanQuery.data?.summary
       toast({
         title: t('cm.scan.done'),
@@ -43,7 +51,11 @@ export function ScanButton({ accountId, t, toast }: Pick<TabProps, 'accountId' |
   const start = useMutation({
     mutationFn: () => catalogMonitorApi.startScan(accountId),
     onSuccess: (res) => {
-      if (!res.started) toast({ title: t('cm.scan.alreadyRunning') })
+      if (res.started) {
+        void queryClient.invalidateQueries({ queryKey: ['catalog-monitor', 'quality'] })
+      } else {
+        toast({ title: t('cm.scan.alreadyRunning') })
+      }
       void queryClient.invalidateQueries({ queryKey: scanKey(accountId) })
     },
     onError: (error) =>

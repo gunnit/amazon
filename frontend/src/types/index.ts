@@ -1341,3 +1341,174 @@ export interface CatalogCapabilities {
   vendor_code: string | null
   checked_at: string
 }
+
+// ── Catalogue monitor: content protection, variations, bulk and approvals (R2-R4) ──
+// Mirrors backend/app/schemas/catalog_monitor.py.
+
+export type AnomalyKind =
+  | 'content_changed'
+  | 'child_detached'
+  | 'unexpected_child'
+  | 'family_broken'
+  | 'theme_changed'
+
+export type AnomalyStatus = 'open' | 'acknowledged' | 'restore_requested' | 'resolved'
+
+/** A divergence from the approved content. ``field`` is title|bullets|description|images|aplus|attribute:<name>. */
+export interface CatalogAnomaly {
+  id: string
+  account_id: string
+  asin: string
+  title: string | null
+  kind: AnomalyKind
+  field: string
+  status: AnomalyStatus
+  baseline_value: unknown
+  live_value: unknown
+  detected_at: string
+  last_seen_at: string
+  change_request_id: string | null
+}
+
+export interface RestoreNotice {
+  anomaly_id: string
+  asin: string
+  field: string
+  reason: string
+}
+
+export type ChangeRequestStatus =
+  | 'pending'
+  | 'valid'
+  | 'invalid'
+  | 'approved'
+  | 'rejected'
+  | 'submitted'
+  | 'accepted'
+  | 'failed'
+  | 'file_only'
+
+export const CHANGE_REQUEST_STATUSES: ChangeRequestStatus[] = [
+  'pending',
+  'valid',
+  'invalid',
+  'approved',
+  'file_only',
+  'submitted',
+  'accepted',
+  'failed',
+  'rejected',
+]
+
+export type ChangeKind = 'bulk_update' | 'content_restore' | 'variation_restore' | 'new_item'
+
+/** One Amazon validation or submission issue. */
+export interface ChangeIssue {
+  code?: string
+  message?: string
+  severity?: string
+  attributeNames?: string[]
+}
+
+export interface ChangeRequest {
+  id: string
+  account_id: string
+  batch_id: string
+  asin: string | null
+  sku: string | null
+  kind: ChangeKind
+  operation: string
+  product_type: string | null
+  status: ChangeRequestStatus
+  file_only: boolean
+  /** Shape depends on ``kind``: see ChangePreview. */
+  summary: Record<string, unknown> | null
+  validation_issues: ChangeIssue[] | null
+  submission_result: Record<string, unknown> | null
+  feed_id: string | null
+  created_at: string
+  approved_at: string | null
+  submitted_at: string | null
+}
+
+export interface ChangeBatchResponse {
+  batch_id: string | null
+  requests: ChangeRequest[]
+  not_restorable: RestoreNotice[]
+  skipped: RestoreNotice[]
+}
+
+export interface ChangeActionResponse {
+  requests: ChangeRequest[]
+  /** request id -> reason (not_found, not_validated, file_only, status_<status>) */
+  skipped: Record<string, string>
+}
+
+export type FieldChangeType = 'modified' | 'missing' | 'added' | 'reordered'
+
+export interface FieldChange {
+  field: string
+  change: FieldChangeType
+  baseline: unknown
+  live: unknown
+}
+
+export interface HistoryVersion {
+  id: string
+  content_hash: string
+  first_seen_at: string
+  last_seen_at: string
+  /** Changes against the next older version; empty for the oldest one. */
+  changes: FieldChange[]
+}
+
+export interface BaselineStatus {
+  asins_with_baseline: number
+  asins_total: number
+  families: number
+}
+
+export type VariationChildState = 'ok' | 'detached' | 'unexpected' | 'unknown'
+export type VariationFamilyStatus = 'ok' | 'partial' | 'broken'
+
+export interface VariationFamily {
+  parent_asin: string
+  variation_theme: string | null
+  status: VariationFamilyStatus
+  children: Array<{ asin: string; state: VariationChildState }>
+  anomaly_ids: string[]
+}
+
+export interface UploadRowError {
+  row: number | null
+  asin: string | null
+  sku: string | null
+  message: string
+}
+
+export interface BulkUploadResponse {
+  batch_id: string | null
+  rows: number
+  changes: number
+  unchanged: number
+  keywords_updated: number
+  row_errors: UploadRowError[]
+  requests: ChangeRequest[]
+}
+
+export interface BaselineUploadResponse {
+  updated: number
+  keywords_updated: number
+  row_errors: UploadRowError[]
+}
+
+export type BulkUploadMode = 'update' | 'baseline'
+
+export interface FeedFileDownload {
+  blob: Blob
+  filename: string
+  /** Messages in the file. */
+  messages: number
+  /** Ids from X-Skipped-Requests; null when the header is not readable (cross-origin). */
+  skippedIds: string[] | null
+}

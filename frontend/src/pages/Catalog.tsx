@@ -36,17 +36,21 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
-import { accountsApi, catalogApi } from '@/services/api'
+import { accountsApi, catalogApi, catalogMonitorApi } from '@/services/api'
 import { useTranslation } from '@/i18n'
 import { DateRangeFilter } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import type { Product } from '@/types'
-import { BulkUpdateCard } from '@/components/catalog/BulkUpdateCard'
 import { ImportCard } from '@/components/catalog/ImportCard'
 import { PricesCard } from '@/components/catalog/PricesCard'
 import { AvailabilityCard } from '@/components/catalog/AvailabilityCard'
 import { QualityPanel } from '@/components/catalog-monitor/QualityPanel'
 import { RulesPanel } from '@/components/catalog-monitor/RulesPanel'
+import { ProtectionPanel } from '@/components/catalog-monitor/ProtectionPanel'
+import { VariationsPanel } from '@/components/catalog-monitor/VariationsPanel'
+import { BulkPanel } from '@/components/catalog-monitor/BulkPanel'
+import { ApprovalsPanel } from '@/components/catalog-monitor/ApprovalsPanel'
+import { AWAITING_ACTION } from '@/components/catalog-monitor/changeLabels'
 
 type StringSortKey = 'asin' | 'title' | 'sku' | 'brand'
 type NumberSortKey = 'current_price' | 'current_bsr'
@@ -86,6 +90,9 @@ export default function Catalog() {
   const [sortKey, setSortKey] = useState<SortKey>('title')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+  const [tab, setTab] = useState('products')
+  // the batch Approvals shows alone after a restore or an upload links to it
+  const [focusBatchId, setFocusBatchId] = useState<string | null>(null)
   const pageSize = 50
 
   const { datePreset, customStartDate, customEndDate } = useFilterStore()
@@ -109,7 +116,7 @@ export default function Catalog() {
       }),
   })
 
-  const products = productsQuery.data ?? []
+  const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data])
   const syncedCount = products.length
   const withSalesCount = useMemo(
     () => products.filter((p) => p.has_sales_in_period === true).length,
@@ -172,9 +179,27 @@ export default function Catalog() {
   const sharedProps = {
     accountId: selectedAccountId,
     accounts,
-    onAccountChange: setActiveAccountId,
+    onAccountChange: (id: string) => {
+      setActiveAccountId(id)
+      setFocusBatchId(null)
+    },
     toast,
     t,
+  }
+
+  // Same query as the Approvals tab: the badge counts what still needs an operator.
+  const changesQuery = useQuery({
+    queryKey: ['catalog-monitor', 'changes', selectedAccountId],
+    queryFn: () => catalogMonitorApi.listChanges(selectedAccountId),
+    enabled: !!selectedAccountId,
+  })
+  const awaitingCount = (changesQuery.data ?? []).filter((r) =>
+    AWAITING_ACTION.includes(r.status),
+  ).length
+
+  const openApprovals = (batchId?: string | null) => {
+    setFocusBatchId(batchId ?? null)
+    setTab('approvals')
   }
 
   return (
@@ -187,15 +212,36 @@ export default function Catalog() {
         </div>
       </div>
 
-      <Tabs defaultValue="products" className="space-y-4">
-        <TabsList>
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          // a tab chosen by hand shows the whole queue, not the batch a link focused
+          setTab(value)
+          setFocusBatchId(null)
+        }}
+        className="space-y-4"
+      >
+        <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="products">{t('catalog.tab.products')}</TabsTrigger>
           <TabsTrigger value="quality">{t('cm.tab.quality')}</TabsTrigger>
-          <TabsTrigger value="rules">{t('cm.tab.rules')}</TabsTrigger>
+          <TabsTrigger value="protection">{t('cm.tab.protection')}</TabsTrigger>
+          <TabsTrigger value="variations">{t('cm.tab.variations')}</TabsTrigger>
+          <TabsTrigger value="bulk">{t('cm.tab.bulk')}</TabsTrigger>
+          <TabsTrigger value="approvals">
+            {t('cm.tab.approvals')}
+            {awaitingCount > 0 && (
+              <span
+                className="ml-1.5 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground"
+                aria-label={t('cm.tab.approvalsBadge', { count: awaitingCount })}
+              >
+                {awaitingCount}
+              </span>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="import">{t('catalog.tab.import')}</TabsTrigger>
-          <TabsTrigger value="bulk">{t('catalog.tab.bulk')}</TabsTrigger>
           <TabsTrigger value="prices">{t('catalog.tab.prices')}</TabsTrigger>
           <TabsTrigger value="availability">{t('catalog.tab.availability')}</TabsTrigger>
+          <TabsTrigger value="rules">{t('cm.tab.rules')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="products">
@@ -415,19 +461,28 @@ export default function Catalog() {
           <QualityPanel {...sharedProps} />
         </TabsContent>
 
-        <TabsContent value="rules">
-          <RulesPanel t={t} toast={toast} />
+        <TabsContent value="protection">
+          <ProtectionPanel {...sharedProps} onOpenApprovals={openApprovals} />
+        </TabsContent>
+
+        <TabsContent value="variations">
+          <VariationsPanel {...sharedProps} onOpenApprovals={openApprovals} />
+        </TabsContent>
+
+        <TabsContent value="bulk">
+          <BulkPanel {...sharedProps} onOpenApprovals={openApprovals} />
+        </TabsContent>
+
+        <TabsContent value="approvals">
+          <ApprovalsPanel
+            {...sharedProps}
+            focusBatchId={focusBatchId}
+            onClearFocus={() => setFocusBatchId(null)}
+          />
         </TabsContent>
 
         <TabsContent value="import">
           <ImportCard
-            {...sharedProps}
-            onSuccess={() => queryClient.invalidateQueries({ queryKey: ['catalog', 'products'] })}
-          />
-        </TabsContent>
-
-        <TabsContent value="bulk">
-          <BulkUpdateCard
             {...sharedProps}
             onSuccess={() => queryClient.invalidateQueries({ queryKey: ['catalog', 'products'] })}
           />
@@ -439,6 +494,10 @@ export default function Catalog() {
 
         <TabsContent value="availability">
           <AvailabilityCard {...sharedProps} />
+        </TabsContent>
+
+        <TabsContent value="rules">
+          <RulesPanel t={t} toast={toast} />
         </TabsContent>
 
       </Tabs>

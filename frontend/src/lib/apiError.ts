@@ -26,6 +26,18 @@ const DETAIL_KEYS: Record<string, string> = {
   'email already registered': 'apiError.emailTaken',
   'image storage is unavailable': 'apiError.imageStorageUnavailable',
   'image updates are only available for seller central accounts': 'apiError.sellerOnly',
+  // catalogue monitor (R2-R4); upload messages come in Italian, matched on the part before the colon
+  'administrator role required': 'apiError.adminRequired',
+  'file troppo grande': 'apiError.fileTooLarge',
+  'formato del file non supportato': 'apiError.fileFormat',
+  'impossibile leggere il file': 'apiError.fileUnreadable',
+  'definizione del tipo di prodotto non disponibile': 'apiError.productTypeUnavailable',
+  'no approved or file-only requests in batch': 'apiError.noFeedRequests',
+  'anomalies not found': 'apiError.anomalyNotFound',
+  'anomaly not found': 'apiError.anomalyNotFound',
+  'anomaly is resolved': 'apiError.anomalyHandled',
+  'anomaly is restore_requested': 'apiError.anomalyHandled',
+  'variation family not found': 'apiError.familyNotFound',
 }
 
 function rawDetail(error: unknown): string | null {

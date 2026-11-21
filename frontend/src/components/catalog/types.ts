@@ -32,11 +32,6 @@ export interface PriceUpdateResult {
   price: string
 }
 
-export interface BulkListingUpdateResult {
-  sku: string
-  fields: string[]
-}
-
 export interface ImportRowResult {
   asin: string
   sku?: string | null

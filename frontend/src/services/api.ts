@@ -11,6 +11,9 @@ import type {
   ForecastProductOption,
   QualityResponse, QualityQueryParams, QualityItemDetail, QualityRulesResponse, QualityRuleOverride,
   ScanState, CatalogCapabilities,
+  CatalogAnomaly, ChangeBatchResponse, ChangeActionResponse, ChangeRequest, ChangeRequestStatus,
+  HistoryVersion, BaselineStatus, VariationFamily, BulkUploadMode, BulkUploadResponse,
+  BaselineUploadResponse, FeedFileDownload,
   InventoryReportItem, AdvertisingMetricsItem,
   ScheduledReport, ScheduledReportRun,
   GoogleSheetsConnection, GoogleSheetsSync, GoogleSheetsSyncRun,
@@ -24,6 +27,9 @@ import type {
 } from '@/types'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
+
+// Calls that wait for Amazon once per listing (validation, submit, feed status).
+const LONG_TIMEOUT_MS = 300000
 
 const api = axios.create({
   baseURL: `${API_URL}/api/v1`,
@@ -692,7 +698,6 @@ export const forecastsApi = {
 // Catalog API
 import type {
   AvailabilityResult,
-  BulkListingUpdateResult,
   BulkResult,
   CatalogChangeLogEntry,
   ImportResult,
@@ -767,6 +772,190 @@ export const catalogMonitorApi = {
     })
     return response.data
   },
+
+  // ---- content protection (R3) ----
+
+  listAnomalies: async (
+    accountId: string,
+    params: { kind?: string; status?: string; search?: string } = {},
+  ): Promise<CatalogAnomaly[]> => {
+    const response = await api.get('/catalog-monitor/anomalies', {
+      params: { account_id: accountId, ...params },
+    })
+    return response.data
+  },
+
+  /** Creates and validates one restore request per ASIN: Amazon is called once per ASIN. */
+  restoreAnomalies: async (anomalyIds: string[]): Promise<ChangeBatchResponse> => {
+    const response = await api.post(
+      '/catalog-monitor/anomalies/restore',
+      { anomaly_ids: anomalyIds },
+      { timeout: LONG_TIMEOUT_MS },
+    )
+    return response.data
+  },
+
+  acceptAnomaly: async (anomalyId: string): Promise<CatalogAnomaly> => {
+    const response = await api.post(
+      `/catalog-monitor/anomalies/${encodeURIComponent(anomalyId)}/accept`,
+    )
+    return response.data
+  },
+
+  getHistory: async (accountId: string, asin: string): Promise<HistoryVersion[]> => {
+    const response = await api.get(`/catalog-monitor/history/${encodeURIComponent(asin)}`, {
+      params: { account_id: accountId },
+    })
+    return response.data
+  },
+
+  getBaselineStatus: async (accountId: string): Promise<BaselineStatus> => {
+    const response = await api.get('/catalog-monitor/baselines/status', {
+      params: { account_id: accountId },
+    })
+    return response.data
+  },
+
+  /** Approve the latest live content as the reference (all ASINs, or the given ones). */
+  approveBaselines: async (accountId: string, asins?: string[]): Promise<{ count: number }> => {
+    const response = await api.post('/catalog-monitor/baselines', {
+      account_id: accountId,
+      asins: asins ?? null,
+    })
+    return response.data
+  },
+
+  // ---- variations (R2) ----
+
+  listVariations: async (accountId: string): Promise<VariationFamily[]> => {
+    const response = await api.get('/catalog-monitor/variations', {
+      params: { account_id: accountId },
+    })
+    return response.data
+  },
+
+  restoreVariation: async (
+    accountId: string,
+    parentAsin: string,
+    childAsins?: string[],
+  ): Promise<ChangeBatchResponse> => {
+    const response = await api.post(
+      '/catalog-monitor/variations/restore',
+      { account_id: accountId, parent_asin: parentAsin, child_asins: childAsins ?? null },
+      { timeout: LONG_TIMEOUT_MS },
+    )
+    return response.data
+  },
+
+  // ---- approval queue (R2-R4) ----
+
+  listChanges: async (
+    accountId: string,
+    params: { batch_id?: string; status?: ChangeRequestStatus } = {},
+  ): Promise<ChangeRequest[]> => {
+    const response = await api.get('/catalog-monitor/changes', {
+      params: { account_id: accountId, ...params },
+    })
+    return response.data
+  },
+
+  approveChanges: async (ids: string[]): Promise<ChangeActionResponse> => {
+    const response = await api.post('/catalog-monitor/changes/approve', { ids })
+    return response.data
+  },
+
+  rejectChanges: async (ids: string[]): Promise<ChangeActionResponse> => {
+    const response = await api.post('/catalog-monitor/changes/reject', { ids })
+    return response.data
+  },
+
+  /** Sends approved requests to Amazon: one call per SKU, or one feed above the threshold. */
+  submitChanges: async (ids: string[]): Promise<ChangeActionResponse> => {
+    const response = await api.post(
+      '/catalog-monitor/changes/submit',
+      { ids },
+      { timeout: LONG_TIMEOUT_MS },
+    )
+    return response.data
+  },
+
+  refreshFeed: async (accountId: string, feedId: string): Promise<ChangeRequest[]> => {
+    const response = await api.post(
+      '/catalog-monitor/changes/refresh-feed',
+      { account_id: accountId, feed_id: feedId },
+      { timeout: LONG_TIMEOUT_MS },
+    )
+    return response.data
+  },
+
+  /** The batch's approved and file-only requests as a JSON_LISTINGS_FEED file for Vendor Central. */
+  downloadFeedFile: async (batchId: string): Promise<FeedFileDownload> => {
+    const response = await api.get('/catalog-monitor/changes/feed-file', {
+      params: { batch_id: batchId },
+      responseType: 'blob',
+    })
+    const blob: Blob = response.data
+    let messages = 0
+    try {
+      const document = JSON.parse(await blob.text()) as { messages?: unknown[] }
+      messages = Array.isArray(document.messages) ? document.messages.length : 0
+    } catch {
+      messages = 0
+    }
+    // Readable only when the API is same-origin or exposes the header through CORS.
+    const header = response.headers['x-skipped-requests']
+    const skippedIds =
+      typeof header === 'string' ? header.split(',').map((s) => s.trim()).filter(Boolean) : null
+    return { blob, filename: `listings-feed-${batchId}.json`, messages, skippedIds }
+  },
+
+  // ---- bulk export, upload and new items (R4) ----
+
+  exportCatalog: async (accountId: string): Promise<Blob> => {
+    const response = await api.get('/catalog-monitor/export', {
+      params: { account_id: accountId },
+      responseType: 'blob',
+      timeout: LONG_TIMEOUT_MS,
+    })
+    return response.data
+  },
+
+  /** ``update`` creates validated change requests; ``baseline`` (admin) stores the file as the reference. */
+  uploadBulk: async (
+    accountId: string,
+    mode: BulkUploadMode,
+    file: File,
+  ): Promise<BulkUploadResponse | BaselineUploadResponse> => {
+    const form = new FormData()
+    form.append('account_id', accountId)
+    form.append('mode', mode)
+    form.append('file', file)
+    const response = await api.post('/catalog-monitor/bulk/upload', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: LONG_TIMEOUT_MS,
+    })
+    return response.data
+  },
+
+  newItemsTemplate: async (accountId: string, productType: string): Promise<Blob> => {
+    const response = await api.get('/catalog-monitor/new-items/template', {
+      params: { account_id: accountId, product_type: productType },
+      responseType: 'blob',
+      timeout: LONG_TIMEOUT_MS,
+    })
+    return response.data
+  },
+
+  uploadNewItems: async (accountId: string, file: File): Promise<BulkUploadResponse> => {
+    const form = new FormData()
+    form.append('account_id', accountId)
+    form.append('file', file)
+    const response = await api.post('/catalog-monitor/new-items/upload', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: LONG_TIMEOUT_MS,
+    })
+    return response.data
+  },
 }
 
 export const catalogApi = {
@@ -798,28 +987,6 @@ export const catalogApi = {
     },
   ): Promise<Product> => {
     const response = await api.put(`/catalog/products/${asin}`, null, { params })
-    return response.data
-  },
-
-  downloadBulkTemplate: async (): Promise<Blob> => {
-    const response = await api.get('/catalog/bulk-update/template', { responseType: 'blob' })
-    return response.data
-  },
-
-  bulkUpdate: async (params: {
-    account_id: string
-    product_type?: string
-    file: File
-  }): Promise<BulkResult<BulkListingUpdateResult>> => {
-    const form = new FormData()
-    form.append('file', params.file)
-    const response = await api.post('/catalog/bulk-update', form, {
-      params: {
-        account_id: params.account_id,
-        product_type: params.product_type ?? 'PRODUCT',
-      },
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
     return response.data
   },
 
