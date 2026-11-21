@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, HelpCircle, Loader2, Plus, RotateCcw, Unlink, type LucideIcon } from 'lucide-react'
+import { ArrowRight, Check, HelpCircle, Loader2, Plus, RotateCcw, Unlink, type LucideIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -15,6 +15,7 @@ import type {
 } from '@/types'
 import { AccountPicker } from '@/components/catalog/AccountPicker'
 import type { TabProps } from '@/components/catalog/types'
+import { isOpenRequest } from './changeLabels'
 import { RestoreResult } from './RestoreResult'
 import { ScanButton } from './ScanButton'
 
@@ -75,6 +76,22 @@ export function VariationsPanel(props: Props) {
   })
   const families = query.data ?? []
   const withProblems = families.filter((f) => f.status !== 'ok').length
+
+  // Same query as Approvals: a family with a restore still in the queue is not restored twice.
+  const changesQuery = useQuery({
+    queryKey: ['catalog-monitor', 'changes', accountId],
+    queryFn: () => catalogMonitorApi.listChanges(accountId),
+    enabled: !!accountId,
+  })
+  const restoringParents = useMemo(
+    () =>
+      new Set(
+        (changesQuery.data ?? [])
+          .filter((r) => r.kind === 'variation_restore' && isOpenRequest(r))
+          .map((r) => String(r.summary?.parent_asin ?? '')),
+      ),
+    [changesQuery.data],
+  )
 
   const restore = useMutation({
     mutationFn: (family: VariationFamily) =>
@@ -149,6 +166,7 @@ export function VariationsPanel(props: Props) {
           {families.map((family) => {
             const toRestore = childrenToRestore(family)
             const restoring = restore.isPending && restore.variables?.parent_asin === family.parent_asin
+            const inQueue = restoringParents.has(family.parent_asin)
             return (
               <section key={family.parent_asin} className="space-y-3 rounded-lg border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
@@ -189,12 +207,20 @@ export function VariationsPanel(props: Props) {
                 {toRestore.length > 0 && (
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
                     <span className="text-xs text-muted-foreground">
-                      {t('cm.variations.toRestore', { count: toRestore.length })}
+                      {inQueue
+                        ? t('cm.variations.inQueue')
+                        : t('cm.variations.toRestore', { count: toRestore.length })}
                     </span>
+                    {inQueue && (
+                      <Button size="sm" variant="ghost" onClick={() => onOpenApprovals()}>
+                        {t('cm.restore.openApprovals')}
+                        <ArrowRight className="ml-1.5 h-4 w-4" />
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       onClick={() => restore.mutate(family)}
-                      disabled={restore.isPending}
+                      disabled={restore.isPending || inQueue || changesQuery.isLoading}
                     >
                       {restoring ? (
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />

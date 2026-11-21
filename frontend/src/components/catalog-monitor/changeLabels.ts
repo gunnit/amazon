@@ -1,10 +1,10 @@
 import type {
   AnomalyStatus,
+  CatalogAnomaly,
   ChangeIssue,
   ChangeKind,
   ChangeRequest,
   ChangeRequestStatus,
-  FieldChangeType,
 } from '@/types'
 import { CHANGE_REQUEST_STATUSES } from '@/types'
 
@@ -33,22 +33,6 @@ export function fieldLabel(t: T, field: string): string {
 
 export const isImageSlot = (field: string) =>
   field === 'main_product_image_locator' || IMAGE_SLOT.test(field)
-
-const isEmpty = (v: unknown) =>
-  v == null || v === '' || v === 0 || (Array.isArray(v) && v.length === 0)
-
-/** Same rule as the backend diff: missing, added, reordered (same items) or modified. */
-export function changeType(baseline: unknown, live: unknown): FieldChangeType {
-  if (isEmpty(live)) return 'missing'
-  if (isEmpty(baseline)) return 'added'
-  if (Array.isArray(baseline) && Array.isArray(live) && baseline.length === live.length) {
-    const sorted = (list: unknown[]) => list.map((v) => JSON.stringify(v)).sort()
-    const a = sorted(baseline)
-    const b = sorted(live)
-    if (a.every((x, i) => x === b[i])) return 'reordered'
-  }
-  return 'modified'
-}
 
 export const changeTypeLabel = (t: T, type: string) => translated(t, `cm.change.${type}`, type)
 export const anomalyStatusLabel = (t: T, status: string) =>
@@ -159,3 +143,34 @@ export function requestFields(request: ChangeRequest): FieldEdit[] {
 
 /** "/attributes/other_product_image_locator_5" -> "other_product_image_locator_5" */
 export const pathField = (path: string) => path.split('/').filter(Boolean).pop() ?? path
+
+/** Restorable through Amazon: still open and not A+ (A+ cannot be written via Listings Items). */
+export const canRestoreAnomaly = (a: CatalogAnomaly) =>
+  (a.status === 'open' || a.status === 'acknowledged') && a.field !== 'aplus'
+
+/** The approvals list returns at most this many requests, newest first (backend _MAX_REQUESTS). */
+export const CHANGES_LIST_CAP = 500
+
+/** Sent by the operator by hand on Vendor Central, not through the API. */
+export const isManualUpload = (request: ChangeRequest) =>
+  request.status === 'submitted' && request.submission_result?.manual === true
+
+/** An approved file-only request still waiting for the operator's manual upload. */
+export const awaitsManualUpload = (request: ChangeRequest) =>
+  request.status === 'approved' && request.file_only
+
+/** Goes into the Vendor Central file: approved or file-only, and not missing its parent SKU. */
+export const inFeedFile = (request: ChangeRequest) =>
+  (request.status === 'approved' || request.status === 'file_only') && !parentSkuMissing(request)
+
+const OPEN_STATUSES: ChangeRequestStatus[] = ['pending', 'valid', 'file_only', 'approved', 'submitted']
+
+/** Not settled yet: a second request for the same change would duplicate it. */
+export const isOpenRequest = (request: ChangeRequest) =>
+  OPEN_STATUSES.includes(request.status) && !isManualUpload(request)
+
+/** Approvals filter: what still needs the operator, everything, or one status. */
+export type StatusFilter = 'awaiting' | 'all' | ChangeRequestStatus
+
+export const matchesFilter = (filter: StatusFilter, status: ChangeRequestStatus) =>
+  filter === 'all' || (filter === 'awaiting' ? AWAITING_ACTION.includes(status) : filter === status)

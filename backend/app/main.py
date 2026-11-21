@@ -317,6 +317,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Readable by a frontend on another origin: the feed file's excluded requests
+    # and the download file names.
+    expose_headers=["X-Skipped-Requests", "Content-Disposition"],
 )
 
 

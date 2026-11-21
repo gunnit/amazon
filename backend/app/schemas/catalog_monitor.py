@@ -135,6 +135,8 @@ class AnomalyOut(BaseModel):
     title: Optional[str] = None
     kind: str
     field: str
+    # content_changed only: modified|missing|added|reordered, as diff_content reports it
+    change: Optional[str] = None
     status: str
     baseline_value: Any = None
     live_value: Any = None

@@ -13,7 +13,7 @@ import { catalogMonitorApi } from '@/services/api'
 import { apiErrorDetail } from '@/lib/apiError'
 import type { CatalogAnomaly } from '@/types'
 import type { TabProps } from '@/components/catalog/types'
-import { changeType, changeTypeLabel, fieldLabel } from './changeLabels'
+import { changeTypeLabel, fieldLabel } from './changeLabels'
 import { DiffLegend, FieldCompare } from './FieldCompare'
 
 interface Props extends Pick<TabProps, 't' | 'toast'> {
@@ -54,8 +54,8 @@ export function DiffView({ anomaly, onClose, onRestore, restoring, onShowHistory
           <>
             <DialogHeader>
               <DialogTitle className="pr-6">
-                {fieldLabel(t, anomaly.field)} ·{' '}
-                {changeTypeLabel(t, changeType(anomaly.baseline_value, anomaly.live_value))}
+                {fieldLabel(t, anomaly.field)}
+                {anomaly.change && ` · ${changeTypeLabel(t, anomaly.change)}`}
               </DialogTitle>
               <DialogDescription>
                 <span className="font-mono">{anomaly.asin}</span>

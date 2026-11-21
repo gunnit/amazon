@@ -2,9 +2,10 @@
 content protection, variations and the approval queue (R2, R3).
 
 Every route needs an authenticated user and the account must belong to the user's
-organisation (404 otherwise). Replacing the rule overrides needs the admin role.
-All database access sits in small ``_`` helpers so the sorting, filtering and
-summary logic stays pure.
+organisation (404 otherwise). The admin role is needed to replace the rule overrides,
+approve the live content or a file as the baseline, and approve, submit, mark as
+uploaded by hand or refresh change requests. All database access sits in small ``_``
+helpers so the sorting, filtering and summary logic stays pure.
 """
 from __future__ import annotations
 
@@ -613,6 +614,35 @@ _FEED_STATUSES = ("approved", "file_only")
 _MAX_REQUESTS = 500
 
 
+def _is_empty(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return value == 0
+    return value is None or value == "" or value == []
+
+
+def anomaly_change(kind: str, baseline: Any, live: Any) -> Optional[str]:
+    """How a content field changed, by the rule of ``diff_content`` on the stored values.
+
+    missing: the live value is gone (empty text or list, no A+ module); reordered: a
+    list of texts (bullets, image URLs) with the same items; otherwise modified.
+    Variation anomalies have no change type.
+    """
+    if kind != "content_changed":
+        return None
+    if _is_empty(live):
+        return "missing"
+    if (
+        isinstance(baseline, list)
+        and isinstance(live, list)
+        and all(isinstance(v, str) for v in [*baseline, *live])
+        and sorted(baseline) == sorted(live)
+    ):
+        return "reordered"
+    return "modified"
+
+
 def anomaly_out(anomaly: Any, title: Optional[str] = None) -> AnomalyOut:
     return AnomalyOut(
         id=anomaly.id,
@@ -621,6 +651,7 @@ def anomaly_out(anomaly: Any, title: Optional[str] = None) -> AnomalyOut:
         title=title,
         kind=anomaly.kind,
         field=anomaly.field,
+        change=anomaly_change(anomaly.kind, anomaly.baseline_value, anomaly.live_value),
         status=anomaly.status,
         baseline_value=anomaly.baseline_value,
         live_value=anomaly.live_value,
@@ -840,6 +871,24 @@ def submit_skip_reason(row: Any) -> Optional[str]:
     if is_file_only(row):
         return "file_only"
     return None if passed_validation(row) else "not_validated"
+
+
+def mark_uploaded_skip_reason(row: Any) -> Optional[str]:
+    if row.status != "approved":
+        return f"status_{row.status}"
+    return None if is_file_only(row) else "not_file_only"
+
+
+def mark_uploaded(rows: list[Any], user_id: Any, now: datetime) -> None:
+    """Approved file-only requests the operator uploaded by hand: submitted, by whom and when."""
+    for row in rows:
+        row.status = "submitted"
+        row.submitted_at = now
+        row.submission_result = {
+            "manual": True,
+            "by": str(user_id) if user_id else None,
+            "at": now.isoformat(),
+        }
 
 
 def _split_by_reason(rows: list[Any], reason_of) -> tuple[list[Any], dict[str, str]]:
@@ -1150,10 +1199,10 @@ async def get_baseline_status(
 async def approve_baselines(
     body: BaselinesRequest,
     current_user: CurrentUser,
-    organization: CurrentOrganization,
+    organization: AdminOrganization,
     db: DbSession,
 ):
-    """Approve the latest live content as the baseline (all ASINs, or the given ones)."""
+    """Approve the latest live content as the baseline (all ASINs, or the given ones); admin only."""
     await _account_or_404(db, organization.id, body.account_id)
     count = await approve_live_as_baseline(
         CatalogMonitorRepository(db), body.account_id, body.asins, current_user.id
@@ -1353,6 +1402,21 @@ async def submit_changes(
         account = await _account_or_404(db, organization.id, account_id)
         await service.submit(account, group)
     await _reopen_for_requests(db, todo)
+    await db.commit()
+    return ChangeActionResponse(requests=[request_out(r) for r in rows], skipped={**skipped, **reasons})
+
+
+@router.post("/changes/mark-uploaded", response_model=ChangeActionResponse)
+async def mark_uploaded_changes(
+    body: ChangeIdsRequest,
+    current_user: CurrentUser,
+    organization: AdminOrganization,
+    db: DbSession,
+):
+    """Approved file-only requests uploaded by hand on Vendor Central become submitted."""
+    rows, skipped = await _lock_requests(db, organization.id, body.ids)
+    todo, reasons = _split_by_reason(rows, mark_uploaded_skip_reason)
+    mark_uploaded(todo, current_user.id, datetime.now(timezone.utc))
     await db.commit()
     return ChangeActionResponse(requests=[request_out(r) for r in rows], skipped={**skipped, **reasons})
 

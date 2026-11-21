@@ -1,6 +1,7 @@
 """Approval queue against Postgres: FOR UPDATE load and anomaly reopening (skipped without TEST_DATABASE_URL)."""
 import os
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -82,3 +83,20 @@ async def test_pending_restore_keeps_its_anomaly_linked(db, account):
     await api._reopen_for_requests(db, [row])  # still pending: nothing to reopen
     await db.refresh(anomaly)
     assert anomaly.status == "restore_requested"
+
+
+@pytest.mark.asyncio
+async def test_marked_upload_persists_as_submitted(db, account):
+    item = ChangeItem(
+        asin="B0TEST0002", sku=None, product_type="LUGGAGE", kind="bulk_update",
+        patches=[{"op": "replace", "path": "/attributes/item_name", "value": []}],
+    )
+    service = ChangeRequestService(db)
+    [row] = await service.create(account, [item], None)  # no SKU: file only
+    await service.approve([row], None, True)
+    [locked] = await api._requests_for_update(db, account.organization_id, [row.id])
+    assert api.mark_uploaded_skip_reason(locked) is None
+    api.mark_uploaded([locked], None, datetime.now(timezone.utc))
+    await db.flush()
+    await db.refresh(row)
+    assert row.status == "submitted" and row.submission_result["manual"] is True

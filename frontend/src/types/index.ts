@@ -1362,6 +1362,8 @@ export interface CatalogAnomaly {
   title: string | null
   kind: AnomalyKind
   field: string
+  /** content_changed only: how the field changed, as the backend diff reports it. */
+  change: FieldChangeType | null
   status: AnomalyStatus
   baseline_value: unknown
   live_value: unknown

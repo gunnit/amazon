@@ -8,6 +8,7 @@ import {
   REQUEST_STATUS_CLASS,
   fieldLabel,
   isError,
+  isManualUpload,
   manualImageRemoval,
   parentSkuMissing,
   passedValidation,
@@ -21,9 +22,15 @@ import { DiffLegend, FieldCompare } from './FieldCompare'
 type T = TabProps['t']
 
 export function RequestStatusBadge({ request, t }: { request: ChangeRequest; t: T }) {
+  // "submitted" is either a feed Amazon is processing or a file the operator uploaded by hand
+  const label = isManualUpload(request)
+    ? t('cm.request.manualUpload')
+    : request.status === 'submitted' && request.feed_id
+      ? t('cm.request.feedProcessing')
+      : requestStatusLabel(t, request.status)
   return (
     <Badge variant="outline" className={cn('border-transparent', REQUEST_STATUS_CLASS[request.status])}>
-      {requestStatusLabel(t, request.status)}
+      {label}
     </Badge>
   )
 }

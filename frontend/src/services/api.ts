@@ -31,6 +31,26 @@ const API_URL = import.meta.env.VITE_API_URL || ''
 // Calls that wait for Amazon once per listing (validation, submit, feed status).
 const LONG_TIMEOUT_MS = 300000
 
+/**
+ * A file download that fails answers JSON inside a Blob: turn it back into
+ * `response.data.detail` so apiErrorDetail can translate it like any other error.
+ */
+async function withJsonError<T>(request: Promise<T>): Promise<T> {
+  try {
+    return await request
+  } catch (error) {
+    const response = (error as { response?: { data?: unknown } })?.response
+    if (response?.data instanceof Blob) {
+      try {
+        response.data = JSON.parse(await response.data.text())
+      } catch {
+        // not JSON: leave the body as it is
+      }
+    }
+    throw error
+  }
+}
+
 const api = axios.create({
   baseURL: `${API_URL}/api/v1`,
   timeout: 20000,
@@ -879,6 +899,12 @@ export const catalogMonitorApi = {
     return response.data
   },
 
+  /** Approved file-only requests the operator uploaded by hand on Vendor Central. */
+  markUploaded: async (ids: string[]): Promise<ChangeActionResponse> => {
+    const response = await api.post('/catalog-monitor/changes/mark-uploaded', { ids })
+    return response.data
+  },
+
   refreshFeed: async (accountId: string, feedId: string): Promise<ChangeRequest[]> => {
     const response = await api.post(
       '/catalog-monitor/changes/refresh-feed',
@@ -890,10 +916,12 @@ export const catalogMonitorApi = {
 
   /** The batch's approved and file-only requests as a JSON_LISTINGS_FEED file for Vendor Central. */
   downloadFeedFile: async (batchId: string): Promise<FeedFileDownload> => {
-    const response = await api.get('/catalog-monitor/changes/feed-file', {
-      params: { batch_id: batchId },
-      responseType: 'blob',
-    })
+    const response = await withJsonError(
+      api.get('/catalog-monitor/changes/feed-file', {
+        params: { batch_id: batchId },
+        responseType: 'blob',
+      }),
+    )
     const blob: Blob = response.data
     let messages = 0
     try {
@@ -912,11 +940,13 @@ export const catalogMonitorApi = {
   // ---- bulk export, upload and new items (R4) ----
 
   exportCatalog: async (accountId: string): Promise<Blob> => {
-    const response = await api.get('/catalog-monitor/export', {
-      params: { account_id: accountId },
-      responseType: 'blob',
-      timeout: LONG_TIMEOUT_MS,
-    })
+    const response = await withJsonError(
+      api.get('/catalog-monitor/export', {
+        params: { account_id: accountId },
+        responseType: 'blob',
+        timeout: LONG_TIMEOUT_MS,
+      }),
+    )
     return response.data
   },
 
@@ -938,11 +968,13 @@ export const catalogMonitorApi = {
   },
 
   newItemsTemplate: async (accountId: string, productType: string): Promise<Blob> => {
-    const response = await api.get('/catalog-monitor/new-items/template', {
-      params: { account_id: accountId, product_type: productType },
-      responseType: 'blob',
-      timeout: LONG_TIMEOUT_MS,
-    })
+    const response = await withJsonError(
+      api.get('/catalog-monitor/new-items/template', {
+        params: { account_id: accountId, product_type: productType },
+        responseType: 'blob',
+        timeout: LONG_TIMEOUT_MS,
+      }),
+    )
     return response.data
   },
 

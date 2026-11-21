@@ -1,9 +1,9 @@
-import { useState, type ReactNode } from 'react'
-import { ImageOff } from 'lucide-react'
+import { useMemo, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import type { TabProps } from '@/components/catalog/types'
 import { isImageSlot } from './changeLabels'
-import { sameText, wordDiff, type DiffOp } from './wordDiff'
+import { ImageStrip } from './ImageStrip'
+import { sameText, sideParts, wordDiff, type DiffOp } from './wordDiff'
 
 // Highlights shared by every comparison: what the left side loses, what the right side gains.
 const REMOVED_CLASS = 'rounded-sm bg-red-100 text-red-900 dark:bg-red-900/50 dark:text-red-100'
@@ -27,113 +27,75 @@ const asText = (v: unknown): string | null =>
 const asList = (v: unknown): unknown[] => (Array.isArray(v) ? v : v == null ? [] : [v])
 const asStrings = (v: unknown): string[] => asList(v).map((x) => (typeof x === 'string' ? x : JSON.stringify(x)))
 
+/** Both sides of one field, prepared once: the word diffs are computed here, not per side. */
+type Comparison =
+  | { kind: 'text'; before: string | null; after: string | null; ops: DiffOp[] }
+  | { kind: 'bullets'; before: string[]; after: string[]; ops: Array<DiffOp[] | null> }
+  | { kind: 'images'; before: string[]; after: string[]; numbered: boolean }
+  | { kind: 'aplus'; before: unknown; after: unknown }
+  | { kind: 'attribute'; before: unknown[]; after: unknown[] }
+
+function compare(field: string, before: unknown, after: unknown): Comparison {
+  if (field === 'bullets') {
+    const a = asStrings(before)
+    const b = asStrings(after)
+    const ops = Array.from({ length: Math.max(a.length, b.length) }, (_, i) =>
+      a[i] !== undefined && b[i] !== undefined && !sameText(a[i], b[i]) ? wordDiff(a[i], b[i]) : null,
+    )
+    return { kind: 'bullets', before: a, after: b, ops }
+  }
+  if (field === 'images' || isImageSlot(field)) {
+    return { kind: 'images', before: asStrings(before), after: asStrings(after), numbered: field === 'images' }
+  }
+  if (field === 'aplus') return { kind: 'aplus', before, after }
+  const a = asText(before)
+  const b = asText(after)
+  if ((before == null || a !== null) && (after == null || b !== null)) {
+    return { kind: 'text', before: a, after: b, ops: wordDiff(a ?? '', b ?? '') }
+  }
+  return { kind: 'attribute', before: asList(before), after: asList(after) }
+}
+
 function Empty({ t }: { t: T }) {
   return <span className="italic text-muted-foreground">{t('cm.diff.empty')}</span>
 }
 
-/** The side's words, with the ones the other side does not have highlighted. */
+/** The side's own text, with the words the other side does not have highlighted. */
 function DiffText({ ops, side }: { ops: DiffOp[]; side: Side }) {
-  const hidden = side === 'before' ? 'added' : 'removed'
   return (
     <>
-      {ops
-        .filter((op) => op.type !== hidden)
-        .map((op, i) =>
-          op.type === 'same' ? (
-            <span key={i}>{op.text}</span>
-          ) : (
-            <mark key={i} className={side === 'before' ? REMOVED_CLASS : ADDED_CLASS}>
-              {op.text}
-            </mark>
-          ),
-        )}
+      {sideParts(ops, side).map((op, i) =>
+        op.type === 'same' ? (
+          <span key={i}>{op[side]}</span>
+        ) : (
+          <mark key={i} className={side === 'before' ? REMOVED_CLASS : ADDED_CLASS}>
+            {op[side]}
+          </mark>
+        ),
+      )}
     </>
   )
 }
 
-function TextValue({ value, other, side, t }: { value: string | null; other: string | null; side: Side; t: T }) {
-  if (!value) return <Empty t={t} />
-  const ops = side === 'before' ? wordDiff(value, other ?? '') : wordDiff(other ?? '', value)
-  return (
-    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-      <DiffText ops={ops} side={side} />
-    </p>
-  )
-}
-
-function Bullets({ value, other, side, t }: { value: string[]; other: string[]; side: Side; t: T }) {
+function Bullets({ value, other, ops, side, t }: {
+  value: string[]
+  other: string[]
+  ops: Array<DiffOp[] | null>
+  side: Side
+  t: T
+}) {
   if (value.length === 0) return <Empty t={t} />
   return (
     <ol className="list-decimal space-y-1.5 pl-5 text-sm">
       {value.map((item, i) => {
-        const counterpart = other[i]
-        const changed = !sameText(item, counterpart)
+        const diff = ops[i]
         return (
-          <li key={i} className={cn('px-1 py-0.5', changed && CHANGED_ITEM)}>
-            {changed && counterpart ? (
-              <DiffText
-                side={side}
-                ops={side === 'before' ? wordDiff(item, counterpart) : wordDiff(counterpart, item)}
-              />
-            ) : (
-              item
-            )}
+          <li key={i} className={cn('px-1 py-0.5', !sameText(item, other[i]) && CHANGED_ITEM)}>
+            {diff ? <DiffText ops={diff} side={side} /> : item}
           </li>
         )
       })}
     </ol>
-  )
-}
-
-function Thumb({ url, label, changed }: { url: string | null; label?: string; changed: boolean }) {
-  const [failed, setFailed] = useState(false)
-  const box = cn(
-    'relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded border bg-white',
-    changed && 'ring-2 ring-amber-500 ring-offset-1 ring-offset-background',
-  )
-  const badge = label && (
-    <span className="absolute left-0.5 top-0.5 rounded bg-background/90 px-1 text-[10px] font-semibold tabular-nums text-foreground">
-      {label}
-    </span>
-  )
-  if (!url) {
-    return <span className={cn(box, 'border-dashed bg-muted')}>{badge}</span>
-  }
-  return (
-    <a href={url} target="_blank" rel="noreferrer" className={box} title={url}>
-      {failed ? (
-        <ImageOff className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-      ) : (
-        <img
-          src={url}
-          alt=""
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
-          className="max-h-full max-w-full object-contain"
-        />
-      )}
-      {badge}
-    </a>
-  )
-}
-
-/** Numbered thumbnails; a slot that differs from the other side is outlined. */
-function ImageStrip({ value, other, numbered, t }: { value: string[]; other: string[]; numbered: boolean; t: T }) {
-  const slots = Math.max(value.length, other.length)
-  if (slots === 0) return <Empty t={t} />
-  return (
-    <ul className="flex flex-wrap gap-2">
-      {Array.from({ length: slots }, (_, i) => (
-        <li key={i}>
-          <Thumb
-            url={value[i] ?? null}
-            label={numbered ? String(i + 1) : undefined}
-            changed={(value[i] ?? null) !== (other[i] ?? null)}
-          />
-        </li>
-      ))}
-    </ul>
   )
 }
 
@@ -168,42 +130,51 @@ function Attribute({ value, other, t }: { value: unknown[]; other: unknown[]; t:
   )
 }
 
-function renderSide(field: string, value: unknown, other: unknown, side: Side, t: T): ReactNode {
-  if (field === 'bullets') return <Bullets value={asStrings(value)} other={asStrings(other)} side={side} t={t} />
-  if (field === 'images' || isImageSlot(field)) {
-    return (
-      <ImageStrip value={asStrings(value)} other={asStrings(other)} numbered={field === 'images'} t={t} />
-    )
+function renderSide(c: Comparison, side: Side, t: T): ReactNode {
+  const other: Side = side === 'before' ? 'after' : 'before'
+  switch (c.kind) {
+    case 'bullets':
+      return <Bullets value={c[side]} other={c[other]} ops={c.ops} side={side} t={t} />
+    case 'images':
+      if (c[side].length === 0 && c[other].length === 0) return <Empty t={t} />
+      return <ImageStrip value={c[side]} other={c[other]} numbered={c.numbered} />
+    case 'aplus': {
+      const value = c[side]
+      if (typeof value !== 'number') return <Empty t={t} />
+      return (
+        <span className={cn('text-sm', value !== c[other] && (side === 'before' ? REMOVED_CLASS : ADDED_CLASS))}>
+          {t('cm.diff.aplusModules', { count: value })}
+        </span>
+      )
+    }
+    case 'text':
+      return c[side] ? (
+        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+          <DiffText ops={c.ops} side={side} />
+        </p>
+      ) : (
+        <Empty t={t} />
+      )
+    default:
+      return <Attribute value={c[side]} other={c[other]} t={t} />
   }
-  if (field === 'aplus') {
-    if (typeof value !== 'number') return <Empty t={t} />
-    return (
-      <span className={cn('text-sm', value !== other && (side === 'before' ? REMOVED_CLASS : ADDED_CLASS))}>
-        {t('cm.diff.aplusModules', { count: value })}
-      </span>
-    )
-  }
-  const text = asText(value)
-  const otherText = asText(other)
-  if ((value == null || text !== null) && (other == null || otherText !== null)) {
-    return <TextValue value={text} other={otherText} side={side} t={t} />
-  }
-  return <Attribute value={asList(value)} other={asList(other)} t={t} />
 }
 
 /** Side-by-side comparison of one content field (text, bullets, images, A+ or attribute). */
 export function FieldCompare({ field, before, after, beforeLabel, afterLabel, t }: Props) {
+  // before/after come straight from the query data, so the diff runs once per field
+  const comparison = useMemo(() => compare(field, before, after), [field, before, after])
   return (
     <div className="grid gap-3 md:grid-cols-2">
       {(
         [
-          ['before', beforeLabel, before, after],
-          ['after', afterLabel, after, before],
+          ['before', beforeLabel],
+          ['after', afterLabel],
         ] as const
-      ).map(([side, label, value, other]) => (
+      ).map(([side, label]) => (
         <section key={side} className="min-w-0 space-y-1.5">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</h4>
-          <div className="rounded-md border bg-muted/30 p-3">{renderSide(field, value, other, side, t)}</div>
+          <div className="rounded-md border bg-muted/30 p-3">{renderSide(comparison, side, t)}</div>
         </section>
       ))}
     </div>

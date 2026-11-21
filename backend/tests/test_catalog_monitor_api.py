@@ -1240,3 +1240,100 @@ def test_new_item_upload_refuses_a_sku_known_only_from_live_content(monkeypatch,
                        files={"file": ("n.xlsx", data, XLSX)}).json()
     assert [i.sku for i in _BatchSvc.created] == ["TEST-NEW-002"]
     assert body["row_errors"][0]["row"] == 2 and "già presente" in body["row_errors"][0]["message"]
+
+
+# ---- Task 17 review: change type, manual upload, admin baselines ----
+
+from app.services.catalog_monitor.diff import diff_content  # noqa: E402
+
+
+def _content(**kw):
+    return ListingContent(asin="B0TEST0001", marketplace_id=MP, **kw)
+
+
+@pytest.mark.parametrize("baseline,live", [
+    (_content(title="Borraccia 500 ml"), _content(title="Borraccia 750 ml")),
+    (_content(title="Borraccia 500 ml"), _content(title="")),
+    (_content(bullets=["a", "b", "c"]), _content(bullets=["c", "a", "b"])),
+    (_content(bullets=["a", "b", "c"]), _content(bullets=["a", "b"])),
+    (_content(bullets=["a", "b"]), _content(bullets=[])),
+    (_content(images=[ImageRef("MAIN", "https://x/1.jpg"), ImageRef("PT01", "https://x/2.jpg")]),
+     _content(images=[ImageRef("MAIN", "https://x/2.jpg"), ImageRef("PT01", "https://x/1.jpg")])),
+    (_content(aplus_available=True, aplus_module_count=5),
+     _content(aplus_available=True, aplus_module_count=0)),
+    (_content(aplus_available=True, aplus_module_count=5),
+     _content(aplus_available=True, aplus_module_count=3)),
+    (_content(attributes={"material": [{"value": "Acciaio", "marketplace_id": MP}]}),
+     _content(attributes={"material": [{"value": "Plastica", "marketplace_id": MP}]})),
+    (_content(attributes={"color": [{"value": "Blu"}, {"value": "Rosso"}]}),
+     _content(attributes={"color": [{"value": "Rosso"}, {"value": "Blu"}]})),
+    (_content(attributes={"material": [{"value": "Acciaio"}]}), _content(attributes={})),
+])
+def test_anomaly_change_agrees_with_diff_content(baseline, live):
+    changes = diff_content(baseline, live)
+    assert changes
+    for change in changes:
+        assert api.anomaly_change("content_changed", change.baseline, change.live) == change.change
+
+
+def test_anomaly_change_only_for_content_anomalies():
+    assert api.anomaly_change("child_detached", "B0TEST0010", []) is None
+    out = api.anomaly_out(_anomaly("B0TEST0001", field="bullets", base=["a", "b"], live=["b", "a"]))
+    assert out.change == "reordered"
+
+
+def test_anomalies_route_returns_the_change_type(monkeypatch, known_account):
+    async def _list(db, account_id, kind, statuses, search):
+        return [(_anomaly("B0TEST0001", field="title", base="Titolo", live=""), "Titolo")]
+
+    monkeypatch.setattr(api, "_list_anomalies", _list)
+    client, _ = _client()
+    body = client.get("/catalog-monitor/anomalies", params={"account_id": str(ACCOUNT_ID)}).json()
+    assert [(a["field"], a["change"]) for a in body] == [("title", "missing")]
+
+
+def test_mark_uploaded_submits_only_approved_file_only_requests(monkeypatch):
+    by_hand = _req("approved", payload={"patches": [], "file_only": True})
+    through_api = _req("approved", validation_issues=[])
+    not_approved = _req("file_only")
+    _approval_app(monkeypatch, [by_hand, through_api, not_approved])
+    client, db = _client()
+    missing = uuid4()
+    ids = [by_hand.id, through_api.id, not_approved.id, missing]
+    res = client.post("/catalog-monitor/changes/mark-uploaded", json={"ids": [str(i) for i in ids]})
+    assert res.status_code == 200, res.text
+    assert by_hand.status == "submitted" and by_hand.submitted_at is not None
+    assert by_hand.submission_result["manual"] is True
+    assert by_hand.submission_result["by"] == str(USER.id)
+    assert (through_api.status, not_approved.status) == ("approved", "file_only")
+    assert res.json()["skipped"] == {
+        str(through_api.id): "not_file_only",
+        str(not_approved.id): "status_file_only",
+        str(missing): "not_found",
+    }
+    assert db.commits == 1
+
+
+def test_mark_uploaded_and_baseline_approval_require_admin():
+    client, _ = _client(db=_FakeDb(row=(ORG, UserRole.MEMBER)), admin=False)
+    assert client.post(
+        "/catalog-monitor/changes/mark-uploaded", json={"ids": [str(uuid4())]}
+    ).status_code == 403
+    assert client.post(
+        "/catalog-monitor/baselines", json={"account_id": str(ACCOUNT_ID)}
+    ).status_code == 403
+
+
+def test_cors_exposes_the_download_headers():
+    # Read from the source: importing app.main would load every router in this process.
+    import ast
+    import pathlib
+
+    tree = ast.parse((pathlib.Path(api.__file__).parents[2] / "main.py").read_text())
+    [cors] = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_middleware"
+        and isinstance(node.args[0], ast.Name) and node.args[0].id == "CORSMiddleware"
+    ]
+    exposed = next(k.value for k in cors.keywords if k.arg == "expose_headers")
+    assert {"X-Skipped-Requests", "Content-Disposition"} <= set(ast.literal_eval(exposed))

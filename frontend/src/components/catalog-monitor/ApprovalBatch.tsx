@@ -1,11 +1,13 @@
-import { FileDown, Loader2, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
+import { FileCheck2, FileDown, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import type { ChangeRequest } from '@/types'
+import { ConfirmDialog } from '@/components/catalog/ConfirmDialog'
 import type { TabProps } from '@/components/catalog/types'
 import { AdminButton } from './AdminButton'
-import { kindLabel } from './changeLabels'
+import { awaitsManualUpload, inFeedFile, kindLabel } from './changeLabels'
 import { RequestList } from './RequestList'
 
 interface Props {
@@ -19,6 +21,9 @@ interface Props {
   onToggleAll: (ids: string[], on: boolean) => void
   onDownload: (batchId: string) => void
   downloading: boolean
+  /** Approved file-only requests the operator uploaded by hand. */
+  onMarkUploaded: (ids: string[]) => void
+  marking: boolean
   onRefreshFeeds: (feedIds: string[]) => void
   refreshing: boolean
   focused: boolean
@@ -35,6 +40,8 @@ export function ApprovalBatch({
   onToggleAll,
   onDownload,
   downloading,
+  onMarkUploaded,
+  marking,
   onRefreshFeeds,
   refreshing,
   focused,
@@ -47,9 +54,10 @@ export function ApprovalBatch({
     allInBatch[0]?.created_at ?? '',
   )
   const kinds = [...new Set(allInBatch.map((r) => kindLabel(t, r.kind)))].join(', ')
-  const fileReady = allInBatch.some(
-    (r) => r.file_only && (r.status === 'approved' || r.status === 'file_only'),
-  )
+  const [confirmMark, setConfirmMark] = useState(false)
+  // requests missing their parent SKU never go into the file
+  const fileReady = allInBatch.some((r) => r.file_only && inFeedFile(r))
+  const toMark = allInBatch.filter(awaitsManualUpload).map((r) => r.id)
   const feedIds = [
     ...new Set(
       allInBatch.filter((r) => r.status === 'submitted' && r.feed_id).map((r) => r.feed_id as string),
@@ -95,6 +103,23 @@ export function ApprovalBatch({
               {t('cm.approvals.download')}
             </Button>
           )}
+          {toMark.length > 0 && (
+            <AdminButton
+              size="sm"
+              variant="outline"
+              adminOnlyTitle={t('cm.approvals.adminOnly')}
+              onClick={() => setConfirmMark(true)}
+              disabled={marking}
+              title={t('cm.approvals.markUploadedHelp')}
+            >
+              {marking ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileCheck2 className="mr-2 h-4 w-4" />
+              )}
+              {t('cm.approvals.markUploaded')}
+            </AdminButton>
+          )}
           {feedIds.length > 0 && (
             <AdminButton
               size="sm"
@@ -114,6 +139,18 @@ export function ApprovalBatch({
         </div>
       </header>
       <RequestList requests={requests} t={t} selected={selected} onToggle={onToggle} />
+      <ConfirmDialog
+        open={confirmMark}
+        onOpenChange={setConfirmMark}
+        title={t('cm.approvals.markUploadedTitle')}
+        description={t('cm.approvals.markUploadedBody', { count: toMark.length })}
+        confirmLabel={t('cm.approvals.markUploaded')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={() => {
+          setConfirmMark(false)
+          onMarkUploaded(toMark)
+        }}
+      />
     </section>
   )
 }
