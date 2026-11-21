@@ -14,6 +14,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.models.amazon_account import AccountType, AmazonAccount
 from app.models.listing_quality import ListingQualitySnapshot
 from app.models.user import Organization
+from app.services.catalog_monitor.changes import (
+    ChangeItem,
+    ChangeRequestService,
+    patches_from_content,
+)
 from app.services.catalog_monitor.content import ListingContent
 from app.services.catalog_monitor.repository import CatalogMonitorRepository
 from app.services.catalog_monitor.rules import ListingEvaluation
@@ -177,3 +182,24 @@ async def test_baselines_quality_snapshot_and_capability_upsert(db, account):
     cap = await repo.save_capability(account.id, {"feeds": {"ok": False, "error": "x"}}, "VND01", NOW)
     assert cap.vendor_code == "VND01"
     assert (await repo.capability(account.id)).results["feeds"]["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_change_requests_are_stored_and_found_by_feed(db, account):
+    repo = CatalogMonitorRepository(db)
+    service = ChangeRequestService(db, client_factory=lambda acc, org: None, repo=repo)
+    patches = patches_from_content({"title": "Titolo"}, "APJ6JRA9NG5V4")
+    items = [
+        ChangeItem(f"B0TEST000{n}", f"TEST-SKU-00{n}", "HOME", "bulk_update", patches=patches)
+        for n in (1, 2, 3)
+    ]
+    rows = await service.create(account, items, None)
+    assert [r.status for r in rows] == ["pending"] * 3
+    rows[0].feed_id = rows[1].feed_id = "FEED1"
+    rows[2].feed_id = "FEED2"
+    await db.flush()
+
+    found = await repo.change_requests_for_feed(account.id, "FEED1")
+    assert {r.id for r in found} == {rows[0].id, rows[1].id}
+    assert found[0].payload == {"patches": patches, "file_only": False}
+    assert await repo.change_requests_for_feed(uuid.uuid4(), "FEED1") == []

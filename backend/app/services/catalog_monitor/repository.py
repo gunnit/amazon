@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.catalog_monitor import (
     CatalogAnomaly,
     CatalogApiCapability,
+    CatalogChangeRequest,
     ListingContentBaseline,
     ListingContentVersion,
     ListingQualityRule,
@@ -199,6 +200,21 @@ class CatalogMonitorRepository:
         anomaly.status = "resolved"
         anomaly.resolved_at = now
         await self.db.flush()
+
+    # ---- change requests ----
+
+    async def change_requests_for_feed(
+        self, account_id: UUID, feed_id: str
+    ) -> list[CatalogChangeRequest]:
+        result = await self.db.execute(
+            select(CatalogChangeRequest)
+            .where(
+                CatalogChangeRequest.account_id == account_id,
+                CatalogChangeRequest.feed_id == feed_id,
+            )
+            .order_by(CatalogChangeRequest.created_at)
+        )
+        return list(result.scalars().all())
 
     # ---- quality, rules, capabilities ----
 
