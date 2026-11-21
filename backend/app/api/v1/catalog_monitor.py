@@ -17,11 +17,17 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import delete, func, or_, select
 
-from app.api.deps import AdminOrganization, CurrentOrganization, CurrentUser, DbSession
+from app.api.deps import (
+    AdminOrganization,
+    CurrentOrganization,
+    CurrentUser,
+    DbSession,
+    get_admin_organization,
+)
 from app.models.amazon_account import AmazonAccount
 from app.models.catalog_monitor import (
     CatalogAnomaly,
@@ -37,9 +43,11 @@ from app.schemas.catalog_monitor import (
     AccountRequest,
     AnomalyOut,
     AnomalyRestoreRequest,
+    BaselineUploadResponse,
     BaselinesRequest,
     BaselinesResponse,
     BaselineStatusResponse,
+    BulkUploadResponse,
     CapabilityResponse,
     ChangeActionResponse,
     ChangeBatchResponse,
@@ -58,14 +66,30 @@ from app.schemas.catalog_monitor import (
     RuleOverrideIn,
     RuleOverrideOut,
     RulesResponse,
+    RowErrorOut,
     RulesUpdateRequest,
     ScanStartResponse,
     ScanStateResponse,
     VariationOut,
     VariationRestoreRequest,
 )
-from app.services.catalog_monitor.baselines import accept_anomaly, approve_live_as_baseline
+from app.services.catalog_monitor.baselines import (
+    accept_anomaly,
+    approve_live_as_baseline,
+    import_baseline_rows,
+)
+from app.services.catalog_monitor.bulk_io import (
+    ParsedRow,
+    build_export_workbook,
+    build_new_item_template,
+    parse_new_items,
+    parse_upload,
+    row_to_change_item,
+    validate_new_item,
+    wrap_new_item_attributes,
+)
 from app.services.catalog_monitor.capabilities import check_account_capabilities, listing_seller_id
+from app.services.catalog_monitor.clients import default_client_factory, load_organization
 from app.services.catalog_monitor.changes import (
     ChangeItem,
     ChangeRequestService,
@@ -73,11 +97,13 @@ from app.services.catalog_monitor.changes import (
     can_approve,
     can_reject,
     is_file_only,
+    passed_validation,
     restore_patches,
     variation_patches,
 )
 from app.services.catalog_monitor.content import content_from_dict
 from app.services.catalog_monitor.diff import diff_content
+from app.services.catalog_monitor.ptd import ProductTypeDefinitionService
 from app.services.catalog_monitor.repository import CatalogMonitorRepository
 from app.services.catalog_monitor.rules import DEFAULT_RULES, RULE_KEYS
 from app.services.catalog_monitor.scanner import scan_state, start_account_scan
@@ -811,7 +837,9 @@ def reject_skip_reason(row: Any) -> Optional[str]:
 def submit_skip_reason(row: Any) -> Optional[str]:
     if row.status != "approved":
         return f"status_{row.status}"
-    return "file_only" if is_file_only(row) else None
+    if is_file_only(row):
+        return "file_only"
+    return None if passed_validation(row) else "not_validated"
 
 
 def _split_by_reason(rows: list[Any], reason_of) -> tuple[list[Any], dict[str, str]]:
@@ -1344,3 +1372,309 @@ async def refresh_feed(
     await _reopen_for_requests(db, rows)
     await db.commit()
     return [request_out(r) for r in rows]
+
+
+# ---- bulk export, upload and new items (R4) ----
+
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+_UPLOAD_SUFFIXES = (".xlsx", ".xlsm", ".csv")
+_XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_MAX_KEYWORD_LENGTH = 255
+_NOT_IN_ACCOUNT = "ASIN non trovato in questo account"
+_PTD_UNAVAILABLE = "Definizione del tipo di prodotto non disponibile"
+_UNREADABLE_FILE = (
+    "Impossibile leggere il file: caricate un file Excel (.xlsx) o CSV esportato da Catalogo."
+)
+
+
+def row_error(row: Any, message: str, asin: Optional[str] = None, sku: Optional[str] = None) -> RowErrorOut:
+    return RowErrorOut(row=row, asin=asin, sku=sku, message=message)
+
+
+def match_upload_rows(
+    rows: list[ParsedRow], products: list[Any]
+) -> tuple[list[tuple[ParsedRow, Any]], list[RowErrorOut]]:
+    """Rows that belong to the account (by asin, else sku), plus the errors of the others.
+
+    A row with parse errors, an unknown product or a product already seen in the
+    file is reported and skipped. Matched rows get the product's asin and sku.
+    """
+    by_asin = {p.asin: p for p in products if p.asin}
+    by_sku = {p.sku: p for p in products if p.sku}
+    matched: list[tuple[ParsedRow, Any]] = []
+    errors: list[RowErrorOut] = []
+    seen: set[str] = set()
+    for row in rows:
+        problems = list(row.errors)
+        keyword = row.cells.get("main_keyword") or ""
+        if len(keyword) > _MAX_KEYWORD_LENGTH:
+            problems.append(f"main_keyword supera {_MAX_KEYWORD_LENGTH} caratteri")
+        if problems:
+            errors.append(row_error(row.row_number, "; ".join(problems), row.asin, row.sku))
+            continue
+        product = by_asin.get(row.asin) if row.asin else None
+        if product is None and row.sku:
+            product = by_sku.get(row.sku)
+        if product is None:
+            errors.append(row_error(row.row_number, _NOT_IN_ACCOUNT, row.asin, row.sku))
+            continue
+        if product.asin in seen:
+            errors.append(
+                row_error(row.row_number, "ASIN ripetuto nel file", product.asin, row.sku)
+            )
+            continue
+        seen.add(product.asin)
+        row.asin = product.asin
+        row.sku = row.sku or product.sku
+        matched.append((row, product))
+    return matched, errors
+
+
+def apply_main_keyword_cells(matched: list[tuple[ParsedRow, Any]]) -> int:
+    """Store the ``main_keyword`` cells that differ from the product's keyword; returns how many."""
+    changed = [
+        KeywordItem(asin=product.asin, keyword=row.cells["main_keyword"])
+        for row, product in matched
+        if "main_keyword" in row.cells
+        and row.cells["main_keyword"].strip() != (product.main_keyword or "")
+    ]
+    updated, _ = apply_keywords({p.asin: p for _, p in matched}, changed)
+    return updated
+
+
+async def _read_upload(file: UploadFile) -> tuple[bytes, str]:
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            "File troppo grande: il limite e' 10 MB.",
+        )
+    name = file.filename or ""
+    if not name.lower().endswith(_UPLOAD_SUFFIXES):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Formato del file non supportato: usate .xlsx o .csv.",
+        )
+    return data, name
+
+
+def _parse_file(parser, data: bytes, name: str):
+    try:
+        return parser(data, name)
+    except Exception as exc:  # noqa: BLE001 - corrupt xlsx, bad encoding, odd csv: all 422
+        logger.warning("Unreadable bulk upload %r: %s", name, type(exc).__name__)
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, _UNREADABLE_FILE) from exc
+
+
+async def _account_products(db, account_id: UUID) -> list[Product]:
+    result = await db.execute(select(Product).where(Product.account_id == account_id))
+    return list(result.scalars().all())
+
+
+async def _export_rows(db, account_id: UUID) -> list[tuple[Product, Any]]:
+    result = await db.execute(
+        select(Product)
+        .where(
+            Product.account_id == account_id,
+            Product.is_active.is_(True),
+            Product.asin.isnot(None),
+        )
+        .order_by(Product.asin)
+    )
+    products = list(result.scalars().all())
+    versions = await CatalogMonitorRepository(db).latest_versions(account_id)
+    return [
+        (p, content_from_dict(versions[p.asin].content) if p.asin in versions else None)
+        for p in products
+    ]
+
+
+async def _product_type_required(db, account: Any, product_type: str) -> Optional[list[str]]:
+    """Required attributes of the product type for the account's marketplace; None if unknown."""
+    try:
+        client = default_client_factory(account, await load_organization(db, account))
+        seller_id = listing_seller_id(account, await _stored_capability(db, account.id))
+        return await ProductTypeDefinitionService(db).required_attributes(
+            client, account.marketplace_id, product_type, seller_id
+        )
+    except Exception as exc:  # noqa: BLE001 - an unreachable definition is "unavailable"
+        logger.warning("Product type %s definition failed: %s", product_type, type(exc).__name__)
+        return None
+
+
+def _xlsx_response(content: bytes, filename: str) -> StreamingResponse:
+    return StreamingResponse(
+        iter([content]),
+        media_type=_XLSX_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/export")
+async def export_catalog(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: UUID,
+):
+    """The account's catalogue as an Excel file: it is also the upload template."""
+    await _account_or_404(db, organization.id, account_id)
+    content = build_export_workbook(await _export_rows(db, account_id))
+    return _xlsx_response(content, f"catalogo-{account_id}.xlsx")
+
+
+@router.post("/bulk/upload", response_model=BulkUploadResponse | BaselineUploadResponse)
+async def upload_bulk(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: UUID = Form(...),
+    mode: str = Form("update"),
+    file: UploadFile = File(...),
+):
+    """Edited export: ``update`` makes validated change requests of the changed cells,
+    ``baseline`` (admin only) makes the file the approved content to protect.
+    """
+    if mode not in ("update", "baseline"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "mode must be update or baseline")
+    if mode == "baseline":
+        await get_admin_organization(current_user, db)
+    account = await _account_or_404(db, organization.id, account_id)
+    data, name = await _read_upload(file)
+    parsed = _parse_file(parse_upload, data, name)
+    matched, errors = match_upload_rows(parsed, await _account_products(db, account.id))
+    keywords_updated = apply_main_keyword_cells(matched)
+
+    if mode == "baseline":
+        written, import_errors = await import_baseline_rows(
+            CatalogMonitorRepository(db),
+            account.id,
+            [
+                (row.asin, {k: v for k, v in row.cells.items() if k != "main_keyword"})
+                for row, _ in matched
+            ],
+            current_user.id,
+        )
+        await db.commit()
+        return BaselineUploadResponse(
+            updated=written,
+            keywords_updated=keywords_updated,
+            row_errors=[*errors, *(row_error(None, message) for message in import_errors)],
+        )
+
+    live = await _latest_content_dicts(db, account.id, [row.asin for row, _ in matched])
+    items: list[ChangeItem] = []
+    for row, _ in matched:
+        item = row_to_change_item(
+            row,
+            content_from_dict(live[row.asin]) if row.asin in live else None,
+            account.marketplace_id,
+        )
+        if item is not None:
+            items.append(item)
+    batch_id, requests = None, []
+    if items:
+        service = ChangeRequestService(db)
+        batch_id = uuidlib.uuid4()
+        requests = await service.create(account, items, current_user.id, batch_id=batch_id)
+        await service.validate(account, requests)
+    await db.commit()
+    return BulkUploadResponse(
+        batch_id=batch_id,
+        rows=len(parsed),
+        changes=len(items),
+        unchanged=len(matched) - len(items),
+        keywords_updated=keywords_updated,
+        row_errors=errors,
+        requests=[request_out(r) for r in requests],
+    )
+
+
+@router.get("/new-items/template")
+async def new_items_template(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: UUID,
+    product_type: str = Query(min_length=1),
+):
+    """Empty new-item sheet for a product type: sku, product_type, required, recommended."""
+    account = await _account_or_404(db, organization.id, account_id)
+    required = await _product_type_required(db, account, product_type)
+    if required is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, _PTD_UNAVAILABLE)
+    await db.commit()  # keeps the definition cache row
+    recommended = list(DEFAULT_RULES["attributes"].params["recommended_attributes"])
+    content = build_new_item_template(product_type, required, recommended)
+    return _xlsx_response(content, f"nuovi-articoli-{product_type}.xlsx")
+
+
+@router.post("/new-items/upload", response_model=BulkUploadResponse)
+async def upload_new_items(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: UUID = Form(...),
+    file: UploadFile = File(...),
+):
+    """New items: one validated PUT request per row that fills the required attributes."""
+    account = await _account_or_404(db, organization.id, account_id)
+    data, name = await _read_upload(file)
+    parsed = _parse_file(parse_new_items, data, name)
+    existing_skus = {p.sku for p in await _account_products(db, account.id) if p.sku}
+    required_by_type: dict[str, Optional[list[str]]] = {}
+    seen: set[str] = set()
+    items: list[ChangeItem] = []
+    errors: list[RowErrorOut] = []
+    for row in parsed:
+        if row.errors:
+            errors.append(row_error(row.row_number, "; ".join(row.errors), sku=row.sku or None))
+            continue
+        if row.sku in existing_skus:
+            errors.append(row_error(
+                row.row_number, "SKU già presente: usate l'aggiornamento massivo", sku=row.sku
+            ))
+            continue
+        if row.sku in seen:
+            errors.append(row_error(row.row_number, "SKU ripetuto nel file", sku=row.sku))
+            continue
+        seen.add(row.sku)
+        if row.product_type not in required_by_type:
+            required_by_type[row.product_type] = await _product_type_required(
+                db, account, row.product_type
+            )
+        required = required_by_type[row.product_type]
+        if required is None:
+            errors.append(row_error(
+                row.row_number, f"{_PTD_UNAVAILABLE}: {row.product_type}", sku=row.sku
+            ))
+            continue
+        missing = validate_new_item(row, required)
+        if missing or not row.attributes:
+            errors.append(row_error(
+                row.row_number, "; ".join(missing) or "nessun attributo compilato", sku=row.sku
+            ))
+            continue
+        items.append(ChangeItem(
+            asin=None,
+            sku=row.sku,
+            product_type=row.product_type,
+            kind="new_item",
+            operation="PUT",
+            attributes=wrap_new_item_attributes(row.attributes, account.marketplace_id),
+            summary={"fields": {k: {"before": None, "after": v} for k, v in row.attributes.items()}},
+        ))
+    batch_id, requests = None, []
+    if items:
+        service = ChangeRequestService(db)
+        batch_id = uuidlib.uuid4()
+        requests = await service.create(account, items, current_user.id, batch_id=batch_id)
+        await service.validate(account, requests)
+    await db.commit()
+    return BulkUploadResponse(
+        batch_id=batch_id,
+        rows=len(parsed),
+        changes=len(items),
+        row_errors=errors,
+        requests=[request_out(r) for r in requests],
+    )

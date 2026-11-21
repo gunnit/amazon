@@ -264,7 +264,7 @@ def can_reject(request: CatalogChangeRequest) -> bool:
     return request.status in _REJECTABLE
 
 
-def _passed_validation(request: CatalogChangeRequest) -> bool:
+def passed_validation(request: CatalogChangeRequest) -> bool:
     """Amazon checked the request with VALIDATION_PREVIEW and found no error."""
     issues = request.validation_issues
     return isinstance(issues, list) and not _has_error(issues)
@@ -542,7 +542,7 @@ class ChangeRequestService:
         """
         todo = [
             r for r in requests
-            if r.status == "approved" and not is_file_only(r) and _passed_validation(r)
+            if r.status == "approved" and not is_file_only(r) and passed_validation(r)
         ]
         if not todo:
             return

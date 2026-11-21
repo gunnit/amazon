@@ -181,6 +181,31 @@ class ChangeBatchResponse(BaseModel):
     skipped: list[RestoreNotice] = Field(default_factory=list)
 
 
+class RowErrorOut(BaseModel):
+    row: Optional[int] = None  # sheet row number; None when the message is not about one row
+    asin: Optional[str] = None
+    sku: Optional[str] = None
+    message: str
+
+
+class BulkUploadResponse(BaseModel):
+    """Result of an upload that creates change requests (update mode or new items)."""
+
+    batch_id: Optional[UUID] = None
+    rows: int
+    changes: int
+    unchanged: int = 0
+    keywords_updated: int = 0
+    row_errors: list[RowErrorOut] = Field(default_factory=list)
+    requests: list[ChangeRequestOut] = Field(default_factory=list)
+
+
+class BaselineUploadResponse(BaseModel):
+    updated: int
+    keywords_updated: int = 0
+    row_errors: list[RowErrorOut] = Field(default_factory=list)
+
+
 class FieldChangeOut(BaseModel):
     field: str
     change: str

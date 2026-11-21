@@ -74,11 +74,6 @@ class BulkPriceUpdateRequest(BaseModel):
 # ---------------------------------------------------------------------
 
 
-class BulkListingUpdateResult(BaseModel):
-    sku: str
-    fields: List[str]
-
-
 # ---------------------------------------------------------------------
 # Manual catalog import (CSV / Excel)
 # ---------------------------------------------------------------------

@@ -401,7 +401,7 @@ async def test_toggle_availability_failure_records_and_raises(monkeypatch):
 
 
 # ---------------------------------------------------------------------
-# bulk_update_from_excel
+# Excel helper (manual import tests)
 # ---------------------------------------------------------------------
 
 
@@ -413,71 +413,6 @@ def _make_excel_bytes(rows):
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="listings")
     return buffer.getvalue()
-
-
-@pytest.mark.asyncio
-async def test_bulk_update_from_excel_mixed_results(monkeypatch):
-    account = _account()
-    session = FakeAsyncSession(
-        # _mirror_local_listing performs one select per processed sku.
-        # Snapshot lookup before SP-API also queries once per sku.
-        [[]] * 20
-    )
-    service = CatalogService(session, user_id=uuid4())
-    _patch_account_resolution(monkeypatch, service, account)
-
-    sp_client = MagicMock()
-
-    def _update(seller_id, sku, product_type, attributes):
-        if sku == "SKU-FAIL":
-            raise AmazonAPIError("Bad attribute")
-        return {"ok": True}
-
-    sp_client.update_listing_attributes.side_effect = _update
-    monkeypatch.setattr(service, "_create_sp_api_client", lambda *_a, **_kw: sp_client)
-
-    rows = [
-        {"sku": "SKU-OK", "title": "New title"},
-        {"sku": "SKU-FAIL", "title": "Other title"},
-        {"sku": "SKU-EMPTY"},  # no actual attributes -> skipped
-    ]
-    payload = _make_excel_bytes(rows)
-
-    result = await service.bulk_update_from_excel(account.id, payload)
-
-    assert result.succeeded == 1
-    assert result.failed == 1
-    assert result.skipped == 1
-    assert result.total == 3
-    successes_skus = {s.sku for s in result.successes}
-    assert successes_skus == {"SKU-OK"}
-    error_codes = {e.code for e in result.errors}
-    assert error_codes == {BulkErrorCode.SP_API_ERROR}
-    # Row 2 (header at row 1) is the failing one.
-    assert result.errors[0].row == 3
-
-    audit = [o for o in session.added if o.__class__.__name__ == "CatalogChangeLog"]
-    assert len(audit) == 2  # one success + one failed; the empty row is skipped
-
-
-@pytest.mark.asyncio
-async def test_bulk_update_from_excel_rejects_missing_sku_column():
-    session = FakeAsyncSession([])
-    service = CatalogService(session)
-    payload = _make_excel_bytes([{"title": "No sku column"}])
-
-    async def _req(_account_id):
-        return _account()
-
-    async def _load_org(*_a, **_kw):
-        return None
-
-    service._require_seller_account = _req
-    service._load_organization = _load_org
-    service._create_sp_api_client = lambda *_a, **_kw: MagicMock()
-
-    with pytest.raises(CatalogOperationError, match="sku"):
-        await service.bulk_update_from_excel(uuid4(), payload)
 
 
 # ---------------------------------------------------------------------

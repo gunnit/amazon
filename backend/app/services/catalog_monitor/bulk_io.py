@@ -436,3 +436,63 @@ def validate_new_item(row: NewItemRow, required: Optional[list[str]]) -> list[st
         for name in required or []
         if not row.attributes.get(name)
     ]
+
+
+def wrap_new_item_attributes(attributes: dict, marketplace_id: str) -> dict:
+    """Attributes of a new-item row as Listings Items values.
+
+    A text cell becomes a language-tagged value (``text_value``); an attribute with
+    dotted columns (``item_weight.value``, ``item_weight.unit``) becomes one object
+    carrying those leaves and the marketplace id.
+    """
+    wrapped: dict = {}
+    for name, value in attributes.items():
+        if isinstance(value, dict):
+            wrapped[name] = [{**value, "marketplace_id": marketplace_id}]
+        else:
+            wrapped[name] = text_value(str(value), marketplace_id)
+    return wrapped
+
+
+NEW_ITEMS_SHEET = "Nuovi articoli"
+
+_NEW_ITEM_INSTRUCTIONS = [
+    "Come usare questo file",
+    "",
+    "1. Compilate una riga per ogni nuovo articolo nel foglio \"Nuovi articoli\" e caricate il file.",
+    "2. sku e product_type sono obbligatori; l'SKU non deve esistere gia' nell'account (per le schede esistenti usate l'aggiornamento massivo).",
+    "3. Gli attributi obbligatori del tipo prodotto sono elencati qui sotto: una riga senza uno di essi non viene creata.",
+    "4. Per un attributo con piu' campi usate colonne con il punto, per esempio item_weight.value e item_weight.unit.",
+    "5. Ogni articolo viene validato da Amazon e approvato da un amministratore prima della creazione.",
+    "",
+]
+
+
+def build_new_item_template(
+    product_type: str, required: list[str], recommended: list[str]
+) -> bytes:
+    """Empty new-item sheet: sku, product_type, required attributes, then recommended ones."""
+    attributes = list(required) + [name for name in recommended if name not in required]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = NEW_ITEMS_SHEET
+    headers = ["sku", "product_type"] + attributes
+    ws.append(headers)
+    for index, header in enumerate(headers, start=1):
+        ws.cell(row=1, column=index).font = Font(bold=True)
+        ws.column_dimensions[get_column_letter(index)].width = max(16, min(len(header) + 4, 40))
+    ws.freeze_panes = "A2"
+    guide = wb.create_sheet(INSTRUCTIONS_SHEET)
+    lines = list(_NEW_ITEM_INSTRUCTIONS)
+    lines.append(f"Tipo prodotto: {product_type}")
+    lines.append("Attributi obbligatori: " + (", ".join(required) or "nessuno"))
+    lines.append("Attributi consigliati: " + (", ".join(n for n in recommended if n not in required) or "nessuno"))
+    for line in lines:
+        guide.append([line])
+    guide.column_dimensions["A"].width = 120
+    for row in guide.iter_rows():
+        row[0].alignment = Alignment(wrap_text=True, vertical="top")
+    guide["A1"].font = Font(bold=True, size=14)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

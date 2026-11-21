@@ -16,7 +16,6 @@ from app.models.sales_data import SalesData
 from app.schemas.catalog import (
     AvailabilityResult,
     AvailabilityUpdateRequest,
-    BulkListingUpdateResult,
     BulkPriceUpdateRequest,
     BulkResult,
     CatalogChangeLogEntry,
@@ -247,44 +246,21 @@ async def backfill_product_titles(
     return {"account_id": str(account_id), **summary}
 
 
-@router.get("/bulk-update/template")
-async def download_bulk_template(
-    current_user: CurrentUser,
-    organization: CurrentOrganization,
-):
-    """Download the Excel template for bulk listing updates."""
-    content = CatalogService.generate_template_bytes()
-    return StreamingResponse(
-        iter([content]),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=bulk_listings_template.xlsx"},
-    )
+BULK_UPDATE_GONE = (
+    "Usa Catalogo → Aggiornamento massivo: le modifiche ora passano dall'approvazione."
+)
 
 
-@router.post("/bulk-update", response_model=BulkResult[BulkListingUpdateResult])
-async def bulk_update_products(
-    current_user: CurrentUser,
-    organization: CurrentOrganization,
-    db: DbSession,
-    account_id: UUID = Query(...),
-    product_type: str = Query("PRODUCT"),
-    file: UploadFile = File(...),
-):
-    """Bulk update product listings on Amazon via Excel upload."""
-    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File must be an Excel file (.xlsx or .xls)",
-        )
+@router.get("/bulk-update/template", status_code=status.HTTP_410_GONE)
+async def download_bulk_template(current_user: CurrentUser):
+    """Retired (R4): the direct-write editor is replaced by export, upload and approval."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=BULK_UPDATE_GONE)
 
-    await _verify_account_in_org(db, organization.id, account_id)
 
-    contents = await file.read()
-    service = CatalogService(db, user_id=current_user.id)
-    try:
-        return await service.bulk_update_from_excel(account_id, contents, product_type=product_type)
-    except CatalogOperationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+@router.post("/bulk-update", status_code=status.HTTP_410_GONE)
+async def bulk_update_products(current_user: CurrentUser):
+    """Retired (R4): it wrote to Amazon without approval."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=BULK_UPDATE_GONE)
 
 
 @router.get("/import/template")

@@ -365,6 +365,7 @@ from app.services.catalog_monitor.changes import ChangeItem  # noqa: E402
 from app.services.catalog_monitor.content import (  # noqa: E402
     ImageRef,
     ListingContent,
+    content_from_dict,
     content_to_dict,
 )
 
@@ -658,7 +659,8 @@ def test_reject_reopens_the_anomalies_of_rejected_requests(monkeypatch):
 
 
 def test_submit_reopens_failed_restores_and_skips_file_only(monkeypatch):
-    approved, file_only = _req("approved"), _req("approved", payload={"patches": [], "file_only": True})
+    approved = _req("approved", validation_issues=[])
+    file_only = _req("approved", payload={"patches": [], "file_only": True})
     reopen = _approval_app(monkeypatch, [approved, file_only])
 
     class _Svc:
@@ -927,3 +929,282 @@ def test_refresh_feed_failure_reopens_anomalies(monkeypatch, known_account):
     assert res.json()[0]["status"] == "failed"
     assert (anomaly.status, anomaly.change_request_id) == ("open", None)
     assert db.commits == 1
+
+
+# ---- bulk export, upload and new items (R4) ----
+
+import io  # noqa: E402
+
+from openpyxl import Workbook, load_workbook  # noqa: E402
+
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _xlsx(headers, rows):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Catalogo"
+    ws.append(headers)
+    for row in rows:
+        ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _live(asin, **kw):
+    base = dict(asin=asin, marketplace_id=MP, sku=f"SKU-{asin}", title="Titolo vecchio",
+                bullets=["Uno", "Due", "Tre", "Quattro", "Cinque"], product_type="HOME")
+    base.update(kw)
+    return content_to_dict(ListingContent(**base))
+
+
+def _product(asin, keyword=None):
+    return SimpleNamespace(asin=asin, sku=f"SKU-{asin}", title="T", main_keyword=keyword,
+                           main_keyword_source=None)
+
+
+@pytest.fixture
+def bulk_account(monkeypatch):
+    account = SimpleNamespace(id=ACCOUNT_ID, organization_id=ORG.id, marketplace_id=MP,
+                              account_type=AccountType.SELLER)
+
+    async def _ok(db, organization_id, account_id):
+        return account
+
+    monkeypatch.setattr(api, "_account_or_404", _ok)
+    return account
+
+
+class _BatchSvc:
+    created: list = []
+
+    def __init__(self, db, *a, **kw):
+        pass
+
+    async def create(self, account, items, user_id, batch_id=None):
+        type(self).created = list(items)
+        return [_req(batch=batch_id, asin=i.asin, sku=i.sku, kind=i.kind, operation=i.operation)
+                for i in items]
+
+    async def validate(self, account, requests):
+        for r in requests:
+            r.status = "valid"
+
+
+def _upload(client, data, name="catalogo.xlsx", mode="update", **extra):
+    return client.post(
+        "/catalog-monitor/bulk/upload",
+        data={"account_id": str(ACCOUNT_ID), "mode": mode, **extra},
+        files={"file": (name, data, XLSX)},
+    )
+
+
+def _bulk_fakes(monkeypatch, products, contents):
+    async def _products_of(db, account_id):
+        return products
+
+    async def _contents(db, account_id, asins):
+        return {a: contents[a] for a in asins if a in contents}
+
+    monkeypatch.setattr(api, "_account_products", _products_of)
+    monkeypatch.setattr(api, "_latest_content_dicts", _contents)
+    _BatchSvc.created = []
+    monkeypatch.setattr(api, "ChangeRequestService", _BatchSvc)
+
+
+def test_upload_returns_row_errors_and_creates_only_changed(monkeypatch, bulk_account):
+    p1, p2, p3 = _product("B0TEST0001"), _product("B0TEST0002", "vecchia"), _product("B0TEST0003")
+    _bulk_fakes(monkeypatch, [p1, p2, p3], {a: _live(a) for a in ("B0TEST0001", "B0TEST0002", "B0TEST0003")})
+    data = _xlsx(
+        ["asin", "title", "bullet_2", "main_keyword"],
+        [
+            ["B0TEST0001", "Titolo nuovo", "", ""],         # changed
+            ["B0TEST0002", "Titolo vecchio", "", "nuova"],  # unchanged content, keyword set
+            ["B0NOPE0001", "Altro", "", ""],                # not in the account
+            ["B0TEST0003", "x" * 201, "", ""],              # over the title limit
+            ["B0TEST0001", "Duplicato", "", ""],            # same ASIN twice
+        ],
+    )
+    client, db = _client()
+    res = _upload(client, data)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert (body["rows"], body["changes"], body["unchanged"], body["keywords_updated"]) == (5, 1, 1, 1)
+    assert body["batch_id"] and [r["status"] for r in body["requests"]] == ["valid"]
+    errors = {e["row"]: e["message"] for e in body["row_errors"]}
+    assert errors[4] == "ASIN non trovato in questo account"
+    assert "title" in errors[5] and 6 in errors
+    assert [i.asin for i in _BatchSvc.created] == ["B0TEST0001"]
+    assert (p2.main_keyword, p2.main_keyword_source) == ("nuova", "manual")
+    assert db.commits == 1
+
+
+def test_upload_matches_by_sku_when_asin_is_missing(monkeypatch, bulk_account):
+    _bulk_fakes(monkeypatch, [_product("B0TEST0001")], {"B0TEST0001": _live("B0TEST0001")})
+    data = _xlsx(["sku", "title"], [["SKU-B0TEST0001", "Titolo nuovo"]])
+    client, _ = _client()
+    body = _upload(client, data).json()
+    assert body["changes"] == 1 and _BatchSvc.created[0].asin == "B0TEST0001"
+
+
+def test_upload_without_changes_creates_no_batch(monkeypatch, bulk_account):
+    _bulk_fakes(monkeypatch, [_product("B0TEST0001")], {"B0TEST0001": _live("B0TEST0001")})
+    data = _xlsx(["asin", "title"], [["B0TEST0001", "Titolo vecchio"]])
+    client, _ = _client()
+    body = _upload(client, data).json()
+    assert (body["batch_id"], body["changes"], body["unchanged"], body["requests"]) == (None, 0, 1, [])
+    assert _BatchSvc.created == []
+
+
+@pytest.mark.parametrize("name,data", [
+    ("catalogo.xlsx", b"not an excel file"),
+    ("catalogo.csv", b"\xff\xfe\x00bad"),
+    ("catalogo.pdf", b"%PDF"),
+])
+def test_unreadable_upload_is_422_not_500(monkeypatch, bulk_account, name, data):
+    _bulk_fakes(monkeypatch, [], {})
+    client, _ = _client()
+    res = _upload(client, data, name=name)
+    assert res.status_code == 422 and "file" in res.json()["detail"].lower()
+
+
+def test_upload_over_ten_megabytes_is_413(monkeypatch, bulk_account):
+    _bulk_fakes(monkeypatch, [], {})
+    client, _ = _client()
+    assert _upload(client, b"x" * (10 * 1024 * 1024 + 1)).status_code == 413
+
+
+def test_baseline_mode_does_not_create_requests(monkeypatch, bulk_account):
+    p1 = _product("B0TEST0001")
+    _bulk_fakes(monkeypatch, [p1], {})
+    seen = {}
+
+    async def _import(repo, account_id, rows, user_id):
+        seen["rows"] = rows
+        return len(rows), []
+
+    monkeypatch.setattr(api, "import_baseline_rows", _import)
+    data = _xlsx(["asin", "title", "main_keyword"], [["B0TEST0001", "Titolo approvato", "chiave"], ["B0NOPE0001", "x", ""]])
+    client, db = _client(db=_FakeDb(row=(ORG, UserRole.ADMIN)))
+    res = _upload(client, data, mode="baseline")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["updated"] == 1 and body["keywords_updated"] == 1
+    assert body["row_errors"][0]["message"] == "ASIN non trovato in questo account"
+    assert seen["rows"] == [("B0TEST0001", {"title": "Titolo approvato"})]
+    assert _BatchSvc.created == [] and p1.main_keyword == "chiave" and db.commits == 1
+
+
+def test_baseline_mode_needs_admin(monkeypatch, bulk_account):
+    _bulk_fakes(monkeypatch, [], {})
+    client, _ = _client(db=_FakeDb(row=(ORG, UserRole.MEMBER)), admin=False)
+    data = _xlsx(["asin", "title"], [["B0TEST0001", "x"]])
+    assert _upload(client, data, mode="baseline").status_code == 403
+
+
+def test_upload_rejects_unknown_mode(monkeypatch, bulk_account):
+    _bulk_fakes(monkeypatch, [], {})
+    client, _ = _client()
+    assert _upload(client, _xlsx(["asin"], []), mode="nope").status_code == 422
+
+
+def test_export_is_an_xlsx_with_one_row_per_product(monkeypatch, bulk_account):
+    async def _rows(db, account_id):
+        return [(_product("B0TEST0001"), content_from_dict(_live("B0TEST0001"))), (_product("B0TEST0002"), None)]
+
+    monkeypatch.setattr(api, "_export_rows", _rows)
+    client, _ = _client()
+    res = client.get("/catalog-monitor/export", params={"account_id": str(ACCOUNT_ID)})
+    assert res.status_code == 200 and "attachment" in res.headers["content-disposition"]
+    ws = load_workbook(io.BytesIO(res.content))["Catalogo"]
+    assert [r[0] for r in ws.iter_rows(min_row=2, values_only=True)] == ["B0TEST0001", "B0TEST0002"]
+
+
+def _ptd(monkeypatch, required):
+    async def _required(db, account, product_type):
+        return required
+
+    monkeypatch.setattr(api, "_product_type_required", _required)
+
+
+def test_new_item_template_has_sku_type_required_then_recommended(monkeypatch, bulk_account):
+    _ptd(monkeypatch, ["brand", "item_name"])
+    client, _ = _client()
+    res = client.get("/catalog-monitor/new-items/template",
+                     params={"account_id": str(ACCOUNT_ID), "product_type": "HOME"})
+    assert res.status_code == 200
+    header = [c.value for c in load_workbook(io.BytesIO(res.content))["Nuovi articoli"][1]]
+    assert header[:4] == ["sku", "product_type", "brand", "item_name"]
+    assert "color" in header and header.count("brand") == 1
+
+
+def test_new_item_template_422_when_definition_unavailable(monkeypatch, bulk_account):
+    _ptd(monkeypatch, None)
+    client, _ = _client()
+    res = client.get("/catalog-monitor/new-items/template",
+                     params={"account_id": str(ACCOUNT_ID), "product_type": "HOME"})
+    assert res.status_code == 422
+    assert "Definizione del tipo di prodotto non disponibile" in res.json()["detail"]
+
+
+def test_new_item_upload_creates_put_requests_and_reports_row_errors(monkeypatch, bulk_account):
+    _bulk_fakes(monkeypatch, [_product("B0TEST0001")], {})
+    _ptd(monkeypatch, ["brand", "item_name"])
+    data = _xlsx(
+        ["sku", "product_type", "brand", "item_name", "item_weight.value", "item_weight.unit"],
+        [
+            ["TEST-NEW-001", "HOME", "TESTBRAND", "Nome", "2", "kilograms"],
+            ["TEST-NEW-002", "HOME", "TESTBRAND", "", "", ""],            # item_name missing
+            ["SKU-B0TEST0001", "HOME", "TESTBRAND", "Nome", "", ""],     # SKU already live
+            ["", "HOME", "TESTBRAND", "Nome", "", ""],                    # sku missing
+        ],
+    )
+    client, db = _client()
+    res = client.post("/catalog-monitor/new-items/upload",
+                      data={"account_id": str(ACCOUNT_ID)}, files={"file": ("nuovi.xlsx", data, XLSX)})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert (body["rows"], body["changes"]) == (4, 1) and body["requests"][0]["status"] == "valid"
+    item = _BatchSvc.created[0]
+    assert (item.operation, item.kind, item.sku, item.asin) == ("PUT", "new_item", "TEST-NEW-001", None)
+    assert item.attributes["brand"] == [{"value": "TESTBRAND", "language_tag": "it_IT", "marketplace_id": MP}]
+    assert item.attributes["item_weight"] == [{"value": "2", "unit": "kilograms", "marketplace_id": MP}]
+    messages = {e["row"]: e["message"] for e in body["row_errors"]}
+    assert "item_name" in messages[3] and "già presente" in messages[4] and "sku" in messages[5]
+    assert db.commits == 1
+
+
+def test_new_item_upload_row_error_when_definition_unavailable(monkeypatch, bulk_account):
+    _bulk_fakes(monkeypatch, [], {})
+    _ptd(monkeypatch, None)
+    data = _xlsx(["sku", "product_type", "brand"], [["TEST-NEW-001", "HOME", "TESTBRAND"]])
+    client, _ = _client()
+    body = client.post("/catalog-monitor/new-items/upload", data={"account_id": str(ACCOUNT_ID)},
+                       files={"file": ("n.xlsx", data, XLSX)}).json()
+    assert body["changes"] == 0 and "non disponibile" in body["row_errors"][0]["message"]
+
+
+def test_old_bulk_endpoint_is_gone_410():
+    from app.api.v1 import catalog as old
+
+    app = FastAPI()
+    app.include_router(old.router, prefix="/catalog")
+    app.dependency_overrides[deps.get_current_user] = lambda: USER
+    client = TestClient(app)
+    detail = "Usa Catalogo → Aggiornamento massivo: le modifiche ora passano dall'approvazione."
+    res = client.post("/catalog/bulk-update", params={"account_id": str(uuid4())},
+                      files={"file": ("a.xlsx", b"x", XLSX)})
+    assert (res.status_code, res.json()["detail"]) == (410, detail)
+    res = client.get("/catalog/bulk-update/template")
+    assert (res.status_code, res.json()["detail"]) == (410, detail)
+
+
+def test_submit_skip_reason_flags_requests_that_did_not_pass_validation():
+    ok = _req("approved", validation_issues=[])
+    bad = _req("approved", validation_issues=[{"severity": "ERROR", "code": "X", "message": "m"}])
+    never = _req("approved", validation_issues=None)
+    assert api.submit_skip_reason(ok) is None
+    assert api.submit_skip_reason(bad) == "not_validated"
+    assert api.submit_skip_reason(never) == "not_validated"
+    assert api.submit_skip_reason(_req("valid")) == "status_valid"
