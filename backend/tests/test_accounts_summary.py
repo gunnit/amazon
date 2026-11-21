@@ -116,6 +116,11 @@ accounts = module_from_spec(accounts_spec)
 assert accounts_spec is not None and accounts_spec.loader is not None
 accounts_spec.loader.exec_module(accounts)
 
+# The exec above imported the real app.services.sales_metrics while the
+# column-only SalesData stub was in place; evict it so later test files bind
+# the real model (a query mixing both reads "FROM sales_data, sales_data").
+sys.modules.pop("app.services.sales_metrics", None)
+
 
 class FakeQuery:
     def where(self, *_args, **_kwargs):
