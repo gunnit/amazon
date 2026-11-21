@@ -71,6 +71,7 @@ async def test_rejected_restore_reopens_its_anomaly(db, account):
     [locked] = await api._requests_for_update(db, account.organization_id, [row.id])
     await ChangeRequestService(db).reject([locked], None)
     await api._reopen_for_requests(db, [locked])
+    await db.flush()  # the route's commit flushes; refresh() alone would discard the change
     await db.refresh(anomaly)
     assert (anomaly.status, anomaly.change_request_id) == ("open", None)
 
