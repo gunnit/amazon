@@ -89,38 +89,3 @@ export interface TabProps {
   }) => void
   t: (key: string, vars?: Record<string, string | number>) => string
 }
-
-// Listing-quality score per product (GET /catalog/listing-quality).
-export type ListingComponentName =
-  | 'title'
-  | 'brand'
-  | 'category'
-  | 'price'
-  | 'availability'
-  | 'rating'
-  | 'reviews'
-
-export interface ListingQualityComponent {
-  earned: number
-  max: number
-  detail: string
-}
-
-export interface ListingQualityItem {
-  asin: string
-  sku?: string | null
-  title?: string | null
-  score: number
-  components: Partial<Record<ListingComponentName, ListingQualityComponent>>
-  issues: string[]
-}
-
-export interface ListingQualityResponse {
-  account_id: string
-  product_count: number
-  average_score: number | null
-  good_count: number
-  fair_count: number
-  poor_count: number
-  products: ListingQualityItem[]
-}

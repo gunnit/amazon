@@ -1206,3 +1206,138 @@ export interface ApiKeysResponse {
   /** Days since the secret was saved here — not since Amazon issued it. */
   client_secret_age_days?: number | null
 }
+
+// ── Catalogue monitor: listing quality, rules, scan, Amazon access (R1) ──
+// Mirrors backend/app/schemas/catalog_monitor.py.
+
+export type QualityState = 'green' | 'yellow' | 'red' | 'grey'
+
+export const QUALITY_STATES: QualityState[] = ['green', 'yellow', 'red', 'grey']
+
+export const QUALITY_RULE_KEYS = [
+  'title',
+  'item_highlights',
+  'bullets',
+  'description',
+  'images',
+  'main_image',
+  'video',
+  'aplus',
+  'backend_keywords',
+  'attributes',
+  'category',
+] as const
+
+export type QualityRuleKey = (typeof QUALITY_RULE_KEYS)[number]
+
+export interface QualityRuleResult {
+  key: QualityRuleKey
+  state: QualityState
+  mandatory: boolean
+  code: string
+  details: Record<string, unknown>
+}
+
+export interface QualityItem {
+  asin: string
+  sku?: string | null
+  title?: string | null
+  main_image_url?: string | null
+  state: QualityState
+  score: number
+  results: QualityRuleResult[]
+}
+
+export interface QualityItemDetail extends QualityItem {
+  content?: Record<string, unknown> | null
+  main_keyword?: string | null
+  main_keyword_source?: string | null
+}
+
+export interface QualitySummary {
+  green: number
+  yellow: number
+  red: number
+  grey: number
+  per_rule: Record<string, Partial<Record<QualityState, number>>>
+}
+
+export interface QualityResponse {
+  summary: QualitySummary
+  items: QualityItem[]
+  total: number
+  unscanned: number
+  page: number
+  page_size: number
+  last_scan_at: string | null
+}
+
+export interface QualityQueryParams {
+  state?: QualityState
+  rule?: QualityRuleKey
+  mandatory_only?: boolean
+  search?: string
+  page?: number
+  page_size?: number
+}
+
+export type RuleParamValue = number | string[]
+
+export interface QualityRuleConfig {
+  key: QualityRuleKey
+  enabled: boolean
+  mandatory: boolean
+  params: Record<string, RuleParamValue>
+}
+
+export interface QualityRuleOverride {
+  id?: string
+  marketplace_id: string | null
+  product_type: string | null
+  rule_key: QualityRuleKey
+  enabled: boolean
+  mandatory: boolean
+  params: Record<string, RuleParamValue> | null
+  updated_at?: string | null
+}
+
+export interface QualityRulesResponse {
+  defaults: Record<string, QualityRuleConfig>
+  overrides: QualityRuleOverride[]
+}
+
+export interface ScanState {
+  running: boolean
+  started_at: string | null
+  finished_at: string | null
+  summary: {
+    scanned?: number
+    failed?: number
+    new_versions?: number
+    anomalies_opened?: number
+    anomalies_resolved?: number
+    errors?: string[]
+  } | null
+}
+
+export type CapabilityKey =
+  | 'catalog_items'
+  | 'listings_read'
+  | 'product_type_definitions'
+  | 'aplus'
+  | 'feeds'
+
+export const CAPABILITY_KEYS: CapabilityKey[] = [
+  'catalog_items',
+  'listings_read',
+  'product_type_definitions',
+  'aplus',
+  'feeds',
+]
+
+export interface CatalogCapabilities {
+  account_id: string
+  results: Partial<Record<CapabilityKey, { ok: boolean; error: string | null }>>
+  vendor_code: string | null
+  checked_at: string
+}

@@ -9,6 +9,8 @@ import type {
   Forecast, Product,
   ForecastExportJob,
   ForecastProductOption,
+  QualityResponse, QualityQueryParams, QualityItemDetail, QualityRulesResponse, QualityRuleOverride,
+  ScanState, CatalogCapabilities,
   InventoryReportItem, AdvertisingMetricsItem,
   ScheduledReport, ScheduledReportRun,
   GoogleSheetsConnection, GoogleSheetsSync, GoogleSheetsSyncRun,
@@ -694,18 +696,80 @@ import type {
   BulkResult,
   CatalogChangeLogEntry,
   ImportResult,
-  ListingQualityResponse,
   PriceUpdateResult,
 } from '@/components/catalog/types'
 
-export const catalogApi = {
-  getListingQuality: async (accountId: string, limit = 500): Promise<ListingQualityResponse> => {
-    const response = await api.get('/catalog/listing-quality', {
-      params: { account_id: accountId, limit },
+export const catalogMonitorApi = {
+  getQuality: async (accountId: string, params: QualityQueryParams = {}): Promise<QualityResponse> => {
+    const response = await api.get('/catalog-monitor/quality', {
+      params: { account_id: accountId, ...params },
     })
     return response.data
   },
 
+  getQualityDetail: async (accountId: string, asin: string): Promise<QualityItemDetail> => {
+    const response = await api.get(`/catalog-monitor/quality/${encodeURIComponent(asin)}`, {
+      params: { account_id: accountId },
+    })
+    return response.data
+  },
+
+  exportQuality: async (accountId: string): Promise<Blob> => {
+    const response = await api.get('/catalog-monitor/quality/export', {
+      params: { account_id: accountId },
+      responseType: 'blob',
+    })
+    return response.data
+  },
+
+  getRules: async (): Promise<QualityRulesResponse> => {
+    const response = await api.get('/catalog-monitor/rules')
+    return response.data
+  },
+
+  putRules: async (overrides: QualityRuleOverride[]): Promise<QualityRulesResponse> => {
+    const response = await api.put('/catalog-monitor/rules', { overrides })
+    return response.data
+  },
+
+  putKeyword: async (
+    accountId: string,
+    asin: string,
+    keyword: string,
+  ): Promise<{ updated: number; unknown: string[] }> => {
+    const response = await api.put('/catalog-monitor/keywords', {
+      account_id: accountId,
+      items: [{ asin, keyword }],
+    })
+    return response.data
+  },
+
+  startScan: async (accountId: string): Promise<{ started: boolean }> => {
+    const response = await api.post('/catalog-monitor/scan', { account_id: accountId })
+    return response.data
+  },
+
+  getScan: async (accountId: string): Promise<ScanState> => {
+    const response = await api.get('/catalog-monitor/scan', { params: { account_id: accountId } })
+    return response.data
+  },
+
+  getCapabilities: async (accountId: string): Promise<CatalogCapabilities | null> => {
+    const response = await api.get('/catalog-monitor/capabilities', {
+      params: { account_id: accountId },
+    })
+    return response.data ?? null
+  },
+
+  checkCapabilities: async (accountId: string): Promise<CatalogCapabilities> => {
+    const response = await api.post('/catalog-monitor/capabilities/check', {
+      account_id: accountId,
+    })
+    return response.data
+  },
+}
+
+export const catalogApi = {
   getProducts: async (params?: {
     search?: string
     category?: string
