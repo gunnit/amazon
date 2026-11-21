@@ -139,61 +139,89 @@ def test_only_changed_cells_and_whitespace_normalised():
     assert list(item.summary["fields"]) == ["description"]
 
 
-def test_images_merged_per_slot():
+def _slot_ops(item):
+    return {p["path"].rsplit("/", 1)[1]: p["op"] for p in item.patches}
+
+
+def test_images_changed_slot_only_no_compaction_no_delete():
+    live = _content(
+        images=[
+            ImageRef("MAIN", "https://img.test/main.jpg"),
+            ImageRef("PT01", "https://img.test/1.jpg"),
+            ImageRef("PT03", "https://img.test/3.jpg"),
+        ]
+    )
     row = parse_upload(
         _xlsx(["asin", "image_1"], [["B0TEST0001", "https://img.test/new.jpg"]]), "u.xlsx"
     )[0]
-    item = row_to_change_item(row, _content(), MKT)
-    paths = {p["path"]: p for p in item.patches}
-    assert paths["/attributes/main_product_image_locator"]["value"][0]["media_location"].endswith("main.jpg")
-    assert paths["/attributes/other_product_image_locator_1"]["value"][0]["media_location"].endswith("new.jpg")
-    assert paths["/attributes/other_product_image_locator_2"]["value"][0]["media_location"].endswith("2.jpg")
+    item = row_to_change_item(row, live, MKT)
+    assert len(item.patches) == 1
+    assert item.patches[0] == {
+        "op": "replace",
+        "path": "/attributes/other_product_image_locator_1",
+        "value": [{"media_location": "https://img.test/new.jpg", "marketplace_id": MKT}],
+    }
+    assert item.summary["fields"]["image_slots"] == {
+        "other_product_image_locator_1": {
+            "before": "https://img.test/1.jpg",
+            "after": "https://img.test/new.jpg",
+        }
+    }
 
 
-def _six_live_images():
-    return _content(
+def test_partial_image_upload_touches_only_differing_slots():
+    live = _content(
         images=[ImageRef("MAIN", "https://img.test/main.jpg")]
         + [ImageRef(f"PT0{n}", f"https://img.test/{n}.jpg") for n in range(1, 6)]
     )
-
-
-def test_partial_image_upload_deletes_no_slot_the_live_listing_leaves_empty():
-    """6 live images, a row with 3 image cells: slots are merged, slots 6..8 stay untouched."""
     row = parse_upload(
         _xlsx(
             ["asin", "main_image_url", "image_1", "image_2"],
-            [["B0TEST0001", "https://img.test/m2.jpg", "https://img.test/n1.jpg",
+            [["B0TEST0001", "https://img.test/m2.jpg", "https://img.test/1.jpg",
               "https://img.test/n2.jpg"]],
         ),
         "u.xlsx",
     )[0]
-    item = row_to_change_item(row, _six_live_images(), MKT)
-    assert [p["op"] for p in item.patches] == ["replace"] * 6
-    assert [p["path"].rsplit("/", 1)[1] for p in item.patches] == (
-        ["main_product_image_locator"] + [f"other_product_image_locator_{n}" for n in range(1, 6)]
+    item = row_to_change_item(row, live, MKT)
+    assert _slot_ops(item) == {
+        "main_product_image_locator": "replace",
+        "other_product_image_locator_2": "replace",
+    }
+
+
+def test_six_live_bullets_keep_the_sixth():
+    live = _content(bullets=[f"Bullet {n}" for n in range(1, 7)])
+    row = parse_upload(_xlsx(["asin", "bullet_2"], [["B0TEST0001", "Nuovo"]]), "u.xlsx")[0]
+    item = row_to_change_item(row, live, MKT)
+    values = [v["value"] for v in item.patches[0]["value"]]
+    assert values == ["Bullet 1", "Nuovo", "Bullet 3", "Bullet 4", "Bullet 5", "Bullet 6"]
+    data = build_export_workbook([(_product(), live)])
+    assert row_to_change_item(parse_upload(data, "x.xlsx")[0], live, MKT) is None
+
+
+def test_blank_live_bullet_round_trip_has_no_changes():
+    live = _content(bullets=["Uno", "  ", "Tre", "Quattro", "Cinque"])
+    rows = parse_upload(build_export_workbook([(_product(), live)]), "x.xlsx")
+    assert row_to_change_item(rows[0], live, MKT) is None
+
+
+def test_italian_text_and_ean_like_attribute_round_trip():
+    live = _content(
+        title="Caffè perché più è così",
+        attributes={
+            "externally_assigned_product_identifier": [{"value": "0012345678905", "marketplace_id": MKT}],
+            "color": _val("Rosso"),
+        },
     )
+    rows = parse_upload(build_export_workbook([(_product(), live)]), "x.xlsx")
+    assert row_to_change_item(rows[0], live, MKT) is None
 
 
-def test_image_deletes_are_bounded_by_the_live_image_count(monkeypatch):
-    """The live listing's other images (5 of 6) bound the deletes: MAIN + 2 others deletes 3..5."""
-    seen = []
-    real = bulk_io.patches_from_content
-
-    def spy(fields, marketplace_id, existing_image_slots=0):
-        seen.append(existing_image_slots)
-        return real(fields, marketplace_id, existing_image_slots)
-
-    monkeypatch.setattr(bulk_io, "patches_from_content", spy)
-    row = parse_upload(
-        _xlsx(["asin", "image_1"], [["B0TEST0001", "https://img.test/new.jpg"]]), "u.xlsx"
-    )[0]
-    row_to_change_item(row, _six_live_images(), MKT)
-    row_to_change_item(row, None, MKT)
-    assert seen == [5, 0]
-
-    three = ["https://img.test/m.jpg", "https://img.test/a.jpg", "https://img.test/b.jpg"]
-    deletes = [p["path"] for p in real({"images": three}, MKT, seen[0]) if p["op"] == "delete"]
-    assert deletes == [f"/attributes/other_product_image_locator_{n}" for n in (3, 4, 5)]
+def test_export_title_falls_back_to_product_only_without_content():
+    live = _content(title=None)
+    ws = load_workbook(io.BytesIO(build_export_workbook([(_product(title="Prodotto"), live)])))["Catalogo"]
+    headers = [c.value for c in ws[1]]
+    assert dict(zip(headers, [c.value for c in ws[2]]))["title"] in (None, "")
 
 
 def test_attribute_change_and_main_keyword_ignored():

@@ -61,6 +61,9 @@ _COVERED_ATTRIBUTES = frozenset(
     | {"main_product_image_locator", "swatch_product_image"}
     | {f"other_product_image_locator_{n}" for n in range(1, IMAGE_COUNT + 1)}
 )
+_SLOT_ATTRIBUTES = ["main_product_image_locator"] + [
+    f"other_product_image_locator_{n}" for n in range(1, IMAGE_COUNT + 1)
+]
 _SIMPLE_VALUE_KEYS = {"value", "language_tag", "marketplace_id"}
 
 
@@ -141,7 +144,7 @@ def _export_row(product: Product, content: Optional[ListingContent]) -> dict[str
     if content is not None:
         row["asin"] = content.asin or row["asin"]
         row["sku"] = content.sku or row["sku"]
-        row["title"] = content.title or row["title"]
+        row["title"] = content.title or ""
         row["product_type"] = content.product_type or ""
         for n, bullet in enumerate(content.bullets[:BULLET_COUNT], start=1):
             row[f"bullet_{n}"] = bullet
@@ -322,8 +325,9 @@ def row_to_change_item(
 ) -> Optional[ChangeItem]:
     """Only the cells that differ from the live content; ``None`` when nothing changes.
 
-    Bullets and images are merged position by position with the live ones, so a row
-    that fills only ``bullet_2`` keeps the other four bullets. With no live content
+    Bullets are merged position by position with the live ones (a row that fills only
+    ``bullet_2`` keeps the others, also bullets past the fifth). Images are replaced
+    slot by slot: nothing is compacted, moved or deleted. With no live content
     every given cell counts as a change.
     """
     cells = row.cells
@@ -340,26 +344,31 @@ def row_to_change_item(
         if given and _norm(given) != _norm(before):
             record(name, before or None, given)
 
-    live_bullets = list(live.bullets[:BULLET_COUNT]) if live else []
+    live_all = list(live.bullets) if live else []
+    live_bullets = [b for b in live_all if b.strip()]
     if any(c in cells for c in _BULLET_COLUMNS):
-        merged = live_bullets + [""] * (BULLET_COUNT - len(live_bullets))
+        head = live_all[:BULLET_COUNT]
+        head += [""] * (BULLET_COUNT - len(head))
         for n, column in enumerate(_BULLET_COLUMNS):
             if column in cells:
-                merged[n] = cells[column]
-        merged = [b for b in merged if b.strip()]
+                head[n] = cells[column]
+        # Live bullets past the fifth are kept, unchanged.
+        merged = [b for b in head + live_all[BULLET_COUNT:] if b.strip()]
         if [_norm(b) for b in merged] != [_norm(b) for b in live_bullets]:
             record("bullets", live_bullets, merged)
 
-    if any(c in cells for c in _IMAGE_COLUMNS):
-        live_slots = _live_image_slots(live)
-        merged_slots = list(live_slots)
-        for index, column in enumerate(_IMAGE_COLUMNS):
-            if column in cells:
-                merged_slots[index] = cells[column]
-        before_urls = [u for u in live_slots if u]
-        after_urls = [u for u in merged_slots if u]
-        if after_urls != before_urls:
-            record("images", before_urls, after_urls)
+    live_slots = _live_image_slots(live)
+    image_slots: dict[str, str] = {}
+    image_changes: dict[str, dict] = {}
+    for index, column in enumerate(_IMAGE_COLUMNS):
+        given = cells.get(column)
+        if given and given != live_slots[index]:
+            name = _SLOT_ATTRIBUTES[index]
+            image_slots[name] = given
+            image_changes[name] = {"before": live_slots[index] or None, "after": given}
+    if image_slots:
+        fields["image_slots"] = image_slots
+        summary["image_slots"] = image_changes
 
     for column, given in cells.items():
         if not column.startswith(ATTR_PREFIX) or len(column) == len(ATTR_PREFIX):
@@ -372,14 +381,12 @@ def row_to_change_item(
 
     if not fields:
         return None
-    # Only image slots the live listing fills may be deleted.
-    live_other_images = sum(1 for url in _live_image_slots(live)[1:] if url)
     return ChangeItem(
         asin=row.asin or (live.asin if live else None),
         sku=row.sku or (live.sku if live else None),
         product_type=row.product_type or (live.product_type if live else None),
         kind="bulk_update",
-        patches=patches_from_content(fields, marketplace_id, live_other_images),
+        patches=patches_from_content(fields, marketplace_id),
         summary={"fields": summary},
     )
 

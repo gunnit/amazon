@@ -734,3 +734,19 @@ async def test_refresh_feed_waits_while_amazon_is_processing():
     await svc.refresh_feed(_seller(), FEED_ID)
     assert rows[0].status == "submitted"
     assert not any(c[0] == "feed_result" for c in client.calls)
+
+
+def test_image_slots_patch_replaces_only_named_slots():
+    patches = patches_from_content(
+        {"image_slots": {"other_product_image_locator_3": "https://img.test/3.jpg", "main_product_image_locator": " "}},
+        MKT,
+    )
+    assert patches == [
+        {
+            "op": "replace",
+            "path": "/attributes/other_product_image_locator_3",
+            "value": [{"media_location": "https://img.test/3.jpg", "marketplace_id": MKT}],
+        }
+    ]
+    with pytest.raises(ValueError):
+        patches_from_content({"image_slots": {"title": "https://img.test/x.jpg"}}, MKT)

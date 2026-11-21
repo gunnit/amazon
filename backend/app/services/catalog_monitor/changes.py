@@ -69,6 +69,10 @@ _TEXT_ATTRIBUTES = {
     "item_highlights": "item_highlights",
 }
 _ATTRIBUTE_PREFIX = "attribute:"
+_IMAGE_SLOT_ATTRIBUTES = frozenset(
+    ["main_product_image_locator"]
+    + [f"other_product_image_locator_{n}" for n in range(1, OTHER_IMAGE_SLOTS + 1)]
+)
 # Detected and shown, restored by hand: A+ content cannot be written through Listings Items.
 _NOT_RESTORABLE = frozenset({"aplus"})
 _VALIDATABLE = frozenset({"pending", "valid", "invalid"})
@@ -136,7 +140,8 @@ def patches_from_content(
     """``replace`` operations for the given content fields, in the given order.
 
     Keys: title, bullets (list), description, backend_keywords, item_highlights,
-    images (URLs, main first) and ``attribute:<name>`` (the raw Amazon value list).
+    images (URLs, main first), ``image_slots`` (attribute name -> URL, replaced in
+    place, never deleted) and ``attribute:<name>`` (the raw Amazon value list).
     Empty values give no operation; blank bullets are dropped. Unknown keys raise
     ``ValueError``. ``existing_image_slots`` is how many other images the live
     listing has: only those slots past the new image list are deleted (none by
@@ -156,6 +161,16 @@ def patches_from_content(
                 )
         elif key == "images":
             patches += _image_patches(value, marketplace_id, existing_image_slots)
+        elif key == "image_slots":
+            # Slot by slot, no compaction and no deletes: only the named slots change.
+            for name, url in (value or {}).items():
+                if name not in _IMAGE_SLOT_ATTRIBUTES:
+                    raise ValueError(f"unknown image slot: {name!r}")
+                clean = _clean(url)
+                if clean:
+                    patches.append(
+                        _replace(name, [{"media_location": clean, "marketplace_id": marketplace_id}])
+                    )
         elif key.startswith(_ATTRIBUTE_PREFIX) and len(key) > len(_ATTRIBUTE_PREFIX):
             if not value:
                 continue
