@@ -13,7 +13,7 @@ Entrambe le azioni sono riservate agli **amministratori**. Prima di approvare co
 
 ## Il confronto giornaliero
 
-Con la scansione notturna (05:00 UTC, oppure **Avvia scansione**) si confrontano titolo, bullet point (testo e ordine), descrizione, immagini (sostituite, mancanti, riordinate), contenuti A+ (assenti o cambiati) e attributi. Prezzi, offerte e giacenze non contano.
+Con la scansione notturna (05:00 UTC, oppure **Avvia scansione**) si confrontano titolo, bullet point (testo e ordine), descrizione, immagini (sostituite, mancanti, riordinate), contenuti A+ (assenti o in numero diverso di moduli) e attributi. Prezzi, offerte e giacenze non contano.
 
 Ogni differenza diventa una modifica da controllare, con il tipo di modifica: **Modificato**, **Rimosso**, **Aggiunto**, **Riordinato**. Gli stati sono:
 

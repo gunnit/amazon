@@ -31,7 +31,7 @@ By default these are mandatory: title, bullet points, main image, attributes and
 
 ## Main keyword
 
-Many checks (title, bullets, description) look for the product's **main keyword**. Set it from the product detail, or in Excel with the `main_keyword` column. If you do not set it, the tool uses the term that ASIN wins in Brand Analytics, when there is one. With no keyword at all, the keyword check is skipped and the detail says so. Traffic lights update at the next scan.
+Many checks (title, bullets, description) look for the product's **main keyword**. Set it from the product detail, or in Excel with the `main_keyword` column. If you do not set it, the tool uses the Brand Analytics term with the highest click share among those where the ASIN is in the top three most clicked (latest week available), when there is one. With no keyword at all, the keyword check is skipped and the detail says so. Traffic lights update at the next scan.
 
 ## Editing the rules
 

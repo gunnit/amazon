@@ -33,7 +33,7 @@ The **Check Amazon access** button in Catalog shows what is available for each a
 
 ## Catalogue changes and restores
 
-- **A+ content**: we detect and show it, but restoring is always by hand on Seller Central or Vendor Central.
+- **A+ content**: we compare only the number of modules, so edits inside a module are not detected. We detect and show it, but restoring is always by hand on Seller Central or Vendor Central.
 - **Amazon's official NIS templates**: not supported yet. New items are validated against the Amazon product type (required attributes and Amazon's own check).
 - **Images**: replaced from the bulk update by URL, but on Vendor accounts removals must be done by hand on Vendor Central.
 - **Accounts without write access** (for example Vendor without a vendor code or SKU): approved changes come out as a file to upload by hand on Vendor Central.

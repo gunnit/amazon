@@ -1,6 +1,6 @@
 # Aggiornamento massivo e approvazioni
 
-Su Amazon non si scrive mai senza una persona che approva. Ogni modifica (da Excel, un ripristino, una variante, un nuovo articolo) diventa una **richiesta**, viene controllata da Amazon e aspetta in **Approvazioni**.
+Su Amazon non si scrive mai senza una persona che approva. Ogni modifica (da Excel, un ripristino, una variante, un nuovo articolo) diventa una **richiesta** e aspetta in **Approvazioni**. Quelle che vanno ad Amazon tramite API sono prima controllate da Amazon; quelle solo file no (vedi sotto).
 
 ## Esporta, modifica, carica
 
@@ -40,7 +40,7 @@ In **Nuovi articoli** scrivi il tipo di prodotto Amazon e scarica il **modello**
 | Solo file | Non può passare dalle API (vedi sotto) |
 | Caricata a mano | Segnata come caricata su Vendor Central |
 
-La **verifica** usa la modalità di prova di Amazon (VALIDATION_PREVIEW): non pubblica nulla. Una richiesta non validata non si può inviare.
+La **verifica** usa la modalità di prova di Amazon (VALIDATION_PREVIEW): non pubblica nulla. Una richiesta non validata non si può inviare. Le richieste solo file non passano da questa verifica.
 
 Chi può fare cosa: tutti gli operatori caricano file, creano ripristini e **rifiutano**. **Approvare**, **inviare ad Amazon**, **aggiornare lo stato del feed** e **segnare come caricato a mano** è riservato agli **amministratori**. Prima dell'invio il tool chiede conferma e mostra quante schede verranno modificate.
 
@@ -48,8 +48,8 @@ Sotto le 50 richieste ogni scheda parte con una chiamata diretta; da 50 in su pa
 
 ## Vendor Central: file e caricamento a mano
 
-Se un account non ha accesso in scrittura alle schede (nessun codice vendor, o manca lo SKU), le richieste sono **solo file**. Dopo l'approvazione usa **Scarica file per Vendor Central** (un file JSON_LISTINGS_FEED con le richieste approvate di quel lotto), caricalo a mano su Vendor Central, poi premi **Segna come caricato a mano**: le richieste passano a «Caricata a mano» e non risultano più da gestire. Le richieste a cui manca lo SKU o il tipo di prodotto restano fuori dal file.
+Se un account non ha accesso in scrittura alle schede (nessun codice vendor, o manca lo SKU), le richieste sono **solo file**. Dopo l'approvazione usa **Scarica file per Vendor Central** (un file JSON_LISTINGS_FEED con le richieste approvate di quel lotto), caricalo a mano su Vendor Central, poi premi **Segna come caricato a mano**: le richieste passano a «Caricata a mano» e non risultano più da gestire. Le richieste a cui manca lo SKU o il tipo di prodotto restano fuori dal file. Amazon non le controlla prima dell'approvazione: il file lo controlla Vendor Central al caricamento.
 
 ## Immagini da togliere
 
-Sugli account Vendor Amazon non permette di cancellare un valore dalla scheda. Se una modifica richiede di rimuovere immagini (per esempio ne carichi meno di quante ce ne sono online), la richiesta lo segnala con **Rimuovi a mano queste immagini su Vendor Central**: le sostituzioni partono, le rimozioni vanno fatte a mano.
+Il caricamento da Excel non rimuove mai immagini: le posizioni si sostituiscono una a una. Le rimozioni nascono solo dal **ripristino** di una versione approvata che ha meno immagini di quella online. Sugli account Vendor Amazon non permette di cancellare un valore dalla scheda: la richiesta le elenca con **Rimuovi a mano queste immagini su Vendor Central**, le sostituzioni partono e le rimozioni vanno fatte a mano.

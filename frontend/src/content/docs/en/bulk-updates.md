@@ -1,6 +1,6 @@
 # Bulk update and approvals
 
-Nothing is ever written to Amazon without a person approving it. Every change (from Excel, a restore, a variation, a new item) becomes a **request**, is checked by Amazon and waits in **Approvals**.
+Nothing is ever written to Amazon without a person approving it. Every change (from Excel, a restore, a variation, a new item) becomes a **request** and waits in **Approvals**. Those sent to Amazon through the API are checked by Amazon first; file-only ones are not (see below).
 
 ## Export, edit, upload
 
@@ -40,7 +40,7 @@ In **New items** type the Amazon product type and download the **template**: it 
 | File only | Cannot go through the APIs (see below) |
 | Uploaded by hand | Marked as uploaded to Vendor Central |
 
-The **check** uses Amazon's trial mode (VALIDATION_PREVIEW): it publishes nothing. A request that has not been validated cannot be sent.
+The **check** uses Amazon's trial mode (VALIDATION_PREVIEW): it publishes nothing. A request that has not been validated cannot be sent. File-only requests do not go through this check.
 
 Who can do what: all operators upload files, create restores and **reject**. **Approving**, **sending to Amazon**, **refreshing the feed status** and **marking as uploaded by hand** are for **administrators** only. Before sending, the tool asks for confirmation and shows how many pages will change.
 
@@ -48,8 +48,8 @@ Under 50 requests each page goes out with a direct call; from 50 up, a single fe
 
 ## Vendor Central: file and manual upload
 
-If an account has no write access to listings (no vendor code, or the SKU is missing), the requests are **file only**. After approval use **Download file for Vendor Central** (a JSON_LISTINGS_FEED file with that batch's approved requests), upload it by hand on Vendor Central, then press **Mark as uploaded by hand**: the requests move to "Uploaded by hand" and no longer count as to-do. Requests missing the SKU or the product type stay out of the file.
+If an account has no write access to listings (no vendor code, or the SKU is missing), the requests are **file only**. After approval use **Download file for Vendor Central** (a JSON_LISTINGS_FEED file with that batch's approved requests), upload it by hand on Vendor Central, then press **Mark as uploaded by hand**: the requests move to "Uploaded by hand" and no longer count as to-do. Requests missing the SKU or the product type stay out of the file. Amazon does not check them before approval: Vendor Central checks the file when you upload it.
 
 ## Images to remove
 
-On Vendor accounts Amazon does not allow deleting a value from a listing. If a change would remove images (for example you upload fewer than are online), the request flags it with **Remove these images by hand on Vendor Central**: the replacements go through, the removals have to be done by hand.
+Uploading from Excel never removes images: positions are replaced one by one. Removals only come from **restoring** an approved version that has fewer images than the one online. On Vendor accounts Amazon does not allow deleting a value from a listing: the request lists them with **Remove these images by hand on Vendor Central**, the replacements go through and the removals have to be done by hand.

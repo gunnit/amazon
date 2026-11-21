@@ -31,7 +31,7 @@ Di base sono obbligatorie: titolo, bullet point, immagine principale, attributi 
 
 ## Keyword principale
 
-Molti controlli (titolo, bullet, descrizione) cercano la **keyword principale** del prodotto. La imposti dal dettaglio del prodotto, oppure in Excel con la colonna `main_keyword`. Se non la imposti, il tool usa il termine che quell'ASIN vince in Brand Analytics, se c'è. Se non c'è nessuna keyword, il controllo sulla keyword viene saltato e il dettaglio lo dice. I semafori si aggiornano alla scansione successiva.
+Molti controlli (titolo, bullet, descrizione) cercano la **keyword principale** del prodotto. La imposti dal dettaglio del prodotto, oppure in Excel con la colonna `main_keyword`. Se non la imposti, il tool usa il termine di Brand Analytics con la quota di clic più alta tra quelli in cui l'ASIN è nei primi tre più cliccati (ultima settimana disponibile), se c'è. Se non c'è nessuna keyword, il controllo sulla keyword viene saltato e il dettaglio lo dice. I semafori si aggiornano alla scansione successiva.
 
 ## Modificare le regole
 

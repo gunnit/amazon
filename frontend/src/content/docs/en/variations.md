@@ -25,6 +25,6 @@ A change of the variation theme is flagged too.
 
 ## Restoring a family
 
-**Restore family** reattaches the detached variations to the parent. It changes nothing right away: it creates requests that go through **Approvals**, checked by Amazon first. If a restore is already queued, the page says so.
+**Restore family** reattaches the detached variations to the parent. It changes nothing right away: it creates requests that go through **Approvals**; those sent to Amazon through the API are checked by Amazon first. If a restore is already queued, the page says so.
 
-To reattach a variation you need the child's SKU and the parent's SKU. When they are missing (common on Vendor accounts), the request becomes **file only**: it goes into the file for Vendor Central, to upload by hand. If only the parent SKU is missing, the request has to be completed by hand and is left out of the file.
+To reattach a variation you need the child's SKU and the parent's SKU. A request enters the Vendor Central file only if **both** are known. If either is missing (common on Vendor accounts), the request is left out of the file and has to be completed by hand. File-only requests are not checked by Amazon before approval: Vendor Central checks the file when you upload it.

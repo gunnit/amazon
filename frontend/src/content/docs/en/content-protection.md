@@ -13,7 +13,7 @@ Both actions are for **administrators** only. Check that the live content really
 
 ## The daily comparison
 
-With the nightly scan (05:00 UTC, or **Start scan**) the tool compares title, bullet points (text and order), description, images (replaced, missing, reordered), A+ content (missing or changed) and attributes. Prices, offers and stock are not compared.
+With the nightly scan (05:00 UTC, or **Start scan**) the tool compares title, bullet points (text and order), description, images (replaced, missing, reordered), A+ content (missing or a different number of modules) and attributes. Prices, offers and stock are not compared.
 
 Each difference becomes a change to review, with its type: **Modified**, **Removed**, **Added**, **Reordered**. The statuses are:
 

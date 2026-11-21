@@ -25,6 +25,6 @@ Anche un cambio del tema di variazione viene segnalato.
 
 ## Ripristinare una famiglia
 
-**Ripristina famiglia** ricollega al parent le varianti staccate. Non cambia nulla subito: crea richieste che passano da **Approvazioni**, controllate prima da Amazon. Se un ripristino è già in coda, la pagina lo indica.
+**Ripristina famiglia** ricollega al parent le varianti staccate. Non cambia nulla subito: crea richieste che passano da **Approvazioni**; quelle che vanno ad Amazon tramite API sono controllate prima da Amazon. Se un ripristino è già in coda, la pagina lo indica.
 
-Per ricollegare una variante servono lo SKU del figlio e quello del parent. Se mancano (succede spesso sugli account Vendor), la richiesta diventa **solo file**: viene incluso nel file per Vendor Central da caricare a mano. Se manca solo lo SKU del parent, la richiesta resta da completare a mano ed è esclusa dal file.
+Per ricollegare una variante servono lo SKU del figlio e quello del parent. Entra nel file per Vendor Central solo se si conoscono **entrambi**. Se ne manca uno (succede spesso sugli account Vendor), la richiesta resta fuori dal file e va completata a mano. Le richieste solo file non sono controllate da Amazon prima dell'approvazione: il file lo controlla Vendor Central al caricamento.
