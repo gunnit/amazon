@@ -232,11 +232,16 @@ export function ScheduledReportsPanel() {
                 hour: formState.schedule_config.hour,
                 minute: formState.schedule_config.minute,
               }
-            : {
-                day_of_month: formState.schedule_config.day_of_month ?? 1,
-                hour: formState.schedule_config.hour,
-                minute: formState.schedule_config.minute,
-              },
+            : formState.frequency === 'quarterly'
+              ? {
+                  hour: formState.schedule_config.hour,
+                  minute: formState.schedule_config.minute,
+                }
+              : {
+                  day_of_month: formState.schedule_config.day_of_month ?? 1,
+                  hour: formState.schedule_config.hour,
+                  minute: formState.schedule_config.minute,
+                },
         is_enabled: formState.is_enabled,
       }
       if (editingSchedule) {
@@ -303,6 +308,20 @@ export function ScheduledReportsPanel() {
     setEditingSchedule(schedule)
     setFormState(buildFormFromSchedule(schedule))
     setDialogOpen(true)
+  }
+
+  const setFrequency = (frequency: ScheduledReportFrequency) => {
+    setFormState((current) => {
+      const wasQuarterly = current.frequency === 'quarterly'
+      // The quarterly review is a deck of its own: it replaces the operational report types.
+      const report_types: ScheduledReportType[] =
+        frequency === 'quarterly'
+          ? ['quarterly_review']
+          : wasQuarterly
+            ? ['sales', 'inventory']
+            : current.report_types
+      return { ...current, frequency, report_types }
+    })
   }
 
   const toggleReportType = (reportType: ScheduledReportType) => {
@@ -374,7 +393,9 @@ export function ScheduledReportsPanel() {
                             ? t(`scheduledReports.lastStatus.${schedule.last_run_status}`)
                             : t('scheduledReports.notRunYet')}
                         </Badge>
-                        <Badge variant="secondary">{schedule.format.toUpperCase()}</Badge>
+                        <Badge variant="secondary">
+                          {schedule.frequency === 'quarterly' ? 'PPTX' : schedule.format.toUpperCase()}
+                        </Badge>
                         <Badge variant="secondary">{t(`scheduledReports.${schedule.frequency}`)}</Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">
@@ -472,9 +493,7 @@ export function ScheduledReportsPanel() {
                 <Label>{t('scheduledReports.frequency')}</Label>
                 <Select
                   value={formState.frequency}
-                  onValueChange={(value: ScheduledReportFrequency) =>
-                    setFormState((current) => ({ ...current, frequency: value }))
-                  }
+                  onValueChange={(value: ScheduledReportFrequency) => setFrequency(value)}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -482,10 +501,19 @@ export function ScheduledReportsPanel() {
                   <SelectContent>
                     <SelectItem value="weekly">{t('scheduledReports.weekly')}</SelectItem>
                     <SelectItem value="monthly">{t('scheduledReports.monthly')}</SelectItem>
+                    <SelectItem value="quarterly">{t('scheduledReports.quarterly')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
+              {formState.frequency === 'quarterly' ? (
+                <div className="grid gap-2">
+                  <Label>{t('scheduledReports.format')}</Label>
+                  <div className="flex h-10 items-center rounded-md border px-3 text-sm text-muted-foreground">
+                    PPTX
+                  </div>
+                </div>
+              ) : (
               <div className="grid gap-2">
                 <Label>{t('scheduledReports.format')}</Label>
                 <Select
@@ -503,8 +531,18 @@ export function ScheduledReportsPanel() {
                   </SelectContent>
                 </Select>
               </div>
+              )}
             </div>
 
+            {formState.frequency === 'quarterly' ? (
+              <div className="grid gap-2">
+                <Label>{t('scheduledReports.reportTypes')}</Label>
+                <div className="rounded-lg border p-3 text-sm">
+                  <div className="font-medium">{t('googleSheets.dataType.quarterly_review')}</div>
+                  <div className="text-muted-foreground">{t('scheduledReports.quarterlyHint')}</div>
+                </div>
+              </div>
+            ) : (
             <div className="grid gap-2">
               <Label>{t('scheduledReports.reportTypes')}</Label>
               <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-3">
@@ -519,9 +557,17 @@ export function ScheduledReportsPanel() {
                 ))}
               </div>
             </div>
+            )}
 
             <div className="grid gap-3 md:grid-cols-2">
-              {formState.frequency === 'weekly' ? (
+              {formState.frequency === 'quarterly' ? (
+                <div className="grid gap-2">
+                  <Label>{t('scheduledReports.runsOn')}</Label>
+                  <div className="flex h-10 items-center rounded-md border px-3 text-sm text-muted-foreground">
+                    {t('scheduledReports.firstDayOfQuarter')}
+                  </div>
+                </div>
+              ) : formState.frequency === 'weekly' ? (
                 <div className="grid gap-2">
                   <Label>{t('scheduledReports.weekday')}</Label>
                   <Select
@@ -657,6 +703,7 @@ export function ScheduledReportsPanel() {
                   </Select>
                 </div>
 
+                {formState.frequency !== 'quarterly' ? (
                 <div className="grid gap-2">
                   <Label>{t('scheduledReports.groupBy')}</Label>
                   <Select
@@ -679,8 +726,11 @@ export function ScheduledReportsPanel() {
                     </SelectContent>
                   </Select>
                 </div>
+                ) : null}
               </div>
 
+              {formState.frequency !== 'quarterly' ? (
+              <>
               <label className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm">
                 <div>
                   <div className="font-medium">{t('scheduledReports.includeComparison')}</div>
@@ -713,6 +763,8 @@ export function ScheduledReportsPanel() {
                   }
                 />
               </label>
+              </>
+              ) : null}
             </div>
           </div>
 

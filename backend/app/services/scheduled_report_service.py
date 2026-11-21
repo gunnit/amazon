@@ -24,6 +24,12 @@ from app.schemas.report import (
     ScheduledReportUpdate,
 )
 from app.services.export_service import ExportService
+from app.services.quarterly_report.data import QuarterScope
+from app.services.quarterly_report.service import (
+    PPTX_CONTENT_TYPE,
+    generate_quarterly_deck,
+    quarterly_filename,
+)
 from app.services.scheduled_report_pdf_service import ScheduledOperationalPdfBuilder
 from app.services.scheduled_report_utils import compute_next_run_at, resolve_report_period, utcnow
 
@@ -274,6 +280,9 @@ class ScheduledReportArtifactService:
         self.export_service = ExportService(db)
 
     async def build_artifact(self, schedule: ScheduledReport, run: ScheduledReportRun) -> tuple[bytes, str, str]:
+        if "quarterly_review" in (schedule.report_types or []):
+            return await self._quarterly_deck(schedule, run)
+
         if schedule.format == "excel":
             payload, filename = await self.export_service.generate_excel_bundle(
                 organization_id=schedule.organization_id,
@@ -297,6 +306,25 @@ class ScheduledReportArtifactService:
         )
         filename = f"{_filename_slug(schedule.name)}_{run.period_start.isoformat()}_{run.period_end.isoformat()}.pdf"
         return builder.build(), filename, "application/pdf"
+
+    async def _quarterly_deck(self, schedule: ScheduledReport, run: ScheduledReportRun) -> tuple[bytes, str, str]:
+        """The quarterly business review deck for the run's period (the previous full quarter)."""
+        account_ids = [UUID(account_id) for account_id in (schedule.account_ids or [])]
+        if not account_ids:
+            result = await self.db.execute(
+                select(AmazonAccount.id).where(AmazonAccount.organization_id == schedule.organization_id)
+            )
+            account_ids = [row[0] for row in result.all()]
+        year, quarter = run.period_start.year, (run.period_start.month - 1) // 3 + 1
+        scope = QuarterScope(
+            organization_id=schedule.organization_id,
+            account_ids=account_ids,
+            year=year,
+            quarter=quarter,
+            language=(schedule.parameters or {}).get("language", "it"),
+        )
+        deck = await generate_quarterly_deck(self.db, scope)
+        return deck, quarterly_filename(year, quarter), PPTX_CONTENT_TYPE
 
     async def _pdf_sections(self, schedule: ScheduledReport, run: ScheduledReportRun) -> list[dict[str, Any]]:
         lang = (schedule.parameters or {}).get("language", "en")

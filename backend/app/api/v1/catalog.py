@@ -143,6 +143,34 @@ async def _asins_with_sales_in_period(
     return {(row[0], row[1]) for row in rows}
 
 
+@router.get("/brands", response_model=List[str])
+async def list_brands(
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_ids: Optional[List[UUID]] = Query(default=None),
+):
+    """Distinct, non-empty product brands of the organization's accounts (sorted)."""
+    query = (
+        select(Product.brand)
+        .join(AmazonAccount, AmazonAccount.id == Product.account_id)
+        .where(
+            AmazonAccount.organization_id == organization.id,
+            Product.brand.is_not(None),
+            func.trim(Product.brand) != "",
+        )
+        .distinct()
+    )
+    if account_ids:
+        query = query.where(AmazonAccount.id.in_(account_ids))
+    brands = (await db.execute(query)).scalars().all()
+    # The brand filter ignores case, so "Acme" and "ACME" are one choice.
+    unique: dict[str, str] = {}
+    for brand in sorted(b.strip() for b in brands):
+        unique.setdefault(brand.casefold(), brand)
+    return sorted(unique.values(), key=str.casefold)
+
+
 @router.get("/products/{asin}", response_model=ProductResponse)
 async def get_product(
     asin: str,

@@ -1,7 +1,7 @@
 # API surface
 > Generated from the source by `backend/scripts/gen_tech_docs.py`. Re-run it after changing the code; do not edit this page by hand.
 
-181 endpoints across 16 routers, all under `/api/v1`.
+183 endpoints across 16 routers, all under `/api/v1`.
 
 ## accounts
 
@@ -138,6 +138,7 @@ Prefix `/catalog`.
 | Method | Path |
 | --- | --- |
 | GET | `/catalog/products` |
+| GET | `/catalog/brands` |
 | GET | `/catalog/products/{asin}` |
 | PUT | `/catalog/products/{asin}` |
 | POST | `/catalog/backfill-titles` |
@@ -286,6 +287,7 @@ Prefix `/reports`.
 | GET | `/reports/orders` |
 | GET | `/reports/inventory` |
 | GET | `/reports/advertising` |
+| POST | `/reports/quarterly` |
 | GET | `/reports/schedules` |
 | POST | `/reports/schedules` |
 | GET | `/reports/schedules/{schedule_id}` |

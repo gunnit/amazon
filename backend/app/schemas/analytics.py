@@ -137,6 +137,7 @@ class ComparisonResponse(BaseModel):
     """Period-over-period comparison response."""
     preset: Optional[str] = None
     category: Optional[str] = None
+    brand: Optional[str] = None
     period_1: ComparisonPeriod
     period_2: ComparisonPeriod
     metrics: List[ComparisonMetric]

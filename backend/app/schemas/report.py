@@ -184,8 +184,8 @@ class ReportScheduleResponse(BaseModel):
         from_attributes = True
 
 
-ScheduledReportType = Literal["sales", "inventory", "advertising"]
-ScheduledReportFrequency = Literal["weekly", "monthly"]
+ScheduledReportType = Literal["sales", "inventory", "advertising", "quarterly_review"]
+ScheduledReportFrequency = Literal["weekly", "monthly", "quarterly"]
 ScheduledReportFormat = Literal["excel", "pdf"]
 ScheduledReportRunStatus = Literal["pending", "processing", "generated", "delivered", "failed"]
 
@@ -211,6 +211,13 @@ class MonthlyScheduleConfig(BaseModel):
     """Monthly schedule settings."""
 
     day_of_month: int = Field(..., ge=1, le=31)
+    hour: int = Field(..., ge=0, le=23)
+    minute: int = Field(..., ge=0, le=59)
+
+
+class QuarterlyScheduleConfig(BaseModel):
+    """Quarterly schedule settings: runs on the first day of each quarter."""
+
     hour: int = Field(..., ge=0, le=23)
     minute: int = Field(..., ge=0, le=59)
 
@@ -247,8 +254,20 @@ class ScheduledReportCreate(BaseModel):
     def validate_schedule_config(self) -> "ScheduledReportCreate":
         if self.frequency == "weekly":
             WeeklyScheduleConfig(**self.schedule_config)
+        elif self.frequency == "quarterly":
+            QuarterlyScheduleConfig(**self.schedule_config)
         else:
             MonthlyScheduleConfig(**self.schedule_config)
+
+        # The quarterly review is a PPTX deck of its own: it follows the
+        # quarterly cadence and cannot be mixed with the operational reports.
+        if "quarterly_review" in self.report_types:
+            if self.report_types != ["quarterly_review"]:
+                raise ValueError("quarterly_review cannot be combined with other report types")
+            if self.frequency != "quarterly":
+                raise ValueError("quarterly_review requires the quarterly frequency")
+        elif self.frequency == "quarterly":
+            raise ValueError("The quarterly frequency only applies to the quarterly_review report")
 
         if "inventory" not in self.report_types and self.parameters.low_stock_only:
             raise ValueError("low_stock_only requires the inventory report")
@@ -316,3 +335,15 @@ class ScheduledReportListResponse(BaseModel):
     """List wrapper for scheduled reports."""
 
     items: List[ScheduledReportResponse]
+
+
+class QuarterlyReportRequest(BaseModel):
+    """Request for the quarterly business review deck."""
+
+    account_ids: List[UUID] = Field(..., min_length=1)
+    year: int = Field(..., ge=2020, le=2100)
+    quarter: int = Field(..., ge=1, le=4)
+    brand: Optional[str] = Field(default=None, max_length=255)
+    category: Optional[str] = Field(default=None, max_length=255)
+    asins: Optional[List[str]] = Field(default=None, max_length=500)
+    language: Literal["it", "en"] = "it"

@@ -369,7 +369,7 @@ export const reportsApi = {
   createSchedule: async (data: {
     name: string
     report_types: string[]
-    frequency: 'weekly' | 'monthly'
+    frequency: 'weekly' | 'monthly' | 'quarterly'
     format: 'excel' | 'pdf'
     timezone: string
     account_ids: string[]
@@ -390,7 +390,7 @@ export const reportsApi = {
   updateSchedule: async (scheduleId: string, data: Partial<{
     name: string
     report_types: string[]
-    frequency: 'weekly' | 'monthly'
+    frequency: 'weekly' | 'monthly' | 'quarterly'
     format: 'excel' | 'pdf'
     timezone: string
     account_ids: string[]
@@ -426,6 +426,22 @@ export const reportsApi = {
 
   runScheduleNow: async (scheduleId: string): Promise<ScheduledReportRun> => {
     const response = await api.post(`/reports/schedules/${scheduleId}/run-now`)
+    return response.data
+  },
+
+  generateQuarterlyReport: async (data: {
+    account_ids: string[]
+    year: number
+    quarter: number
+    brand?: string
+    category?: string
+    asins?: string[]
+    language: 'it' | 'en'
+  }): Promise<Blob> => {
+    // Data, insights (possibly an AI call) and the deck are built in one request.
+    const response = await withJsonError(
+      api.post('/reports/quarterly', data, { responseType: 'blob', timeout: LONG_TIMEOUT_MS })
+    )
     return response.data
   },
 
@@ -550,6 +566,8 @@ export const analyticsApi = {
     start_date: string
     end_date: string
     account_ids?: string[]
+    brand?: string
+    category?: string
   }): Promise<DashboardKPIs> => {
     const response = await api.get('/analytics/dashboard', { params })
     return response.data
@@ -560,6 +578,8 @@ export const analyticsApi = {
     start_date: string
     end_date: string
     account_ids?: string[]
+    brand?: string
+    category?: string
   }): Promise<TrendData[]> => {
     const response = await api.get('/analytics/trends', { params })
     return response.data
@@ -579,6 +599,7 @@ export const analyticsApi = {
     period2_end: string
     preset?: 'mom' | 'qoq' | 'yoy'
     category?: string
+    brand?: string
     account_ids?: string[]
   }): Promise<ComparisonResponse> => {
     const response = await api.get('/analytics/comparison', { params })
@@ -641,6 +662,8 @@ export const analyticsApi = {
     trend_class?: 'rising_fast' | 'rising' | 'stable' | 'declining' | 'declining_fast'
     language?: 'en' | 'it'
     limit?: number
+    brand?: string
+    category?: string
   }): Promise<ProductTrendsResponse> => {
     const response = await api.get('/analytics/product-trends', { params })
     return response.data
@@ -1001,6 +1024,11 @@ export const catalogApi = {
     account_ids?: string[]
   }): Promise<Product[]> => {
     const response = await api.get('/catalog/products', { params })
+    return response.data
+  },
+
+  getBrands: async (params?: { account_ids?: string[] }): Promise<string[]> => {
+    const response = await api.get('/catalog/brands', { params })
     return response.data
   },
 

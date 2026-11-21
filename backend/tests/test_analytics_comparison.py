@@ -97,6 +97,7 @@ analytics_spec.loader.exec_module(analytics)
 # The exec above imported the real app.services.sales_metrics while the bare
 # SalesData stub was in place; evict it so later test files bind the real model.
 sys.modules.pop("app.services.sales_metrics", None)
+sys.modules.pop("app.services.product_scope", None)
 
 
 def test_previous_period_uses_same_inclusive_length():
@@ -116,10 +117,10 @@ async def test_comparison_includes_returns_metric_and_daily_series_with_category
             "average_order_value": 31.25,
         }
 
-    async def fake_returns(_db, _accounts, start_date, _end_date, _category=None):
+    async def fake_returns(_db, _accounts, start_date, _end_date, _category=None, _brand=None):
         return 12 if start_date.month == 3 else 9
 
-    async def fake_daily_revenue(_db, _accounts, start_date, _end_date, _category=None):
+    async def fake_daily_revenue(_db, _accounts, start_date, _end_date, _category=None, _brand=None):
         if start_date.month == 3:
             return {
                 date(2026, 3, 1): 1000.0,
@@ -172,7 +173,7 @@ async def test_comparison_includes_ad_metrics_without_category(monkeypatch):
     sales_calls: list[tuple[date, date]] = []
     ads_calls: list[tuple[date, date]] = []
 
-    async def fake_sales(_db, _accounts, start_date, end_date, _category=None):
+    async def fake_sales(_db, _accounts, start_date, end_date, _category=None, _brand=None):
         sales_calls.append((start_date, end_date))
         if start_date.month == 3:
             return {
@@ -194,10 +195,10 @@ async def test_comparison_includes_ad_metrics_without_category(monkeypatch):
             return {"roas": 4.2, "acos": 23.8, "ctr": 1.9}
         return {"roas": 3.6, "acos": 27.8, "ctr": 1.4}
 
-    async def fake_returns(_db, _accounts, start_date, _end_date, _category=None):
+    async def fake_returns(_db, _accounts, start_date, _end_date, _category=None, _brand=None):
         return 18 if start_date.month == 3 else 10
 
-    async def fake_daily_revenue(_db, _accounts, start_date, _end_date, _category=None):
+    async def fake_daily_revenue(_db, _accounts, start_date, _end_date, _category=None, _brand=None):
         if start_date.month == 3:
             return {
                 date(2026, 3, 1): 100.0,

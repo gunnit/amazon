@@ -34,6 +34,10 @@ interface FilterState {
   analyticsGroupBy: GroupBy
   analyticsCategory: string
 
+  // Dashboard-specific (empty string = all)
+  dashboardBrand: string
+  dashboardCategory: string
+
   // Reports-specific
   reportsGroupBy: GroupBy
   reportsLowStockOnly: boolean
@@ -50,6 +54,8 @@ interface FilterState {
 
   setAnalyticsGroupBy: (groupBy: GroupBy) => void
   setAnalyticsCategory: (category: string) => void
+  setDashboardBrand: (brand: string) => void
+  setDashboardCategory: (category: string) => void
 
   setReportsGroupBy: (groupBy: GroupBy) => void
   setReportsLowStockOnly: (value: boolean) => void
@@ -74,6 +80,8 @@ const defaultState = {
   comparisonPeriod2End: null as string | null,
   analyticsGroupBy: 'day' as GroupBy,
   analyticsCategory: '',
+  dashboardBrand: '',
+  dashboardCategory: '',
   reportsGroupBy: 'day' as GroupBy,
   reportsLowStockOnly: false,
 }
@@ -117,6 +125,8 @@ export const useFilterStore = create<FilterState>()(
 
       setAnalyticsGroupBy: (groupBy) => set({ analyticsGroupBy: groupBy }),
       setAnalyticsCategory: (category) => set({ analyticsCategory: category }),
+      setDashboardBrand: (brand) => set({ dashboardBrand: brand }),
+      setDashboardCategory: (category) => set({ dashboardCategory: category }),
 
       setReportsGroupBy: (groupBy) => set({ reportsGroupBy: groupBy }),
       setReportsLowStockOnly: (value) => set({ reportsLowStockOnly: value }),
@@ -127,6 +137,8 @@ export const useFilterStore = create<FilterState>()(
         customStartDate: null,
         customEndDate: null,
         accountIds: [],
+        dashboardBrand: '',
+        dashboardCategory: '',
       }),
       resetAnalytics: () => set({
         analyticsGroupBy: 'day',

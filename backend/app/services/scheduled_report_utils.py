@@ -56,6 +56,14 @@ def compute_next_run_at(
             candidate = candidate + timedelta(days=7)
         return local_to_utc(candidate, tz_name)
 
+    if frequency == "quarterly":
+        # First day of the next quarter, at the configured local time.
+        quarter_first_month = (local_now.month - 1) // 3 * 3 + 1
+        year, month = local_now.year, quarter_first_month + 3
+        if month > 12:
+            year, month = year + 1, 1
+        return local_to_utc(datetime(year, month, 1, hour, minute), tz_name)
+
     day_of_month = _require_int(schedule_config, "day_of_month", min_value=1, max_value=31)
     year = local_now.year
     month = local_now.month
@@ -72,6 +80,18 @@ def compute_next_run_at(
     return local_to_utc(candidate, tz_name)
 
 
+def previous_full_quarter(today: date) -> tuple[date, date]:
+    """First and last day of the calendar quarter before the one containing ``today``."""
+    year, quarter = today.year, (today.month - 1) // 3 + 1
+    year, quarter = (year - 1, 4) if quarter == 1 else (year, quarter - 1)
+    first_month = (quarter - 1) * 3 + 1
+    last_month = first_month + 2
+    return (
+        date(year, first_month, 1),
+        date(year, last_month, calendar.monthrange(year, last_month)[1]),
+    )
+
+
 def resolve_report_period(
     frequency: str,
     tz_name: str,
@@ -85,6 +105,9 @@ def resolve_report_period(
         end_date = local_today - timedelta(days=1)
         start_date = end_date - timedelta(days=6)
         return start_date, end_date
+
+    if frequency == "quarterly":
+        return previous_full_quarter(local_today)
 
     current_month_start = local_today.replace(day=1)
     end_date = current_month_start - timedelta(days=1)

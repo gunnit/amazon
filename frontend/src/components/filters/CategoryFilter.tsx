@@ -17,7 +17,7 @@ interface CategoryFilterProps {
 
 export function CategoryFilter({ value, onChange, options }: CategoryFilterProps) {
   const { t } = useTranslation()
-  const categories = options && options.length > 0 ? options : FALLBACK_CATEGORIES
+  const categories = options ?? FALLBACK_CATEGORIES
   return (
     <Select value={value || '_all'} onValueChange={(v) => onChange(v === '_all' ? '' : v)}>
       <SelectTrigger className="w-[160px] h-9 text-sm">

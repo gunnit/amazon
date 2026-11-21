@@ -21,6 +21,7 @@ from app.models.product import Product
 from app.services.analytics_service import AnalyticsService
 from app.services.ai_analysis_service import ProductTrendInsightsAnalysisService
 from app.services.product_trends_service import ProductTrendsService, build_rule_based_insights
+from app.services.product_scope import has_product_scope, product_scope_conditions
 from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.models.economics import AsinEconomics
 from app.models.market_snapshot import FeeEstimate, PriceSnapshot
@@ -191,22 +192,24 @@ def _normalize_optional_asin(asin: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
-async def _get_sales_period_metrics(
-    db: DbSession,
+def _sales_period_query(
     accounts_query,
     start_date: date,
     end_date: date,
     category: Optional[str] = None,
-) -> dict:
-    """Aggregate revenue, units, orders, and AOV for a period."""
-    if category:
-        query = (
-            select(
-                func.sum(display_revenue_expr()).label("revenue"),
-                func.sum(display_units_expr()).label("units"),
-                func.sum(SalesData.total_order_items).label("orders"),
-                func.sum(SalesData.browser_sessions + SalesData.mobile_sessions).label("sessions"),
-            )
+    brand: Optional[str] = None,
+):
+    """Sales totals of a period: the daily-total rows, or the per-ASIN rows of the
+    products matching the brand/category (never both)."""
+    columns = (
+        func.sum(display_revenue_expr()).label("revenue"),
+        func.sum(display_units_expr()).label("units"),
+        func.sum(SalesData.total_order_items).label("orders"),
+        func.sum(SalesData.browser_sessions + SalesData.mobile_sessions).label("sessions"),
+    )
+    if has_product_scope(brand, category):
+        return (
+            select(*columns)
             .select_from(SalesData)
             .join(
                 Product,
@@ -220,24 +223,27 @@ async def _get_sales_period_metrics(
                 SalesData.asin != DAILY_TOTAL_ASIN,
                 SalesData.date >= start_date,
                 SalesData.date <= end_date,
-                Product.category == category,
+                *product_scope_conditions(brand, category),
             )
         )
-    else:
-        query = (
-            select(
-                func.sum(display_revenue_expr()).label("revenue"),
-                func.sum(display_units_expr()).label("units"),
-                func.sum(SalesData.total_order_items).label("orders"),
-                func.sum(SalesData.browser_sessions + SalesData.mobile_sessions).label("sessions"),
-            )
-            .where(
-                SalesData.account_id.in_(accounts_query),
-                SalesData.asin == DAILY_TOTAL_ASIN,
-                SalesData.date >= start_date,
-                SalesData.date <= end_date,
-            )
-        )
+    return select(*columns).where(
+        SalesData.account_id.in_(accounts_query),
+        SalesData.asin == DAILY_TOTAL_ASIN,
+        SalesData.date >= start_date,
+        SalesData.date <= end_date,
+    )
+
+
+async def _get_sales_period_metrics(
+    db: DbSession,
+    accounts_query,
+    start_date: date,
+    end_date: date,
+    category: Optional[str] = None,
+    brand: Optional[str] = None,
+) -> dict:
+    """Aggregate revenue, units, orders, and AOV for a period."""
+    query = _sales_period_query(accounts_query, start_date, end_date, category, brand)
 
     row = (await db.execute(query)).one()
     revenue = float(row.revenue or 0)
@@ -255,20 +261,18 @@ async def _get_sales_period_metrics(
     }
 
 
-async def _get_sales_daily_revenue(
-    db: DbSession,
+def _sales_daily_revenue_query(
     accounts_query,
     start_date: date,
     end_date: date,
     category: Optional[str] = None,
-) -> dict[date, float]:
-    """Aggregate daily revenue using the same comparison filters as sales metrics."""
-    if category:
+    brand: Optional[str] = None,
+):
+    """Daily revenue with the same scope rule as ``_sales_period_query``."""
+    columns = (SalesData.date.label("period_date"), func.sum(display_revenue_expr()).label("revenue"))
+    if has_product_scope(brand, category):
         query = (
-            select(
-                SalesData.date.label("period_date"),
-                func.sum(display_revenue_expr()).label("revenue"),
-            )
+            select(*columns)
             .select_from(SalesData)
             .join(
                 Product,
@@ -282,26 +286,29 @@ async def _get_sales_daily_revenue(
                 SalesData.asin != DAILY_TOTAL_ASIN,
                 SalesData.date >= start_date,
                 SalesData.date <= end_date,
-                Product.category == category,
+                *product_scope_conditions(brand, category),
             )
-            .group_by(SalesData.date)
-            .order_by(SalesData.date)
         )
     else:
-        query = (
-            select(
-                SalesData.date.label("period_date"),
-                func.sum(display_revenue_expr()).label("revenue"),
-            )
-            .where(
-                SalesData.account_id.in_(accounts_query),
-                SalesData.asin == DAILY_TOTAL_ASIN,
-                SalesData.date >= start_date,
-                SalesData.date <= end_date,
-            )
-            .group_by(SalesData.date)
-            .order_by(SalesData.date)
+        query = select(*columns).where(
+            SalesData.account_id.in_(accounts_query),
+            SalesData.asin == DAILY_TOTAL_ASIN,
+            SalesData.date >= start_date,
+            SalesData.date <= end_date,
         )
+    return query.group_by(SalesData.date).order_by(SalesData.date)
+
+
+async def _get_sales_daily_revenue(
+    db: DbSession,
+    accounts_query,
+    start_date: date,
+    end_date: date,
+    category: Optional[str] = None,
+    brand: Optional[str] = None,
+) -> dict[date, float]:
+    """Aggregate daily revenue using the same comparison filters as sales metrics."""
+    query = _sales_daily_revenue_query(accounts_query, start_date, end_date, category, brand)
 
     rows = (await db.execute(query)).all()
     return {
@@ -316,9 +323,10 @@ async def _get_returns_period_count(
     start_date: date,
     end_date: date,
     category: Optional[str] = None,
+    brand: Optional[str] = None,
 ) -> int:
     """Count return records for a comparison period."""
-    if category:
+    if has_product_scope(brand, category):
         query = (
             select(func.count(ReturnData.id))
             .select_from(ReturnData)
@@ -333,7 +341,7 @@ async def _get_returns_period_count(
                 ReturnData.account_id.in_(accounts_query),
                 ReturnData.return_date >= start_date,
                 ReturnData.return_date <= end_date,
-                Product.category == category,
+                *product_scope_conditions(brand, category),
             )
         )
     else:
@@ -466,21 +474,22 @@ async def _build_period_comparison(
     account_ids: Optional[List[UUID]] = None,
     category: Optional[str] = None,
     preset: Optional[str] = None,
+    brand: Optional[str] = None,
 ) -> ComparisonResponse:
     """Build a period-over-period comparison response."""
     _validate_period(period_1_start, period_1_end, "period1")
     _validate_period(period_2_start, period_2_end, "period2")
 
     accounts_query = _accounts_query(organization_id, account_ids)
-    current_sales = await _get_sales_period_metrics(db, accounts_query, period_1_start, period_1_end, category)
-    previous_sales = await _get_sales_period_metrics(db, accounts_query, period_2_start, period_2_end, category)
-    current_returns = await _get_returns_period_count(db, accounts_query, period_1_start, period_1_end, category)
-    previous_returns = await _get_returns_period_count(db, accounts_query, period_2_start, period_2_end, category)
+    current_sales = await _get_sales_period_metrics(db, accounts_query, period_1_start, period_1_end, category, brand)
+    previous_sales = await _get_sales_period_metrics(db, accounts_query, period_2_start, period_2_end, category, brand)
+    current_returns = await _get_returns_period_count(db, accounts_query, period_1_start, period_1_end, category, brand)
+    previous_returns = await _get_returns_period_count(db, accounts_query, period_2_start, period_2_end, category, brand)
     current_daily_revenue = await _get_sales_daily_revenue(
-        db, accounts_query, period_1_start, period_1_end, category
+        db, accounts_query, period_1_start, period_1_end, category, brand
     )
     previous_daily_revenue = await _get_sales_daily_revenue(
-        db, accounts_query, period_2_start, period_2_end, category
+        db, accounts_query, period_2_start, period_2_end, category, brand
     )
 
     period_1_days = (period_1_end - period_1_start).days + 1
@@ -544,7 +553,7 @@ async def _build_period_comparison(
         ),
     ]
 
-    if category:
+    if has_product_scope(brand, category):
         metrics.extend([
             _build_comparison_metric(
                 "roas",
@@ -584,6 +593,7 @@ async def _build_period_comparison(
     return ComparisonResponse(
         preset=preset,
         category=category,
+        brand=brand,
         period_1=ComparisonPeriod(start=period_1_start, end=period_1_end),
         period_2=ComparisonPeriod(start=period_2_start, end=period_2_end),
         metrics=metrics,
@@ -599,21 +609,31 @@ async def get_dashboard_kpis(
     start_date: date = Query(default=date.today() - timedelta(days=30)),
     end_date: date = Query(default=date.today()),
     account_ids: Optional[List[UUID]] = Query(default=None),
+    brand: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
 ):
-    """Get dashboard KPIs with comparisons."""
+    """Get dashboard KPIs with comparisons.
+
+    A brand or category narrows sales to the matching products. Advertising
+    is reported per campaign, not per product, so its metrics are then
+    unavailable rather than shown unfiltered.
+    """
     await _validate_account_ids(db, organization.id, account_ids)
     _validate_period(start_date, end_date, "period")
     prev_start, prev_end = _previous_period(start_date, end_date)
     accounts_query = _accounts_query(organization.id, account_ids)
-    sales_current = await _get_sales_period_metrics(db, accounts_query, start_date, end_date)
-    sales_previous = await _get_sales_period_metrics(db, accounts_query, prev_start, prev_end)
+    scoped = has_product_scope(brand, category)
+    sales_current = await _get_sales_period_metrics(db, accounts_query, start_date, end_date, category, brand)
+    sales_previous = await _get_sales_period_metrics(db, accounts_query, prev_start, prev_end, category, brand)
     ads_current = await _get_advertising_period_metrics(db, accounts_query, start_date, end_date)
     ads_previous = await _get_advertising_period_metrics(db, accounts_query, prev_start, prev_end)
     ads_data_from, ads_data_until = await _get_ads_coverage(db, accounts_query)
-    ads_available = bool(
+    ads_available = not scoped and bool(
         ads_current.get("impressions", 0) or ads_current.get("clicks", 0) or ads_current.get("spend", 0)
     )
-    if ads_available:
+    if scoped:
+        ads_reason = CATEGORY_FILTER_NOT_SUPPORTED
+    elif ads_available:
         ads_reason = None
     else:
         # "Not connected" only when no scoped account holds advertising
@@ -679,14 +699,17 @@ async def get_dashboard_kpis(
     )
 
     # Count active ASINs and synced accounts (exclude sentinel)
-    asin_count = await db.execute(
-        select(func.count(func.distinct(SalesData.asin)))
-        .where(
-            SalesData.account_id.in_(accounts_query),
-            SalesData.asin != DAILY_TOTAL_ASIN,
-            SalesData.date >= start_date,
-        )
+    asin_count_query = select(func.count(func.distinct(SalesData.asin))).where(
+        SalesData.account_id.in_(accounts_query),
+        SalesData.asin != DAILY_TOTAL_ASIN,
+        SalesData.date >= start_date,
     )
+    if scoped:
+        asin_count_query = asin_count_query.join(
+            Product,
+            and_(Product.account_id == SalesData.account_id, Product.asin == SalesData.asin),
+        ).where(*product_scope_conditions(brand, category))
+    asin_count = await db.execute(asin_count_query)
     active_asins = asin_count.scalar() or 0
 
     account_count = await db.execute(
@@ -776,8 +799,10 @@ async def get_trends(
     start_date: date = Query(default=date.today() - timedelta(days=30)),
     end_date: date = Query(default=date.today()),
     account_ids: Optional[List[UUID]] = Query(default=None),
+    brand: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
 ):
-    """Get trend data for specified metrics."""
+    """Get trend data for specified metrics, optionally for one brand/category."""
     await _validate_account_ids(db, organization.id, account_ids)
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
@@ -786,40 +811,40 @@ async def get_trends(
         accounts_query = accounts_query.where(AmazonAccount.id.in_(account_ids))
 
     trends = []
+    scoped = has_product_scope(brand, category)
 
     for metric in metrics:
         if metric == "revenue":
-            query = (
-                select(
-                    SalesData.date,
-                    func.sum(display_revenue_expr()).label("value"),
-                )
-                .where(
-                    SalesData.account_id.in_(accounts_query),
-                    SalesData.asin == DAILY_TOTAL_ASIN,
-                    SalesData.date >= start_date,
-                    SalesData.date <= end_date,
-                )
-                .group_by(SalesData.date)
-                .order_by(SalesData.date)
-            )
+            value_expr = func.sum(display_revenue_expr()).label("value")
         elif metric == "units":
-            query = (
-                select(
-                    SalesData.date,
-                    func.sum(display_units_expr()).label("value"),
-                )
-                .where(
-                    SalesData.account_id.in_(accounts_query),
-                    SalesData.asin == DAILY_TOTAL_ASIN,
-                    SalesData.date >= start_date,
-                    SalesData.date <= end_date,
-                )
-                .group_by(SalesData.date)
-                .order_by(SalesData.date)
-            )
+            value_expr = func.sum(display_units_expr()).label("value")
         else:
             continue
+
+        if scoped:
+            query = (
+                select(SalesData.date, value_expr)
+                .select_from(SalesData)
+                .join(
+                    Product,
+                    and_(Product.account_id == SalesData.account_id, Product.asin == SalesData.asin),
+                )
+                .where(
+                    SalesData.account_id.in_(accounts_query),
+                    SalesData.asin != DAILY_TOTAL_ASIN,
+                    SalesData.date >= start_date,
+                    SalesData.date <= end_date,
+                    *product_scope_conditions(brand, category),
+                )
+            )
+        else:
+            query = select(SalesData.date, value_expr).where(
+                SalesData.account_id.in_(accounts_query),
+                SalesData.asin == DAILY_TOTAL_ASIN,
+                SalesData.date >= start_date,
+                SalesData.date <= end_date,
+            )
+        query = query.group_by(SalesData.date).order_by(SalesData.date)
 
         result = await db.execute(query)
         rows = result.all()
@@ -1154,6 +1179,7 @@ async def get_comparison(
     period2_end: date = Query(...),
     account_ids: Optional[List[UUID]] = Query(default=None),
     category: Optional[str] = Query(default=None),
+    brand: Optional[str] = Query(default=None),
     preset: Optional[str] = Query(default=None),
 ):
     """Compare metrics between two periods."""
@@ -1167,6 +1193,7 @@ async def get_comparison(
         period_2_end=period2_end,
         account_ids=account_ids,
         category=category,
+        brand=brand,
         preset=preset,
     )
 
@@ -1594,6 +1621,8 @@ async def get_product_trends(
     ),
     language: str = Query(default="it", pattern="^(en|it)$"),
     limit: int = Query(default=50, ge=1, le=100),
+    brand: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
 ):
     """Get ranked product trends and structured insights."""
     _validate_period(start_date, end_date, "trend period")
@@ -1622,6 +1651,8 @@ async def get_product_trends(
         asin=asin,
         trend_class=trend_class,
         limit=limit,
+        brand=brand,
+        category=category,
     )
 
     insights = build_rule_based_insights(

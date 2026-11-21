@@ -64,6 +64,7 @@ import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
 import { useTranslation } from '@/i18n'
 import { ExportModal } from '@/components/ExportModal'
 import { ScheduledReportsPanel } from '@/components/ScheduledReportsPanel'
+import { QuarterlyReportCard } from '@/components/QuarterlyReportCard'
 import {
   granularityForSelection,
   formatPeriodLabel,
@@ -2247,6 +2248,7 @@ function ExportTab() {
           </Button>
         </CardContent>
       </Card>
+      <QuarterlyReportCard />
       <ScheduledReportsPanel />
       <ExportModal open={exportModalOpen} onOpenChange={setExportModalOpen} />
     </div>

@@ -38,13 +38,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { analyticsApi, accountsApi } from '@/services/api'
+import { analyticsApi, accountsApi, catalogApi } from '@/services/api'
 import { formatCurrency, formatDecimal, formatLocalizedDate, formatNumber, formatPercent, formatRatio, formatTrendPercent, cn } from '@/lib/utils'
 import { AREA_FILL, CHART_PRIMARY, CHART_SERIES } from '@/lib/chart-theme'
 import { buildDashboardSearchParams, resolveDashboardScope } from '@/lib/dashboardScope'
 import { granularityForAccountTypes } from '@/lib/granularity'
 import { GranularityBadge } from '@/components/GranularityBadge'
-import { FilterBar, DateRangeFilter, AccountFilter, ComparisonFilter } from '@/components/filters'
+import {
+  FilterBar,
+  DateRangeFilter,
+  AccountFilter,
+  ComparisonFilter,
+  BrandFilter,
+  CategoryFilter,
+} from '@/components/filters'
 import ProductTrendBadge from '@/components/analytics/ProductTrendBadge'
 import ProductTrendSparkline from '@/components/analytics/ProductTrendSparkline'
 import { PeriodComparisonCard } from '@/components/PeriodComparisonCard'
@@ -340,6 +347,10 @@ export default function Dashboard() {
     customStartDate,
     customEndDate,
     accountIds,
+    dashboardBrand,
+    dashboardCategory,
+    setDashboardBrand,
+    setDashboardCategory,
     resetDashboard,
     resetComparison,
   } = filterState
@@ -367,6 +378,33 @@ export default function Dashboard() {
   )
   const queriesEnabled = scope.mode !== 'resolving'
   const effectiveAccountIds = scope.mode === 'account' ? [scope.accountId] : accountIds
+  const productFilter = {
+    brand: dashboardBrand || undefined,
+    category: dashboardCategory || undefined,
+  }
+  const productFiltered = Boolean(dashboardBrand || dashboardCategory)
+
+  // Choices of the brand and category filters: those of the accounts in scope.
+  const { data: brandOptions = [] } = useQuery<string[]>({
+    queryKey: ['catalog-brands', effectiveAccountIds],
+    queryFn: () =>
+      catalogApi.getBrands({
+        account_ids: effectiveAccountIds.length > 0 ? effectiveAccountIds : undefined,
+      }),
+    enabled: queriesEnabled,
+  })
+  const { data: scopedProducts = [] } = useQuery({
+    queryKey: ['catalog-products-categories', effectiveAccountIds],
+    queryFn: () =>
+      catalogApi.getProducts({
+        account_ids: effectiveAccountIds.length > 0 ? effectiveAccountIds : undefined,
+        limit: 1000,
+      }),
+    enabled: queriesEnabled,
+  })
+  const categoryOptions = Array.from(
+    new Set(scopedProducts.map((product) => product.category).filter((value): value is string => Boolean(value)))
+  ).sort((a, b) => a.localeCompare(b))
 
   // Vendor accounts only get monthly, already-settled data, so a recent window can
   // legitimately read 0. Surface a note whenever the current scope includes a vendor.
@@ -402,11 +440,12 @@ export default function Dashboard() {
   const granularity = granularityForAccountTypes(inScopeAccounts.map((a) => a.account_type))
 
   const { data: kpis, isLoading: kpisLoading, isError: kpisError } = useQuery<DashboardKPIs>({
-    queryKey: ['dashboard-kpis', dateRange, effectiveAccountIds],
+    queryKey: ['dashboard-kpis', dateRange, effectiveAccountIds, dashboardBrand, dashboardCategory],
     queryFn: () => analyticsApi.getDashboard({
       start_date: dateRange.start,
       end_date: dateRange.end,
       account_ids: effectiveAccountIds.length > 0 ? effectiveAccountIds : undefined,
+      ...productFilter,
     }),
     enabled: queriesEnabled,
   })
@@ -418,17 +457,18 @@ export default function Dashboard() {
     queryFn: () => analyticsApi.getToday({
       account_ids: effectiveAccountIds.length > 0 ? effectiveAccountIds : undefined,
     }),
-    enabled: queriesEnabled && hasSeller,
+    enabled: queriesEnabled && hasSeller && !productFiltered,
     refetchInterval: 5 * 60 * 1000,
   })
 
   const { data: trends, isLoading: trendsLoading } = useQuery<TrendData[]>({
-    queryKey: ['dashboard-trends', dateRange, effectiveAccountIds],
+    queryKey: ['dashboard-trends', dateRange, effectiveAccountIds, dashboardBrand, dashboardCategory],
     queryFn: () => analyticsApi.getTrends({
       metrics: ['revenue', 'units'],
       start_date: dateRange.start,
       end_date: dateRange.end,
       account_ids: effectiveAccountIds.length > 0 ? effectiveAccountIds : undefined,
+      ...productFilter,
     }),
     enabled: queriesEnabled,
   })
@@ -436,30 +476,32 @@ export default function Dashboard() {
   // When both seller and vendor accounts are in scope, fetch the seller-only series
   // separately so we can render it as the daily Area/Line baseline.
   const { data: sellerTrends } = useQuery<TrendData[]>({
-    queryKey: ['dashboard-trends-seller', dateRange, sellerAccountIds],
+    queryKey: ['dashboard-trends-seller', dateRange, sellerAccountIds, dashboardBrand, dashboardCategory],
     queryFn: () => analyticsApi.getTrends({
       metrics: ['revenue', 'units'],
       start_date: dateRange.start,
       end_date: dateRange.end,
       account_ids: sellerAccountIds,
+      ...productFilter,
     }),
     enabled: queriesEnabled && mixed && hasSeller,
   })
 
   // Vendor-only series, used both in the vendor-only path and the mixed path.
   const { data: vendorTrends } = useQuery<TrendData[]>({
-    queryKey: ['dashboard-trends-vendor', dateRange, vendorAccountIds],
+    queryKey: ['dashboard-trends-vendor', dateRange, vendorAccountIds, dashboardBrand, dashboardCategory],
     queryFn: () => analyticsApi.getTrends({
       metrics: ['revenue', 'units'],
       start_date: dateRange.start,
       end_date: dateRange.end,
       account_ids: vendorAccountIds,
+      ...productFilter,
     }),
     enabled: queriesEnabled && hasVendor,
   })
 
   const { data: trendingProducts, isLoading: trendingProductsLoading } = useQuery<ProductTrendsResponse>({
-    queryKey: ['dashboard-product-trends', dateRange.end, effectiveAccountIds, language],
+    queryKey: ['dashboard-product-trends', dateRange.end, effectiveAccountIds, language, dashboardBrand, dashboardCategory],
     queryFn: () => analyticsApi.getProductTrends({
       start_date: dateRange.start,
       end_date: dateRange.end,
@@ -471,6 +513,7 @@ export default function Dashboard() {
           ? effectiveAccountIds
           : undefined,
       limit: 5,
+      ...productFilter,
     }),
     enabled: queriesEnabled,
   })
@@ -499,7 +542,7 @@ export default function Dashboard() {
   }, [requestedAccountId, scope, searchParams, setSearchParams, t, toast])
 
   const { data: comparison, isLoading: comparisonLoading } = useQuery<ComparisonResponse>({
-    queryKey: ['dashboard-comparison', comparisonPeriods, effectiveAccountIds],
+    queryKey: ['dashboard-comparison', comparisonPeriods, effectiveAccountIds, dashboardBrand, dashboardCategory],
     queryFn: () => analyticsApi.getComparison({
       period1_start: comparisonPeriods.period1.start,
       period1_end: comparisonPeriods.period1.end,
@@ -507,6 +550,7 @@ export default function Dashboard() {
       period2_end: comparisonPeriods.period2.end,
       preset: comparisonPeriods.preset || undefined,
       account_ids: effectiveAccountIds.length > 0 ? effectiveAccountIds : undefined,
+      ...productFilter,
     }),
     enabled: queriesEnabled,
   })
@@ -758,9 +802,22 @@ export default function Dashboard() {
           ) : (
             <AccountFilter />
           )}
+          <BrandFilter value={dashboardBrand} onChange={setDashboardBrand} options={brandOptions} />
+          <CategoryFilter
+            value={dashboardCategory}
+            onChange={setDashboardCategory}
+            options={categoryOptions}
+          />
           <ComparisonFilter />
         </FilterBar>
       </div>
+
+      {productFiltered && (
+        <div className="flex items-start gap-3 rounded-lg border border-border/60 bg-muted/30 px-4 py-3 text-sm">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <p className="text-muted-foreground">{t('dashboard.productFilterAdsNote')}</p>
+        </div>
+      )}
 
       {/* Vendor settlement-lag note */}
       {vendorSelected && (
@@ -774,7 +831,7 @@ export default function Dashboard() {
       )}
 
       {/* Today so far (near-real-time, orders-based, sellers only) */}
-      {today && (today.orders > 0 || today.yesterday_orders > 0) && (
+      {!productFiltered && today && (today.orders > 0 || today.yesterday_orders > 0) && (
         <Card>
           <CardContent className="flex flex-wrap items-center gap-x-8 gap-y-3 py-4">
             <div className="flex items-center gap-2">

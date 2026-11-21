@@ -38,6 +38,7 @@ const DETAIL_KEYS: Record<string, string> = {
   'anomaly is resolved': 'apiError.anomalyHandled',
   'anomaly is restore_requested': 'apiError.anomalyHandled',
   'variation family not found': 'apiError.familyNotFound',
+  'no amazon account in scope': 'apiError.noAccountInScope',
 }
 
 function rawDetail(error: unknown): string | null {

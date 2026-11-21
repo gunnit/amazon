@@ -23,7 +23,13 @@ from app.schemas.report import (
     OrderListResponse, OrderResponse,
     InventoryDataResponse, AdvertisingMetricsResponse,
     ScheduledReportCreate, ScheduledReportResponse,
-    ScheduledReportRunResponse, ScheduledReportUpdate,
+    QuarterlyReportRequest, ScheduledReportRunResponse, ScheduledReportUpdate,
+)
+from app.services.quarterly_report.data import QuarterScope
+from app.services.quarterly_report.service import (
+    PPTX_CONTENT_TYPE,
+    generate_quarterly_deck,
+    quarterly_filename,
 )
 from app.services.scheduled_report_service import (
     ScheduledReportService,
@@ -452,6 +458,48 @@ async def get_advertising_data(
         )
         for row in rows
     ]
+
+
+@router.post("/quarterly")
+async def generate_quarterly_report(
+    payload: QuarterlyReportRequest,
+    current_user: CurrentUser,
+    organization: CurrentOrganization,
+    db: DbSession,
+):
+    """Generate the quarterly business review deck (PPTX) for the selected scope."""
+    account_ids = list(dict.fromkeys(payload.account_ids))
+    found = (
+        await db.execute(
+            select(AmazonAccount.id).where(
+                AmazonAccount.organization_id == organization.id,
+                AmazonAccount.id.in_(account_ids),
+            )
+        )
+    ).scalars().all()
+    if len(set(found)) != len(account_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    scope = QuarterScope(
+        organization_id=organization.id,
+        account_ids=account_ids,
+        year=payload.year,
+        quarter=payload.quarter,
+        brand=payload.brand,
+        category=payload.category,
+        asins=payload.asins,
+        language=payload.language,
+    )
+    try:
+        deck = await generate_quarterly_deck(db, scope)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    filename = quarterly_filename(payload.year, payload.quarter)
+    return StreamingResponse(
+        iter([deck]),
+        media_type=PPTX_CONTENT_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/schedules", response_model=List[ScheduledReportResponse])

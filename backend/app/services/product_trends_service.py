@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.alert import Alert, AlertRule
@@ -16,6 +16,7 @@ from app.models.inventory import InventoryData
 from app.models.product import BSRHistory, Product
 from app.models.sales_data import SalesData
 from app.services.data_extraction import DAILY_TOTAL_ASIN
+from app.services.product_scope import has_product_scope, product_scope_conditions
 from app.services.sales_metrics import display_revenue_expr, display_units_expr
 from app.services.granularity import Granularity, granularity_for_account_types
 
@@ -490,6 +491,8 @@ class ProductTrendsService:
         asin: Optional[str] = None,
         trend_class: Optional[str] = None,
         limit: int = DEFAULT_RANKING_LIMIT,
+        brand: Optional[str] = None,
+        category: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not account_ids:
             return _empty_response(language)
@@ -503,6 +506,8 @@ class ProductTrendsService:
             account_ids=account_ids,
             start_date=previous_start,
             end_date=current_end,
+            brand=brand,
+            category=category,
         )
         asins = set(sales_timeseries.keys())
         if not asins:
@@ -703,8 +708,10 @@ class ProductTrendsService:
         account_ids: List[UUID],
         start_date: date,
         end_date: date,
+        brand: Optional[str] = None,
+        category: Optional[str] = None,
     ) -> Dict[str, Dict[date, Dict[str, float]]]:
-        result = await self.db.execute(
+        statement = (
             select(
                 SalesData.asin,
                 SalesData.date,
@@ -720,6 +727,12 @@ class ProductTrendsService:
             .group_by(SalesData.asin, SalesData.date)
             .order_by(SalesData.asin, SalesData.date.asc())
         )
+        if has_product_scope(brand, category):
+            statement = statement.join(
+                Product,
+                and_(Product.account_id == SalesData.account_id, Product.asin == SalesData.asin),
+            ).where(*product_scope_conditions(brand, category))
+        result = await self.db.execute(statement)
 
         series: Dict[str, Dict[date, Dict[str, float]]] = defaultdict(dict)
         for row in result.all():

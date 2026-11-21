@@ -683,8 +683,8 @@ export interface AdvertisingInsights {
   ads_data_until?: string | null
 }
 
-export type ScheduledReportType = 'sales' | 'inventory' | 'advertising'
-export type ScheduledReportFrequency = 'weekly' | 'monthly'
+export type ScheduledReportType = 'sales' | 'inventory' | 'advertising' | 'quarterly_review'
+export type ScheduledReportFrequency = 'weekly' | 'monthly' | 'quarterly'
 export type ScheduledReportFormat = 'excel' | 'pdf'
 export type ScheduledReportRunStatus = 'pending' | 'processing' | 'generated' | 'delivered' | 'failed'
 
