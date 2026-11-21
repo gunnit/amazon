@@ -2563,6 +2563,14 @@ class SPAPIClient:
         return (feed_response.payload or {})["feedId"]
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def list_recent_feeds(self, page_size: int = 1) -> List[Dict[str, Any]]:
+        """Most recent JSON_LISTINGS_FEED feeds (also a Feeds access check)."""
+        response = self._feeds_api().get_feeds(
+            feedTypes=["JSON_LISTINGS_FEED"], pageSize=page_size
+        )
+        return (response.payload or {}).get("feeds") or []
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_feed_status(self, feed_id: str) -> Dict[str, Any]:
         payload = self._feeds_api().get_feed(feed_id).payload or {}
         return {

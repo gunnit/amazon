@@ -387,3 +387,13 @@ def test_submit_json_listings_feed_does_not_retry_on_throttle(monkeypatch):
         client.submit_json_listings_feed({"messages": []})
     assert exc.value.error_code == "THROTTLED"
     assert len(calls) == 1
+
+
+def test_list_recent_feeds_requests_listings_feed_type(monkeypatch):
+    client = _make_client()
+    fake = _install(
+        client, "_feeds_api",
+        _Recorder({"get_feeds": {"feeds": [{"feedId": "1"}]}}), monkeypatch,
+    )
+    assert client.list_recent_feeds(page_size=1) == [{"feedId": "1"}]
+    assert fake.calls[0][2] == {"feedTypes": ["JSON_LISTINGS_FEED"], "pageSize": 1}
