@@ -86,6 +86,7 @@ from app.services.catalog_monitor.bulk_io import (
     parse_new_items,
     parse_upload,
     row_to_change_item,
+    upload_errors,
     validate_new_item,
     wrap_new_item_attributes,
 )
@@ -1456,12 +1457,14 @@ def row_error(row: Any, message: str, asin: Optional[str] = None, sku: Optional[
 
 
 def match_upload_rows(
-    rows: list[ParsedRow], products: list[Any]
+    rows: list[ParsedRow], products: list[Any], live: Optional[dict[str, Any]] = None
 ) -> tuple[list[tuple[ParsedRow, Any]], list[RowErrorOut]]:
     """Rows that belong to the account (by asin, else sku), plus the errors of the others.
 
     A row with parse errors, an unknown product or a product already seen in the
     file is reported and skipped. Matched rows get the product's asin and sku.
+    ``live`` maps ASIN to its live ``ListingContent``: cells equal to it are not
+    checked against the limits, since they become no patch.
     """
     by_asin = {p.asin: p for p in products if p.asin}
     by_sku = {p.sku: p for p in products if p.sku}
@@ -1469,16 +1472,17 @@ def match_upload_rows(
     errors: list[RowErrorOut] = []
     seen: set[str] = set()
     for row in rows:
-        problems = list(row.errors)
+        product = by_asin.get(row.asin) if row.asin else None
+        if product is None and row.sku:
+            product = by_sku.get(row.sku)
+        current = (live or {}).get(product.asin) if product is not None else None
+        problems = upload_errors(row, current)
         keyword = row.cells.get("main_keyword") or ""
         if len(keyword) > _MAX_KEYWORD_LENGTH:
             problems.append(f"main_keyword supera {_MAX_KEYWORD_LENGTH} caratteri")
         if problems:
             errors.append(row_error(row.row_number, "; ".join(problems), row.asin, row.sku))
             continue
-        product = by_asin.get(row.asin) if row.asin else None
-        if product is None and row.sku:
-            product = by_sku.get(row.sku)
         if product is None:
             errors.append(row_error(row.row_number, _NOT_IN_ACCOUNT, row.asin, row.sku))
             continue
@@ -1612,7 +1616,16 @@ async def upload_bulk(
     account = await _account_or_404(db, organization.id, account_id)
     data, name = await _read_upload(file)
     parsed = _parse_file(parse_upload, data, name)
-    matched, errors = match_upload_rows(parsed, await _account_products(db, account.id))
+    products = await _account_products(db, account.id)
+    skus = {row.sku for row in parsed if row.sku}
+    named = {row.asin for row in parsed if row.asin} | {p.asin for p in products if p.sku in skus}
+    live = {
+        asin: content_from_dict(content)
+        for asin, content in (
+            await _latest_content_dicts(db, account.id, sorted(a for a in named if a))
+        ).items()
+    }
+    matched, errors = match_upload_rows(parsed, products, live)
     keywords_updated = apply_main_keyword_cells(matched)
 
     if mode == "baseline":
@@ -1632,14 +1645,9 @@ async def upload_bulk(
             row_errors=[*errors, *(row_error(None, message) for message in import_errors)],
         )
 
-    live = await _latest_content_dicts(db, account.id, [row.asin for row, _ in matched])
     items: list[ChangeItem] = []
     for row, _ in matched:
-        item = row_to_change_item(
-            row,
-            content_from_dict(live[row.asin]) if row.asin in live else None,
-            account.marketplace_id,
-        )
+        item = row_to_change_item(row, live.get(row.asin), account.marketplace_id)
         if item is not None:
             items.append(item)
     batch_id, requests = None, []

@@ -1055,6 +1055,21 @@ def test_upload_returns_row_errors_and_creates_only_changed(monkeypatch, bulk_ac
     assert db.commits == 1
 
 
+def test_upload_ignores_limits_of_cells_equal_to_the_live_content(monkeypatch, bulk_account):
+    # Found in the end-to-end run: export, change bullet_2, upload -> the row was refused
+    # because its untouched live highlights were already over 125 characters.
+    live = _live("B0TEST0001", item_highlights="h" * 130)
+    _bulk_fakes(monkeypatch, [_product("B0TEST0001")], {"B0TEST0001": live})
+    data = _xlsx(["asin", "item_highlights", "bullet_2"], [["B0TEST0001", "h" * 130, "Due nuovo"]])
+    client, _ = _client()
+    body = _upload(client, data).json()
+    assert (body["changes"], body["row_errors"]) == (1, [])
+    assert list(_BatchSvc.created[0].summary["fields"]) == ["bullets"]
+    over = _xlsx(["asin", "item_highlights"], [["B0TEST0001", "k" * 126]])
+    errors = _upload(client, over).json()["row_errors"]
+    assert [e["row"] for e in errors] == [2] and "item_highlights" in errors[0]["message"]
+
+
 def test_upload_matches_by_sku_when_asin_is_missing(monkeypatch, bulk_account):
     _bulk_fakes(monkeypatch, [_product("B0TEST0001")], {"B0TEST0001": _live("B0TEST0001")})
     data = _xlsx(["sku", "title"], [["SKU-B0TEST0001", "Titolo nuovo"]])

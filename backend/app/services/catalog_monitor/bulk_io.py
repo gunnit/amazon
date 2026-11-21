@@ -276,9 +276,10 @@ class ParsedRow:
     errors: list[str] = field(default_factory=list)
 
 
-def _row_errors(row: ParsedRow) -> list[str]:
+def _row_errors(row: ParsedRow, skip: frozenset[str] = frozenset()) -> list[str]:
+    """Identity and limit errors of the row; columns in ``skip`` are not checked."""
     errors: list[str] = []
-    cells = row.cells
+    cells = {k: v for k, v in row.cells.items() if k not in skip}
     if not row.asin and not row.sku:
         errors.append("asin o sku mancante")
     if len(cells.get("title", "")) > LIMITS["title"]:
@@ -315,6 +316,35 @@ def parse_upload(file_bytes: bytes, filename: str) -> list[ParsedRow]:
         row.errors = _row_errors(row)
         rows.append(row)
     return rows
+
+
+def _unchanged_columns(row: ParsedRow, live: ListingContent) -> frozenset[str]:
+    """Text, bullet and image cells equal to the live content: they become no patch."""
+    same: set[str] = set()
+    cells = row.cells
+    for name in _TEXT_FIELDS:
+        if name in cells and _norm(cells[name]) == _norm(getattr(live, name, None)):
+            same.add(name)
+    bullets = list(live.bullets)
+    for n, column in enumerate(_BULLET_COLUMNS):
+        if column in cells and n < len(bullets) and _norm(cells[column]) == _norm(bullets[n]):
+            same.add(column)
+    slots = _live_image_slots(live)
+    for index, column in enumerate(_IMAGE_COLUMNS):
+        if column in cells and cells[column] == slots[index]:
+            same.add(column)
+    return frozenset(same)
+
+
+def upload_errors(row: ParsedRow, live: Optional[ListingContent]) -> list[str]:
+    """The row's errors against its live content (``row.errors`` without it).
+
+    A cell equal to the live value becomes no patch, so its limits do not apply:
+    a listing whose live highlights are already too long can still change a bullet.
+    """
+    if live is None:
+        return list(row.errors)
+    return _row_errors(row, _unchanged_columns(row, live))
 
 
 # ---- upload -> minimal change ----

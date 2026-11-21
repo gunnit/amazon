@@ -307,3 +307,24 @@ def test_new_item_missing_required_attribute_reported():
     assert any("brand" in m for m in missing) and any("item_dimensions" in m for m in missing)
     assert validate_new_item(row, ["item_name"]) == []
     assert isinstance(ParsedRow(2, None, None, None, {}, []), ParsedRow)
+
+
+def test_limits_apply_only_to_cells_that_differ_from_live():
+    # Found in the end-to-end run: an exported row whose live highlights were already
+    # over 125 characters could not be uploaded, even to change only bullet_2.
+    live = _content(
+        item_highlights="h" * 130,
+        images=[ImageRef("MAIN", "http://img.test/main.jpg"), ImageRef("PT01", "https://img.test/1.jpg")],
+    )
+    headers = ["asin", "item_highlights", "main_image_url", "image_1", "bullet_2"]
+    row = parse_upload(_xlsx(headers, [[
+        "B0TEST0001", "h" * 130, "http://img.test/main.jpg", "https://img.test/1.jpg", "Nuovo due",
+    ]]), "u.xlsx")[0]
+    assert row.errors  # without the live content the limits apply to every cell
+    assert bulk_io.upload_errors(row, live) == []
+    assert bulk_io.upload_errors(row, None) == row.errors
+    changed = parse_upload(_xlsx(["asin", "item_highlights", "bullet_2"], [
+        ["B0TEST0001", "k" * 126, "b" * 501],
+    ]), "u.xlsx")[0]
+    errors = " ".join(bulk_io.upload_errors(changed, live))
+    assert "item_highlights" in errors and "bullet_2" in errors
