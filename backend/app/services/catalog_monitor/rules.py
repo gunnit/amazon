@@ -120,13 +120,19 @@ def _title(c: ListingContent, ctx: RuleContext, cfg: RuleConfig):
     limit, hard = _param(cfg, "max_length"), _param(cfg, "hard_max_length")
     length = len(title)
     keyword_checked = ctx.main_keyword is not None
-    details: dict = {"length": length, "limit": limit, "keyword_checked": keyword_checked}
+    brand_checked = bool(c.brand)
+    details: dict = {
+        "length": length,
+        "limit": limit,
+        "brand_checked": brand_checked,
+        "keyword_checked": keyword_checked,
+    }
     if length > hard:
         return _res("red", "too_long", **{**details, "limit": hard})
     issues: list[str] = []
     if length > limit:
         issues.append("too_long")
-    if c.brand and not _has(title, c.brand):
+    if brand_checked and not _has(title, c.brand):
         issues.append("brand_missing")
     if keyword_checked and not _has(title, ctx.main_keyword):
         issues.append("keyword_missing")
@@ -296,7 +302,7 @@ def _overall(results: list[RuleResult]) -> tuple[State, int]:
     weight = lambda r: 2 if r.mandatory else 1  # noqa: E731
     total = sum(weight(r) for r in scored)
     got = sum(weight(r) * _SCORE_POINTS[r.state] for r in scored)
-    return state, round(100 * got / total)
+    return state, int(100 * got / total + 0.5)
 
 
 def evaluate_listing(

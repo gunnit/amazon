@@ -294,3 +294,23 @@ def test_override_can_disable_rule():
 def test_override_can_change_mandatory_and_ignores_unknown_keys():
     cfg = resolve_rule_configs([ov("images", mandatory=True), ov("bogus")], MP, None)
     assert cfg["images"].mandatory is True and "bogus" not in cfg
+
+
+def test_title_brand_check_skipped_when_brand_unknown():
+    r = res(good(brand=None, title="widget blu"), ctx(), "title")
+    assert r.state == "green" and r.details["brand_checked"] is False
+    assert res(good(), ctx(), "title").details["brand_checked"] is True
+
+
+def test_overall_yellow_from_mandatory_yellow_with_nothing_red():
+    cfg = {k: DEFAULT_RULES[k] for k in ("title", "images")}
+    ev = evaluate_listing(good(title="widget blu"), ctx(), cfg)  # title yellow, images green
+    assert [r.state for r in ev.results] == ["yellow", "green"]
+    assert ev.state == "yellow"
+
+
+def test_score_rounds_half_up():
+    cfg = {k: DEFAULT_RULES[k] for k in ("title", "images", "description")}
+    # images yellow (0.5, w1), description red (w1), title red (w2): 0.5/4 = 12.5
+    ev = evaluate_listing(good(title=None, description=None, images=imgs(6)), ctx(), cfg)
+    assert ev.score == 13
