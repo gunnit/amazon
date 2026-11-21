@@ -21,7 +21,8 @@ from datetime import date
 from typing import Any, Literal, Optional
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import Text, and_, bindparam, func, literal_column, select
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 from app.models.advertising import AdvertisingCampaign, AdvertisingMetrics, AdvertisingMetricsByAsin
 from app.models.amazon_account import AmazonAccount
@@ -39,7 +40,7 @@ from app.services.sales_metrics import display_revenue_expr, display_units_expr
 Provenance = Literal["actual", "estimated"]
 
 TOP_ASINS = 10
-SEARCH_TERMS = 10
+SEARCH_TERMS_PER_ACCOUNT = 10
 QUALITY_STATES = ("green", "yellow", "red", "grey")
 # Marketplaces that report in euro; any other country's amounts are summed unconverted.
 EURO_MARKETPLACES = frozenset({"IT", "DE", "FR", "ES", "NL", "BE", "IE", "AT"})
@@ -141,7 +142,7 @@ def relative_change(value: Optional[float], base: Optional[float]) -> Optional[f
     """Percent change of ``value`` against ``base``; None when not comparable."""
     if value is None or not base:
         return None
-    return (value - base) / abs(base) * 100.0
+    return (value - base) * 100.0 / abs(base)
 
 
 def point_change(value: Optional[float], base: Optional[float]) -> Optional[float]:
@@ -369,27 +370,50 @@ async def fetch_open_anomalies(db, account_ids: list[UUID], asins: Optional[list
     return {row.kind: int(row.count) for row in (await db.execute(query)).all()}
 
 
-async def fetch_search_terms(db, account_ids: list[UUID], limit: Optional[int]) -> list:
-    """Brand Analytics terms of the latest stored week, most searched first."""
-    latest_week = (
-        select(func.max(BrandSearchTerm.week_start))
+async def fetch_search_terms(db, account_ids: list[UUID], asins: Optional[list[str]],
+                             per_account: int) -> list:
+    """Each account's most searched Brand Analytics terms of its own latest week.
+
+    With ``asins``, only terms whose top clicked ASINs include one of them.
+    """
+    if asins is not None and not asins:
+        return []
+    latest = (
+        select(BrandSearchTerm.account_id, func.max(BrandSearchTerm.week_start).label("week"))
         .where(BrandSearchTerm.account_id.in_(account_ids))
-        .scalar_subquery()
+        .group_by(BrandSearchTerm.account_id)
+        .subquery()
     )
-    query = (
-        select(
-            BrandSearchTerm.account_id,
-            BrandSearchTerm.week_start,
-            BrandSearchTerm.week_end,
-            BrandSearchTerm.search_term,
-            BrandSearchTerm.search_frequency_rank,
-            BrandSearchTerm.top_clicked,
+    position = func.row_number().over(
+        partition_by=BrandSearchTerm.account_id,
+        order_by=(BrandSearchTerm.search_frequency_rank.asc().nulls_last(), BrandSearchTerm.search_term),
+    )
+    ranked = select(
+        BrandSearchTerm.account_id,
+        BrandSearchTerm.week_start,
+        BrandSearchTerm.week_end,
+        BrandSearchTerm.search_term,
+        BrandSearchTerm.search_frequency_rank,
+        BrandSearchTerm.top_clicked,
+        position.label("position"),
+    ).join(
+        latest,
+        and_(BrandSearchTerm.account_id == latest.c.account_id, BrandSearchTerm.week_start == latest.c.week),
+    )
+    if asins is not None:
+        # Lax jsonpath: a NULL or non-array top_clicked simply matches nothing.
+        clicked_asins = func.jsonb_path_query_array(
+            BrandSearchTerm.top_clicked, literal_column("'$[*].asin'::jsonpath"), type_=JSONB
         )
-        .where(BrandSearchTerm.account_id.in_(account_ids), BrandSearchTerm.week_start == latest_week)
-        .order_by(BrandSearchTerm.search_frequency_rank.asc().nulls_last(), BrandSearchTerm.search_term)
+        ranked = ranked.where(
+            clicked_asins.has_any(bindparam("scope_asins", list(asins), type_=ARRAY(Text)))
+        )
+    ranked = ranked.subquery()
+    query = (
+        select(ranked)
+        .where(ranked.c.position <= per_account)
+        .order_by(ranked.c.account_id, ranked.c.position)
     )
-    if limit:
-        query = query.limit(limit)
     return (await db.execute(query)).all()
 
 
@@ -515,13 +539,11 @@ def _rank_asins(current_rows: list, previous_rows: list) -> tuple[list[dict], li
     return top, declines[:TOP_ASINS]
 
 
-def _shape_search_terms(rows: list, countries: dict, own_asins: set[str],
-                        scope_asins: Optional[list[str]]) -> list[dict]:
+def _shape_search_terms(rows: list, countries: dict, own_asins: set[str]) -> list[dict]:
+    """One dict per term, grouped by country, most searched first within a country."""
     terms = []
     for row in rows:
         clicked = [e for e in row.top_clicked or [] if isinstance(e, dict) and e.get("asin")]
-        if scope_asins is not None and not any(e["asin"] in scope_asins for e in clicked):
-            continue
         first = min(clicked, key=lambda e: e.get("rank") or 99, default=None)
         own = [e for e in clicked if e["asin"] in own_asins]
         terms.append({
@@ -534,8 +556,7 @@ def _shape_search_terms(rows: list, countries: dict, own_asins: set[str],
             "top_click_share": _float(first.get("click_share")) if first else None,
             "own_click_share": sum(float(e.get("click_share") or 0) for e in own) if own else None,
         })
-        if len(terms) == SEARCH_TERMS:
-            break
+    terms.sort(key=lambda term: (term["country"], term["rank"] is None, term["rank"] or 0))
     return terms
 
 
@@ -671,14 +692,14 @@ async def collect_quarter_data(db, scope: QuarterScope) -> QuarterData:
     if any(a["type"] == "vendor" for a in accounts):
         gaps.append(t(lang, "gap_search_terms_vendor"))
     if sellers:
-        rows = await fetch_search_terms(db, sellers, None if scope_asins is not None else SEARCH_TERMS)
+        rows = await fetch_search_terms(db, sellers, scope_asins, SEARCH_TERMS_PER_ACCOUNT)
         if scope_asins is not None:
             own = set(scope_asins)
         else:
             clicked = {e.get("asin") for r in rows for e in r.top_clicked or [] if isinstance(e, dict)}
             own = await fetch_owned_asins(db, sellers, {a for a in clicked if a})
         countries = {a["id"]: a["country"] for a in accounts}
-        search_terms = _shape_search_terms(rows, countries, own, scope_asins)
+        search_terms = _shape_search_terms(rows, countries, own)
         if not search_terms:
             gaps.append(t(lang, "gap_search_terms_empty"))
 

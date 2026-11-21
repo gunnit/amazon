@@ -82,8 +82,8 @@ def _install(monkeypatch, *, accounts=None, scope_asins=None, daily=None, asin_s
     async def fake_anomalies(db, account_ids, asins):
         return dict(anomalies or {})
 
-    async def fake_terms(db, account_ids, limit):
-        record("terms", (account_ids, limit))
+    async def fake_terms(db, account_ids, asins, per_account):
+        record("terms", (account_ids, asins, per_account))
         return list(terms or [])
 
     async def fake_owned(db, account_ids, asins):
@@ -198,6 +198,34 @@ async def test_tacos_from_spend_and_revenue(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_q1_compares_with_q4_of_the_previous_year(monkeypatch):
+    periods = []
+
+    async def fake_daily(db, account_ids, start, end, asins):
+        periods.append((start, end))
+        return {
+            date(2026, 1, 1): [_day(date(2026, 2, 3), 300, 3)],
+            date(2025, 10, 1): [_day(date(2025, 12, 1), 200, 2)],
+            date(2025, 1, 1): [_day(date(2025, 3, 30), 100, 1)],
+        }[start]
+
+    _install(monkeypatch)
+    monkeypatch.setattr(qdata, "fetch_daily_sales", fake_daily)
+
+    data = await collect_quarter_data(None, QuarterScope(ORG, [ACC], 2026, 1))
+    revenue = _kpis(data)["revenue"]
+
+    assert periods == [
+        (date(2026, 1, 1), date(2026, 3, 31)),
+        (date(2025, 10, 1), date(2025, 12, 31)),
+        (date(2025, 1, 1), date(2025, 3, 31)),
+    ]
+    assert (revenue.value, revenue.previous, revenue.last_year) == (300, 200, 100)
+    assert [m["month"] for m in data.monthly] == [1, 2, 3]
+    assert (data.monthly[1]["revenue"], data.monthly[2]["revenue_last_year"]) == (300, 100)
+
+
+@pytest.mark.asyncio
 async def test_metric_without_data_is_none_and_reported_in_gaps(monkeypatch):
     _install(
         monkeypatch,
@@ -298,8 +326,13 @@ async def test_catalogue_counts_and_vendor_search_terms_gap(monkeypatch):
 @pytest.mark.asyncio
 async def test_search_terms_and_competitors_are_shaped(monkeypatch):
     comp_id = uuid.UUID(int=9)
-    _install(
+    acc_de = uuid.UUID(int=3)
+    calls = _install(
         monkeypatch,
+        accounts=[
+            {"id": ACC, "name": "TEST IT", "type": "seller", "country": "IT"},
+            {"id": acc_de, "name": "TEST DE", "type": "seller", "country": "DE"},
+        ],
         terms=[
             SimpleNamespace(
                 account_id=ACC, week_start=date(2026, 11, 8), week_end=date(2026, 11, 14),
@@ -308,7 +341,11 @@ async def test_search_terms_and_competitors_are_shaped(monkeypatch):
                     {"rank": 1, "asin": "B0TEST0100", "click_share": 0.3},
                     {"rank": 2, "asin": "B0TEST0001", "click_share": 0.2},
                 ],
-            )
+            ),
+            SimpleNamespace(
+                account_id=acc_de, week_start=date(2026, 11, 1), week_end=date(2026, 11, 7),
+                search_term="testbegriff", search_frequency_rank=900, top_clicked=None,
+            ),
         ],
         owned={"B0TEST0001"},
         competitors=[
@@ -324,9 +361,12 @@ async def test_search_terms_and_competitors_are_shaped(monkeypatch):
         ],
     )
 
-    data = await collect_quarter_data(None, QuarterScope(ORG, [ACC], 2026, 3))
+    data = await collect_quarter_data(None, QuarterScope(ORG, [ACC, acc_de], 2026, 3))
 
-    term = data.search_terms[0]
+    assert calls["terms"] == [([ACC, acc_de], None, 10)]
+    german, term = data.search_terms  # merged and grouped by country
+    assert (german["term"], german["country"], german["week_start"]) == ("testbegriff", "DE", date(2026, 11, 1))
+    assert german["own_click_share"] is None
     assert term["term"] == "test term"
     assert term["country"] == "IT"
     assert term["top_asin"] == "B0TEST0100"
@@ -370,30 +410,158 @@ def test_account_totals_use_daily_total_rows_and_filters_use_asin_rows():
 # --- insights --------------------------------------------------------------------------
 
 
+REV_DOWN_PREV = "Ricavi in calo rispetto al trimestre precedente"
+REV_UP_PREV = "Ricavi in crescita rispetto al trimestre precedente"
+REV_UP_LY = "Ricavi in crescita rispetto allo stesso trimestre dell'anno precedente"
+LONG_TITLE = "Pentola antiaderente TESTBRAND 28 cm con coperchio"  # 50 chars, cut to 30
+
+
+def _decliner(asin, change, title=LONG_TITLE, previous=1000.0):
+    return {"asin": asin, "title": title, "revenue": previous + change,
+            "previous_revenue": previous, "change": change}
+
+
+def _titles(insights):
+    return [insight.title for insight in insights]
+
+
 def test_rule_insights_flags_decline():
     data = _quarter_data(
-        kpis=[
-            _metric("revenue", 80.0, previous=100.0, last_year=70.0),
-            _metric("tacos", 0.15, previous=0.10, unit="%"),
-        ],
-        bottom=[{"asin": "B0TEST0002", "title": "Two", "revenue": 10.0,
-                 "previous_revenue": 40.0, "change": -30.0}],
-        catalogue={"states": {"green": 6, "yellow": 1, "red": 3, "grey": 0}, "total": 10,
-                   "as_of": date(2026, 11, 21), "open_anomalies": {"content_changed": 2}},
+        kpis=[_metric("revenue", 80.0, previous=100.0, last_year=70.0)],
+        bottom=[_decliner("B0TEST0002", -30.0, title="Two", previous=40.0)],
     )
 
     insights = rule_insights(data)
-    titles = [insight.title for insight in insights]
+    titles = _titles(insights)
 
-    assert "Ricavi in calo rispetto al trimestre precedente" in titles
-    assert "Ricavi in crescita rispetto allo stesso trimestre dell'anno precedente" in titles
-    assert "TACOS in aumento" in titles
-    assert "ASIN in maggior calo" in titles
-    assert "Schede prodotto con semaforo rosso" in titles
-    assert "Anomalie di catalogo aperte" in titles
+    assert titles == [REV_DOWN_PREV, "ASIN in maggior calo", REV_UP_LY]
     assert all(insight.source == "rules" and insight.action for insight in insights)
-    decline = insights[titles.index("Ricavi in calo rispetto al trimestre precedente")]
+    decline = insights[0]
     assert "-20,0%" in decline.body
+    assert "B0TEST0002 (Two) -€ 30" in decline.body
+    # No advertising data in scope: no budget advice.
+    assert "budget" not in decline.action
+    assert decline.action.startswith("Analizza gli ASIN in maggior calo")
+    decliners = insights[1]
+    assert "perdono € 30 (30,0% dei ricavi di Q2 2026)" in decliners.body
+    assert "ASIN con più ricavi" not in insights[2].body  # no top ASINs to name
+
+
+def test_revenue_insight_names_contributors_and_advises_ads_only_with_ad_data():
+    top = [
+        {"asin": "B0TEST0001", "title": LONG_TITLE, "revenue": 700.0, "units": 7.0,
+         "previous_revenue": 300.0, "change_pct": 133.3},
+        {"asin": "B0TEST0002", "title": "Due", "revenue": 300.0, "units": 3.0,
+         "previous_revenue": 290.0, "change_pct": 3.4},
+        {"asin": "B0TEST0003", "title": "Tre", "revenue": 200.0, "units": 2.0,
+         "previous_revenue": None, "change_pct": None},
+    ]
+    without_ads = rule_insights(_quarter_data(
+        kpis=[_metric("revenue", 1200.0, previous=1000.0)], top=top))
+    with_ads = rule_insights(_quarter_data(
+        kpis=[_metric("revenue", 1200.0, previous=1000.0), _metric("ad_spend", 50.0, previous=40.0)],
+        top=top))
+
+    growth = without_ads[0]
+    assert growth.title == REV_UP_PREV
+    assert ("Contribuiscono di più: B0TEST0001 (Pentola antiaderente TESTBRAN…) +€ 400; "
+            "B0TEST0003 (Tre) +€ 200.") in growth.body
+    assert "budget" not in growth.action
+    assert "budget" in with_ads[0].action
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(105.0, [REV_UP_PREV]), (104.99, []), (95.0, [REV_DOWN_PREV]), (95.01, [])],
+)
+def test_revenue_insight_threshold_is_five_percent_inclusive(value, expected):
+    insights = rule_insights(_quarter_data(kpis=[_metric("revenue", value, previous=100.0)]))
+    assert [title for title in _titles(insights) if title != "Trimestre stabile"] == expected
+
+
+def test_decliners_insight_needs_three_percent_of_previous_revenue():
+    def insights_for(changes):
+        return _titles(rule_insights(_quarter_data(
+            kpis=[_metric("revenue", 10000.0, previous=10000.0)],
+            bottom=[_decliner(f"B0TEST000{i}", change) for i, change in enumerate(changes, start=1)],
+        )))
+
+    assert "ASIN in maggior calo" not in insights_for([-100.0, -100.0, -99.0])  # 2,99%
+    assert "ASIN in maggior calo" in insights_for([-100.0, -100.0, -100.0])  # 3,00%
+    # Only the three ASINs the insight names count: four at -0,9% each stay quiet.
+    assert "ASIN in maggior calo" not in insights_for([-90.0, -90.0, -90.0, -90.0])
+
+
+def test_competitor_and_search_term_insights_name_who_and_what():
+    data = _quarter_data(
+        competitors=[
+            {"asin": "B0TEST0201", "title": "Rival pan", "brand": "OTHERBRAND", "marketplace": "IT",
+             "price": 22.0, "price_change_pct": -12.0, "bsr": 900, "bsr_change": -100},
+            {"asin": "B0TEST0202", "title": "Rival pot", "brand": "THIRDBRAND", "marketplace": "DE",
+             "price": 30.0, "price_change_pct": 0.0, "bsr": 600, "bsr_change": -400},
+            {"asin": "B0TEST0203", "title": "Calm", "brand": "QUIETBRAND", "marketplace": "IT",
+             "price": 18.0, "price_change_pct": -5.0, "bsr": 900, "bsr_change": -100},
+        ],
+        terms=[
+            {"term": "pentola", "country": "IT", "rank": 10, "top_asin": "B0TEST0300",
+             "top_click_share": 0.3, "own_click_share": 0.2},
+            {"term": "padella", "country": "IT", "rank": 40, "top_asin": "B0TEST0301",
+             "top_click_share": 0.4, "own_click_share": 0.05},
+            {"term": "wok", "country": "IT", "rank": 5, "top_asin": "B0TEST0001",
+             "top_click_share": 0.01, "own_click_share": 0.01},  # we lead: not a gap
+            {"term": "coperchio", "country": "IT", "rank": 2, "top_asin": "B0TEST0302",
+             "top_click_share": 0.5, "own_click_share": None},
+        ],
+    )
+
+    insights = {insight.title: insight for insight in rule_insights(data)}
+
+    competitors = insights["Concorrenti più aggressivi"]
+    assert "THIRDBRAND · Rival pot (B0TEST0202, DE): BSR da 1.000 a 600" in competitors.body
+    assert "OTHERBRAND · Rival pan (B0TEST0201, IT): prezzo -12,0% a € 22,00" in competitors.body
+    assert "QUIETBRAND" not in competitors.body
+    term = insights["Termine di ricerca da presidiare"]
+    assert term.body.startswith("«padella» (IT, rank di ricerca 40): la nostra quota clic è 5,0%")
+    assert "B0TEST0301" in term.body
+    assert "Sponsored Products" not in term.action  # no advertising data in scope
+
+
+def test_rule_insights_are_capped_in_order_of_importance():
+    from app.services.quarterly_report.deck import MAX_INSIGHTS
+
+    data = _quarter_data(
+        kpis=[
+            _metric("revenue", 800.0, previous=1000.0, last_year=500.0),
+            _metric("ad_spend", 100.0, previous=60.0),
+            _metric("tacos", 0.125, previous=0.06, unit="%"),
+            _metric("return_rate", 0.05, previous=0.02, unit="%"),
+        ],
+        bottom=[_decliner("B0TEST0002", -200.0)],
+        catalogue={"states": {"green": 6, "yellow": 1, "red": 3, "grey": 0}, "total": 10,
+                   "as_of": date(2026, 11, 21), "open_anomalies": {"content_changed": 2}},
+        competitors=[{"asin": "B0TEST0201", "title": "Rival", "brand": "OTHERBRAND", "marketplace": "IT",
+                      "price": 22.0, "price_change_pct": -15.0, "bsr": 900, "bsr_change": 0}],
+        terms=[{"term": "pentola", "country": "IT", "rank": 10, "top_asin": "B0TEST0300",
+                "top_click_share": 0.3, "own_click_share": 0.1}],
+    )
+
+    titles = _titles(rule_insights(data))
+
+    assert MAX_INSIGHTS == 6
+    assert titles == [
+        REV_DOWN_PREV,
+        "Schede prodotto con semaforo rosso",
+        "Anomalie di catalogo aperte",
+        "ASIN in maggior calo",
+        "TACOS in aumento",
+        "Concorrenti più aggressivi",
+    ]
+    # The three rules cut above (search term, returns, revenue vs last year) do fire, in order.
+    data.kpis = [_metric("revenue", 800.0, previous=None, last_year=500.0), data.kpis[3]]
+    data.catalogue, data.bottom_asins, data.competitors = {}, [], []
+    assert _titles(rule_insights(data)) == [
+        "Termine di ricerca da presidiare", "Tasso di reso in aumento", REV_UP_LY,
+    ]
 
 
 def test_rule_insights_without_signals_still_returns_one_insight_in_english():
@@ -531,6 +699,66 @@ def test_empty_deck_in_english_still_has_every_section():
     assert "No data available" in texts
 
 
+def test_full_deck_in_english():
+    data = _full_data(language="en")
+    insights = rule_insights(data)
+
+    prs = Presentation(io.BytesIO(build_quarterly_deck(data, insights)))
+    texts = [_slide_text(slide) for slide in prs.slides]
+
+    kpi_slide = next(text for text in texts if "Key indicators" in text)
+    assert "Revenue" in kpi_slide and "Return rate" in kpi_slide
+    assert "Actual" in kpi_slide and "Estimate" in kpi_slide
+    assert "€12,000" in kpi_slide
+    assert "+20.0%" in kpi_slide
+    assert "+2.5 pp" in kpi_slide
+    assert any("Top 10 by revenue" in text for text in texts)
+    assert any("Insights and actions" in text and insights[0].title in text for text in texts)
+    assert insights[0].title == "Revenue up on the previous quarter"
+    assert not any("Ricavi" in text for text in texts)
+
+
+def test_search_terms_get_a_slide_per_country_and_competitors_are_paged():
+    data = _full_data()
+    data.search_terms = [
+        {"term": f"termine {i}", "country": "IT", "rank": i, "week_start": date(2026, 11, 8),
+         "week_end": date(2026, 11, 14), "top_asin": "B0TEST0100", "top_click_share": 0.3,
+         "own_click_share": 0.1} for i in range(1, 11)
+    ] + [{"term": "begriff", "country": "DE", "rank": 3, "week_start": date(2026, 11, 1),
+          "week_end": date(2026, 11, 7), "top_asin": "B0TEST0101", "top_click_share": 0.2,
+          "own_click_share": None}]
+    data.competitors = [
+        {"asin": f"B0TEST{200 + i:04d}", "title": "Rival", "brand": "OTHERBRAND", "marketplace": "IT",
+         "price": 20.0, "price_change_pct": 0.0, "bsr": 800, "bsr_change": 0, "rating": 4.0}
+        for i in range(13)
+    ]
+
+    prs = Presentation(io.BytesIO(build_quarterly_deck(data, rule_insights(data))))
+    texts = [_slide_text(slide) for slide in prs.slides]
+
+    term_slides = [text for text in texts if "\nTermini di ricerca\nBrand Analytics, " in text]
+    assert len(term_slides) == 2
+    assert "IT, settimana 08/11/2026" in term_slides[0] and "termine 10" in term_slides[0]
+    assert "DE, settimana 01/11/2026" in term_slides[1] and "begriff" in term_slides[1]
+    competitor_slides = [text for text in texts if "Concorrenti monitorati" in text]
+    assert len(competitor_slides) == 2
+    assert all(any(f"B0TEST{200 + i:04d}" in text for text in competitor_slides) for i in range(13))
+    assert len(prs.slides) == 11
+
+
+def test_quarter_in_progress_is_flagged_on_the_kpi_slide():
+    today = date.today()
+    data = _full_data()
+    data.scope.year, data.scope.quarter = today.year, (today.month - 1) // 3 + 1
+
+    prs = Presentation(io.BytesIO(build_quarterly_deck(data, [])))
+    kpi_slide = next(_slide_text(s) for s in prs.slides if "Indicatori chiave" in _slide_text(s))
+
+    assert f"trimestre in corso, dati fino al {today.strftime('%d/%m/%Y')}" in kpi_slide
+    finished = Presentation(io.BytesIO(build_quarterly_deck(_full_data(), [])))
+    assert not any("trimestre in corso" in _slide_text(s) for s in finished.slides)
+
+
 # --- Postgres ----------------------------------------------------------------------------
 
 
@@ -571,7 +799,10 @@ async def test_collect_quarter_data_against_postgres(pg):
     account = AmazonAccount(organization_id=org.id, account_name=f"Acc {tag}",
                             account_type=AccountType.SELLER, marketplace_id="APJ6JRA9NG5V4",
                             marketplace_country="IT", seller_id="SELLER1")
-    pg.add(account)
+    german = AmazonAccount(organization_id=org.id, account_name=f"Acc DE {tag}",
+                           account_type=AccountType.SELLER, marketplace_id="A1PA6795UKMFR9",
+                           marketplace_country="DE", seller_id="SELLER2")
+    pg.add_all([account, german])
     await pg.flush()
     acc = account.id
     pg.add_all([
@@ -619,9 +850,21 @@ async def test_collect_quarter_data_against_postgres(pg):
                         search_term="pentola test", search_frequency_rank=50,
                         top_clicked=[{"rank": 1, "asin": "B0TEST0001", "click_share": 0.25}],
                         contains_account_asin=True),
+        BrandSearchTerm(account_id=acc, week_start=date(2026, 11, 8), week_end=date(2026, 11, 14),
+                        search_term="altro termine", search_frequency_rank=80,
+                        top_clicked=[{"rank": 1, "asin": "B0TEST0002", "click_share": 0.4}],
+                        contains_account_asin=True),
+        BrandSearchTerm(account_id=acc, week_start=date(2026, 11, 8), week_end=date(2026, 11, 14),
+                        search_term="senza clic", search_frequency_rank=90,
+                        top_clicked=None, contains_account_asin=True),
         BrandSearchTerm(account_id=acc, week_start=date(2026, 11, 1), week_end=date(2026, 11, 7),
                         search_term="old week", search_frequency_rank=1,
                         top_clicked=[], contains_account_asin=True),
+        # The German account's latest week is older than the Italian one: still its own latest.
+        BrandSearchTerm(account_id=german.id, week_start=date(2026, 10, 25), week_end=date(2026, 10, 31),
+                        search_term="testbegriff", search_frequency_rank=5,
+                        top_clicked=[{"rank": 1, "asin": "B0TEST0001", "click_share": 0.1}],
+                        contains_account_asin=True),
     ])
     competitor = Competitor(organization_id=org.id, asin="B0TEST0300", marketplace="IT",
                             brand="OTHERBRAND", current_price=Decimal("30"), current_bsr=500)
@@ -648,8 +891,12 @@ async def test_collect_quarter_data_against_postgres(pg):
     assert whole.bottom_asins[0]["asin"] == "B0TEST0002"
     assert whole.catalogue["states"] == {"green": 1, "yellow": 1, "red": 0, "grey": 0}
     assert whole.catalogue["open_anomalies"] == {"content_changed": 1}
-    assert [term["term"] for term in whole.search_terms] == ["pentola test"]
-    assert whole.search_terms[0]["own_click_share"] == pytest.approx(0.25)
+    assert [(term["country"], term["term"]) for term in whole.search_terms] == [
+        ("DE", "testbegriff"), ("IT", "pentola test"), ("IT", "altro termine"), ("IT", "senza clic"),
+    ]
+    assert whole.search_terms[1]["own_click_share"] == pytest.approx(0.25)
+    one_each = await qdata.fetch_search_terms(pg, [acc, german.id], None, 1)
+    assert sorted(row.search_term for row in one_each) == ["pentola test", "testbegriff"]
     assert whole.competitors[0]["price_change_pct"] == pytest.approx(20.0)
 
     branded = await collect_quarter_data(pg, QuarterScope(org.id, [acc], 2026, 3, brand="testbrand"))
@@ -660,3 +907,5 @@ async def test_collect_quarter_data_against_postgres(pg):
     assert kpis["return_rate"].value == pytest.approx(3 / 9)
     assert branded.catalogue["states"]["yellow"] == 0
     assert ADS_FILTER_GAP not in branded.data_gaps
+    # The ASIN filter runs in SQL: a NULL top_clicked and a term without our brand drop out.
+    assert [term["term"] for term in branded.search_terms] == ["pentola test"]

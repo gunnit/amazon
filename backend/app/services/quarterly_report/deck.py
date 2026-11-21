@@ -1,12 +1,13 @@
 """Quarterly business review deck (R5) and all of its copy.
 
-Nine slides drawn with the brand-analysis deck primitives: cover, KPI table
-(value, change against the previous quarter and the same quarter last year,
-provenance tag), monthly trend, top and bottom ASINs, catalogue health, search
-terms, competitors, insights and actions, data notes. A section without data
-still gets its slide, with a "no data" card, so the deck always has the same
-shape. Text is Italian by default, English on request; data.py and insights.py
-take their wording from ``COPY`` too.
+Slides drawn with the brand-analysis deck primitives: cover, KPI table (value,
+change against the previous quarter and the same quarter last year, provenance
+tag; the subtitle flags a quarter still in progress), monthly trend, top and
+bottom ASINs, catalogue health, search terms (one slide per country),
+competitors (twelve per slide), insights and actions, data notes. At least nine
+slides: a section without data still gets its slide, with a "no data" card.
+Text is Italian by default, English on request; data.py and insights.py take
+their wording from ``COPY`` too.
 """
 from __future__ import annotations
 
@@ -62,6 +63,26 @@ COPY: dict[str, dict[str, str]] = {
                                "contenuti) e rivedi offerte e budget delle campagne che li sostengono.",
         "ins_rev_up_action": "Proteggi disponibilità e Buy Box degli ASIN che trainano la crescita e "
                              "sposta budget sulle campagne con il ROAS più alto.",
+        "ins_rev_down_action_no_ads": "Analizza gli ASIN in maggior calo: disponibilità, prezzo, Buy Box "
+                                      "e contenuti della scheda prodotto.",
+        "ins_rev_up_action_no_ads": "Proteggi disponibilità e Buy Box degli ASIN che trainano la crescita "
+                                    "e rafforzane i contenuti della scheda prodotto.",
+        "ins_rev_drivers_up": "Contribuiscono di più: {items}.",
+        "ins_rev_drivers_down": "Pesano di più i cali di {items}.",
+        "ins_rev_leaders": "ASIN con più ricavi nel trimestre: {items}.",
+        "ins_competitors_title": "Concorrenti più aggressivi",
+        "ins_competitors_body": "Da inizio {quarter}: {items}.",
+        "ins_competitor_price": "prezzo {change} a {price}",
+        "ins_competitor_bsr": "BSR da {start} a {end}",
+        "ins_competitors_action": "Confronta prezzo e offerta con questi concorrenti, valuta promozioni o "
+                                  "coupon sugli ASIN in diretta concorrenza e controlla la Buy Box.",
+        "ins_term_title": "Termine di ricerca da presidiare",
+        "ins_term_body": "«{term}» ({country}, rank di ricerca {rank}): la nostra quota clic è {own}, "
+                         "l'ASIN più cliccato ({top_asin}) ha {top}.",
+        "ins_term_action": "Rafforza titolo, immagini e bullet point degli ASIN pertinenti per questo "
+                           "termine e presidialo con campagne Sponsored Products.",
+        "ins_term_action_no_ads": "Rafforza titolo, immagini e bullet point degli ASIN pertinenti per "
+                                  "questo termine e verifica prezzo e Buy Box.",
         "ins_tacos_up_title": "TACOS in aumento",
         "ins_tacos_down_title": "TACOS in diminuzione",
         "ins_tacos_body": "TACOS {quarter}: {value} contro {base} in {base_quarter} ({change}).",
@@ -74,7 +95,8 @@ COPY: dict[str, dict[str, str]] = {
         "ins_returns_action": "Controlla i motivi di reso degli ASIN più venduti e verifica che scheda "
                               "prodotto, immagini e misure descrivano correttamente il prodotto.",
         "ins_decliners_title": "ASIN in maggior calo",
-        "ins_decliners_body": "Rispetto a {base_quarter}: {items}.",
+        "ins_decliners_body": "Rispetto a {base_quarter} questi ASIN perdono {total} ({share} dei "
+                              "ricavi di {base_quarter}): {items}.",
         "ins_decliners_action": "Verifica disponibilità, prezzo, Buy Box e contenuti di questi ASIN e "
                                 "controlla le anomalie di catalogo aperte.",
         "ins_red_title": "Schede prodotto con semaforo rosso",
@@ -105,6 +127,7 @@ COPY: dict[str, dict[str, str]] = {
         "cover_generated": "Generato il {date}",
         "kpi_title": "Indicatori chiave",
         "kpi_subtitle": "{quarter} rispetto a {previous} e a {last_year}",
+        "kpi_partial": "trimestre in corso, dati fino al {today}",
         "kpi_note": "pp = punti percentuali. Dato effettivo: report Amazon (Vendor Central, Seller "
                     "Central, Amazon Ads, Brand Analytics). Stima: previsioni o Helium 10.",
         "col_indicator": "Indicatore",
@@ -132,7 +155,7 @@ COPY: dict[str, dict[str, str]] = {
         "col_kind": "Tipo",
         "col_count": "Numero",
         "terms_title": "Termini di ricerca",
-        "terms_subtitle": "Brand Analytics, settimana {start} – {end}",
+        "terms_subtitle": "Brand Analytics, {country}, settimana {start} – {end}",
         "col_term": "Termine",
         "col_country": "Paese",
         "col_rank": "Rank di ricerca",
@@ -203,6 +226,26 @@ COPY: dict[str, dict[str, str]] = {
                                "content) and the bids and budgets of the campaigns behind them.",
         "ins_rev_up_action": "Protect stock and Buy Box of the ASINs driving growth and move budget "
                              "to the campaigns with the highest ROAS.",
+        "ins_rev_down_action_no_ads": "Review the ASINs with the largest decline: stock, price, Buy Box "
+                                      "and listing content.",
+        "ins_rev_up_action_no_ads": "Protect stock and Buy Box of the ASINs driving growth and "
+                                    "strengthen their listing content.",
+        "ins_rev_drivers_up": "Largest contributors: {items}.",
+        "ins_rev_drivers_down": "Largest declines: {items}.",
+        "ins_rev_leaders": "Top ASINs by revenue in the quarter: {items}.",
+        "ins_competitors_title": "Competitors gaining ground",
+        "ins_competitors_body": "Since the start of {quarter}: {items}.",
+        "ins_competitor_price": "price {change} to {price}",
+        "ins_competitor_bsr": "BSR from {start} to {end}",
+        "ins_competitors_action": "Compare price and offer with these competitors, consider promotions "
+                                  "or coupons on the ASINs competing head-on and watch the Buy Box.",
+        "ins_term_title": "Search term to win",
+        "ins_term_body": "\"{term}\" ({country}, search rank {rank}): our click share is {own}; the "
+                         "most clicked ASIN ({top_asin}) has {top}.",
+        "ins_term_action": "Strengthen title, images and bullet points of the relevant ASINs for this "
+                           "term and cover it with Sponsored Products campaigns.",
+        "ins_term_action_no_ads": "Strengthen title, images and bullet points of the relevant ASINs for "
+                                  "this term and check price and Buy Box.",
         "ins_tacos_up_title": "TACOS rising",
         "ins_tacos_down_title": "TACOS falling",
         "ins_tacos_body": "TACOS {quarter}: {value} against {base} in {base_quarter} ({change}).",
@@ -215,7 +258,8 @@ COPY: dict[str, dict[str, str]] = {
         "ins_returns_action": "Check the return reasons of the best sellers and make sure listing, "
                               "images and sizes describe the product correctly.",
         "ins_decliners_title": "ASINs with the largest decline",
-        "ins_decliners_body": "Against {base_quarter}: {items}.",
+        "ins_decliners_body": "Against {base_quarter} these ASINs lose {total} ({share} of "
+                              "{base_quarter} revenue): {items}.",
         "ins_decliners_action": "Check stock, price, Buy Box and content of these ASINs and review "
                                 "the open catalogue anomalies.",
         "ins_red_title": "Listings with a red traffic light",
@@ -242,6 +286,7 @@ COPY: dict[str, dict[str, str]] = {
         "cover_generated": "Generated on {date}",
         "kpi_title": "Key indicators",
         "kpi_subtitle": "{quarter} against {previous} and {last_year}",
+        "kpi_partial": "quarter in progress, data up to {today}",
         "kpi_note": "pp = percentage points. Actual: Amazon reports (Vendor Central, Seller Central, "
                     "Amazon Ads, Brand Analytics). Estimate: forecasts or Helium 10.",
         "col_indicator": "Indicator",
@@ -269,7 +314,7 @@ COPY: dict[str, dict[str, str]] = {
         "col_kind": "Type",
         "col_count": "Count",
         "terms_title": "Search terms",
-        "terms_subtitle": "Brand Analytics, week {start} – {end}",
+        "terms_subtitle": "Brand Analytics, {country}, week {start} – {end}",
         "col_term": "Term",
         "col_country": "Country",
         "col_rank": "Search rank",
@@ -352,6 +397,9 @@ def signed_currency(fmt: Formatter, value: Optional[float]) -> str:
 
 # --- slides ------------------------------------------------------------------------------
 
+MAX_INSIGHTS = 6  # cards on the insights slide: two rows of three
+_TABLE_ROWS = 12  # table rows that fit under a slide heading (DeckBuilder.table's cap)
+
 
 @dataclass
 class _Context:
@@ -361,6 +409,7 @@ class _Context:
     current: str
     previous: str
     last_year: str
+    in_progress: bool
 
     @property
     def language(self) -> str:
@@ -374,20 +423,29 @@ _TOP = 1.7
 _HALF_W = (DeckTheme.content_w() - 0.3) / 2
 
 
+def _day(value: Optional[date]) -> str:
+    return value.strftime("%d/%m/%Y") if value else EMPTY
+
+
+def _chunks(rows: list, size: int = _TABLE_ROWS) -> list[list]:
+    return [rows[i:i + size] for i in range(0, len(rows), size)]
+
+
 def _no_data(deck, slide, ctx: _Context, x=DeckTheme.MARGIN, y=_TOP, w=None, h=1.6,
              title: Optional[str] = None) -> None:
     deck.callout(slide, x, y, w or DeckTheme.content_w(), h, title or ctx.t("no_data"),
                  ctx.t("no_data_body"), accent=DeckTheme.NEUTRAL_BAR)
 
 
-def _content_slide(deck, ctx: _Context, page: int, title: str, subtitle: str = ""):
+def _content_slide(deck, title: str, subtitle: str = ""):
+    """A slide with chrome and heading; its page number is its position in the deck."""
     slide = deck.blank_slide()
-    deck.chrome(slide, page)
+    deck.chrome(slide, len(deck.prs.slides))
     deck.heading(slide, title, subtitle)
     return slide
 
 
-def _cover(deck, ctx: _Context, page: int) -> None:
+def _cover(deck, ctx: _Context) -> None:
     scope = ctx.data.scope
     slide = deck.blank_slide()
     width = DeckTheme.SLIDE_W - 2.0
@@ -409,8 +467,7 @@ def _cover(deck, ctx: _Context, page: int) -> None:
     if lines:
         deck.text(slide, 1.0, 4.1, width, 0.5, "  ·  ".join(lines),
                   size=DeckTheme.TYPE["cover_subtitle"], color=DeckTheme.WHITE, align="center")
-    deck.text(slide, 1.0, 4.75, width, 0.4,
-              ctx.t("cover_generated", date=date.today().strftime("%d/%m/%Y")),
+    deck.text(slide, 1.0, 4.75, width, 0.4, ctx.t("cover_generated", date=_day(date.today())),
               size=DeckTheme.TYPE["subtitle"], color=DeckTheme.WHITE, align="center")
     deck.footer_strip(slide)
 
@@ -426,9 +483,11 @@ def _kpi_row(ctx: _Context, metric: "Metric") -> list[str]:
     ]
 
 
-def _kpis(deck, ctx: _Context, page: int) -> None:
-    slide = _content_slide(deck, ctx, page, ctx.t("kpi_title"), ctx.t(
-        "kpi_subtitle", quarter=ctx.current, previous=ctx.previous, last_year=ctx.last_year))
+def _kpis(deck, ctx: _Context) -> None:
+    subtitle = ctx.t("kpi_subtitle", quarter=ctx.current, previous=ctx.previous, last_year=ctx.last_year)
+    if ctx.in_progress:
+        subtitle = f"{subtitle}  ·  {ctx.t('kpi_partial', today=_day(date.today()))}"
+    slide = _content_slide(deck, ctx.t("kpi_title"), subtitle)
     if not ctx.data.kpis:
         _no_data(deck, slide, ctx)
         return
@@ -436,7 +495,7 @@ def _kpis(deck, ctx: _Context, page: int) -> None:
                ctx.t("col_delta", quarter=ctx.last_year), ctx.t("col_source")]
     rows = [_kpi_row(ctx, metric) for metric in ctx.data.kpis]
     deck.table(slide, DeckTheme.MARGIN, _TOP, headers, rows, [3.4, 2.5, 2.3, 2.3, 2.1])
-    note_y = _TOP + 0.38 * (min(len(rows), 12) + 1) + 0.25
+    note_y = _TOP + 0.38 * (min(len(rows), _TABLE_ROWS) + 1) + 0.25
     deck.text(slide, DeckTheme.MARGIN, note_y, DeckTheme.content_w(), 0.5, ctx.t("kpi_note"),
               size=DeckTheme.TYPE["caption"] + 1, color=DeckTheme.MUTED)
 
@@ -476,8 +535,8 @@ def _monthly_chart(labels: list[str], current: list[Optional[float]], last_year:
     return buffer.getvalue()
 
 
-def _trend(deck, ctx: _Context, page: int) -> None:
-    slide = _content_slide(deck, ctx, page, ctx.t("trend_title"),
+def _trend(deck, ctx: _Context) -> None:
+    slide = _content_slide(deck, ctx.t("trend_title"),
                            ctx.t("trend_subtitle", quarter=ctx.current, last_year=ctx.last_year))
     months = ctx.data.monthly
     if not any(m.get("revenue") or m.get("revenue_last_year") for m in months):
@@ -493,8 +552,8 @@ def _trend(deck, ctx: _Context, page: int) -> None:
     deck.picture(slide, png, DeckTheme.MARGIN + 0.3, _TOP, DeckTheme.content_w() - 0.6, 4.9)
 
 
-def _asins(deck, ctx: _Context, page: int) -> None:
-    slide = _content_slide(deck, ctx, page, ctx.t("asins_title"),
+def _asins(deck, ctx: _Context) -> None:
+    slide = _content_slide(deck, ctx.t("asins_title"),
                            ctx.t("asins_subtitle", quarter=ctx.current, previous=ctx.previous))
     if not ctx.data.top_asins and not ctx.data.bottom_asins:
         _no_data(deck, slide, ctx)
@@ -534,13 +593,12 @@ def _anomaly_label(ctx: _Context, kind: str) -> str:
     return ctx.t(key) if key in COPY["it"] else kind
 
 
-def _catalogue(deck, ctx: _Context, page: int) -> None:
+def _catalogue(deck, ctx: _Context) -> None:
     from app.services.brand_analysis.deck import charts
 
     catalogue = ctx.data.catalogue or {}
-    as_of = catalogue.get("as_of")
-    slide = _content_slide(deck, ctx, page, ctx.t("catalogue_title"), ctx.t(
-        "catalogue_subtitle", date=as_of.strftime("%d/%m/%Y") if as_of else EMPTY))
+    slide = _content_slide(deck, ctx.t("catalogue_title"),
+                           ctx.t("catalogue_subtitle", date=_day(catalogue.get("as_of"))))
     states = catalogue.get("states") or {}
     total = catalogue.get("total") or 0
     if total:
@@ -567,54 +625,61 @@ def _share(fmt: Formatter, value: Optional[float]) -> str:
     return EMPTY if value is None else fmt.share(value * 100)
 
 
-def _search_terms(deck, ctx: _Context, page: int) -> None:
+def _search_terms(deck, ctx: _Context) -> None:
+    """One slide per country: each account has its own latest Brand Analytics week."""
     terms = ctx.data.search_terms
-    subtitle = ""
-    if terms and terms[0].get("week_start") and terms[0].get("week_end"):
-        subtitle = ctx.t("terms_subtitle", start=terms[0]["week_start"].strftime("%d/%m/%Y"),
-                         end=terms[0]["week_end"].strftime("%d/%m/%Y"))
-    slide = _content_slide(deck, ctx, page, ctx.t("terms_title"), subtitle)
     if not terms:
-        _no_data(deck, slide, ctx)
+        _no_data(deck, _content_slide(deck, ctx.t("terms_title")), ctx)
         return
+    by_country: dict[str, list[dict]] = {}
+    for term in terms:
+        by_country.setdefault(term.get("country") or EMPTY, []).append(term)
     fmt = ctx.fmt
-    headers = ["#", ctx.t("col_term"), ctx.t("col_country"), ctx.t("col_rank"),
-               ctx.t("col_top_asin"), ctx.t("col_top_share"), ctx.t("col_own_share")]
-    rows = [[str(i), truncate(term["term"], 40), term.get("country") or EMPTY,
-             fmt.integer(term.get("rank")), term.get("top_asin") or EMPTY,
-             _share(fmt, term.get("top_click_share")), _share(fmt, term.get("own_click_share"))]
-            for i, term in enumerate(terms, start=1)]
-    deck.table(slide, DeckTheme.MARGIN, _TOP, headers, rows, [0.5, 4.3, 1.0, 1.6, 1.9, 1.5, 1.8])
+    headers = ["#", ctx.t("col_term"), ctx.t("col_rank"), ctx.t("col_top_asin"),
+               ctx.t("col_top_share"), ctx.t("col_own_share")]
+    for country, rows in by_country.items():
+        subtitle = ctx.t("terms_subtitle", country=country, start=_day(rows[0].get("week_start")),
+                         end=_day(rows[0].get("week_end")))
+        numbered = list(enumerate(rows, start=1))
+        for chunk in _chunks(numbered):
+            slide = _content_slide(deck, ctx.t("terms_title"), subtitle)
+            table = [[str(i), truncate(term["term"], 50), fmt.integer(term.get("rank")),
+                      term.get("top_asin") or EMPTY, _share(fmt, term.get("top_click_share")),
+                      _share(fmt, term.get("own_click_share"))] for i, term in chunk]
+            deck.table(slide, DeckTheme.MARGIN, _TOP, headers, table, [0.5, 5.3, 1.6, 2.0, 1.5, 1.7])
 
 
-def _competitors(deck, ctx: _Context, page: int) -> None:
-    slide = _content_slide(deck, ctx, page, ctx.t("competitors_title"),
-                           ctx.t("competitors_subtitle", quarter=ctx.current))
+def _competitors(deck, ctx: _Context) -> None:
+    """Every tracked competitor, twelve per slide."""
+    title = ctx.t("competitors_title")
+    subtitle = ctx.t("competitors_subtitle", quarter=ctx.current)
     competitors = ctx.data.competitors
     if not competitors:
-        _no_data(deck, slide, ctx)
+        _no_data(deck, _content_slide(deck, title, subtitle), ctx)
         return
     fmt = ctx.fmt
     headers = [ctx.t("col_asin"), ctx.t("col_product"), ctx.t("col_country"), ctx.t("col_price"),
                ctx.t("col_price_change"), ctx.t("col_bsr"), ctx.t("col_bsr_change"), ctx.t("col_rating")]
-    rows = []
-    for comp in competitors:
-        name = " · ".join(part for part in (comp.get("brand"), comp.get("title")) if part)
-        bsr_change = comp.get("bsr_change")
-        rows.append([
-            comp["asin"], truncate(name, 34), comp.get("marketplace") or EMPTY,
-            fmt.currency(comp.get("price"), 2), fmt.percent_signed(comp.get("price_change_pct")),
-            fmt.integer(comp.get("bsr")),
-            EMPTY if bsr_change is None else f"{'+' if bsr_change > 0 else ''}{fmt.integer(bsr_change)}",
-            fmt.number(comp.get("rating"), 1),
-        ])
-    deck.table(slide, DeckTheme.MARGIN, _TOP, headers, rows, [1.5, 3.3, 0.9, 1.3, 1.3, 1.3, 1.3, 1.7])
+    for chunk in _chunks(competitors):
+        rows = []
+        for comp in chunk:
+            name = " · ".join(part for part in (comp.get("brand"), comp.get("title")) if part)
+            bsr_change = comp.get("bsr_change")
+            rows.append([
+                comp["asin"], truncate(name, 34), comp.get("marketplace") or EMPTY,
+                fmt.currency(comp.get("price"), 2), fmt.percent_signed(comp.get("price_change_pct")),
+                fmt.integer(comp.get("bsr")),
+                EMPTY if bsr_change is None else f"{'+' if bsr_change > 0 else ''}{fmt.integer(bsr_change)}",
+                fmt.number(comp.get("rating"), 1),
+            ])
+        slide = _content_slide(deck, title, subtitle)
+        deck.table(slide, DeckTheme.MARGIN, _TOP, headers, rows, [1.5, 3.3, 0.9, 1.3, 1.3, 1.3, 1.3, 1.7])
 
 
-def _insights(deck, ctx: _Context, page: int) -> None:
-    insights = ctx.insights[:6]
+def _insights(deck, ctx: _Context) -> None:
+    insights = ctx.insights[:MAX_INSIGHTS]  # rule_insights and build_insights never return more
     ai = any(insight.source == "ai" for insight in insights)
-    slide = _content_slide(deck, ctx, page, ctx.t("insights_title"),
+    slide = _content_slide(deck, ctx.t("insights_title"),
                            ctx.t("insights_subtitle_ai" if ai else "insights_subtitle_rules"))
     if not insights:
         _no_data(deck, slide, ctx)
@@ -631,13 +696,13 @@ def _insights(deck, ctx: _Context, page: int) -> None:
         deck.text(slide, x + 0.25, y + 0.2, card_w - 0.5, 0.5, truncate(insight.title, 72),
                   size=DeckTheme.TYPE["body"], bold=True, color=DeckTheme.INK)
         deck.bullets(slide, x + 0.25, y + 0.9, card_w - 0.5, card_h - 1.05,
-                     [truncate(insight.body, 230),
-                      f"{ctx.t('action_prefix')}: {truncate(insight.action, 150)}"],
+                     [truncate(insight.body, 300),
+                      f"{ctx.t('action_prefix')}: {truncate(insight.action, 170)}"],
                      size=DeckTheme.TYPE["caption"] + 1)
 
 
-def _notes(deck, ctx: _Context, page: int) -> None:
-    slide = _content_slide(deck, ctx, page, ctx.t("notes_title"), ctx.t("notes_subtitle"))
+def _notes(deck, ctx: _Context) -> None:
+    slide = _content_slide(deck, ctx.t("notes_title"), ctx.t("notes_subtitle"))
     gaps = ctx.data.data_gaps[:12] or [ctx.t("no_gaps")]
     deck.callout(slide, DeckTheme.MARGIN, 1.6, _HALF_W, 5.2, ctx.t("gaps_heading"), gaps,
                  accent=DeckTheme.ORANGE)
@@ -652,7 +717,7 @@ _SLIDES = (_cover, _kpis, _trend, _asins, _catalogue, _search_terms, _competitor
 
 def build_quarterly_deck(data: "QuarterData", insights: list["Insight"]) -> bytes:
     """The quarterly review as PPTX bytes."""
-    from app.services.quarterly_report.data import previous_quarter, quarter_label
+    from app.services.quarterly_report.data import previous_quarter, quarter_bounds, quarter_label
 
     scope = data.scope
     prev_year, prev_q = previous_quarter(scope.year, scope.quarter)
@@ -663,8 +728,9 @@ def build_quarterly_deck(data: "QuarterData", insights: list["Insight"]) -> byte
         current=quarter_label(scope.year, scope.quarter),
         previous=quarter_label(prev_year, prev_q),
         last_year=quarter_label(scope.year - 1, scope.quarter),
+        in_progress=quarter_bounds(scope.year, scope.quarter)[1] >= date.today(),
     )
     deck = DeckBuilder(brand=" · ".join(part for part in (scope.brand, ctx.current) if part))
-    for page, render in enumerate(_SLIDES, start=1):
-        render(deck, ctx, page)
+    for render in _SLIDES:
+        render(deck, ctx)
     return deck.to_bytes()
