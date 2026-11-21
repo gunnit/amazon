@@ -348,13 +348,24 @@ _ACCOUNT_ROUTES = [
     ("get", "/catalog-monitor/scan", "params"),
     ("get", "/catalog-monitor/capabilities", "params"),
     ("post", "/catalog-monitor/capabilities/check", _BODY),
+    ("get", "/catalog-monitor/export", "params"),
+    ("get", "/catalog-monitor/new-items/template", "params+type"),
+    ("post", "/catalog-monitor/bulk/upload", "form"),
+    ("post", "/catalog-monitor/new-items/upload", "form"),
 ]
 
 
 @pytest.mark.parametrize("method,path,payload", _ACCOUNT_ROUTES)
 def test_every_account_route_404s_for_another_orgs_account(method, path, payload):
     client, _ = _client(db=_FakeDb(scalar=None))
-    kwargs = {"params": _BODY} if payload == "params" else {"json": payload}
+    if payload == "params":
+        kwargs = {"params": _BODY}
+    elif payload == "params+type":
+        kwargs = {"params": {**_BODY, "product_type": "HOME"}}
+    elif payload == "form":
+        kwargs = {"data": _BODY, "files": {"file": ("a.xlsx", b"x", "application/octet-stream")}}
+    else:
+        kwargs = {"json": payload}
     assert getattr(client, method)(path, **kwargs).status_code == 404
 
 
@@ -1007,7 +1018,11 @@ def _bulk_fakes(monkeypatch, products, contents):
     async def _contents(db, account_id, asins):
         return {a: contents[a] for a in asins if a in contents}
 
+    async def _no_live_skus(db, account_id):
+        return set()
+
     monkeypatch.setattr(api, "_account_products", _products_of)
+    monkeypatch.setattr(api, "_live_skus", _no_live_skus)
     monkeypatch.setattr(api, "_latest_content_dicts", _contents)
     _BatchSvc.created = []
     monkeypatch.setattr(api, "ChangeRequestService", _BatchSvc)
@@ -1208,3 +1223,20 @@ def test_submit_skip_reason_flags_requests_that_did_not_pass_validation():
     assert api.submit_skip_reason(bad) == "not_validated"
     assert api.submit_skip_reason(never) == "not_validated"
     assert api.submit_skip_reason(_req("valid")) == "status_valid"
+
+
+def test_new_item_upload_refuses_a_sku_known_only_from_live_content(monkeypatch, bulk_account):
+    _bulk_fakes(monkeypatch, [], {})  # no Product carries the SKU
+
+    async def _live_skus(db, account_id):
+        return {"TEST-LIVE-001"}
+
+    monkeypatch.setattr(api, "_live_skus", _live_skus)
+    _ptd(monkeypatch, ["brand"])
+    data = _xlsx(["sku", "product_type", "brand"],
+                 [["TEST-LIVE-001", "HOME", "TESTBRAND"], ["TEST-NEW-002", "HOME", "TESTBRAND"]])
+    client, _ = _client()
+    body = client.post("/catalog-monitor/new-items/upload", data={"account_id": str(ACCOUNT_ID)},
+                       files={"file": ("n.xlsx", data, XLSX)}).json()
+    assert [i.sku for i in _BatchSvc.created] == ["TEST-NEW-002"]
+    assert body["row_errors"][0]["row"] == 2 and "già presente" in body["row_errors"][0]["message"]

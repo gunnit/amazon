@@ -1489,6 +1489,12 @@ async def _export_rows(db, account_id: UUID) -> list[tuple[Product, Any]]:
     ]
 
 
+async def _live_skus(db, account_id: UUID) -> set[str]:
+    """SKUs of the latest listing content: Product.sku can be empty (vendor, catalogue-only)."""
+    versions = await CatalogMonitorRepository(db).latest_versions(account_id)
+    return {sku for v in versions.values() if (sku := (v.content or {}).get("sku"))}
+
+
 async def _product_type_required(db, account: Any, product_type: str) -> Optional[list[str]]:
     """Required attributes of the product type for the account's marketplace; None if unknown."""
     try:
@@ -1622,6 +1628,7 @@ async def upload_new_items(
     data, name = await _read_upload(file)
     parsed = _parse_file(parse_new_items, data, name)
     existing_skus = {p.sku for p in await _account_products(db, account.id) if p.sku}
+    existing_skus |= await _live_skus(db, account.id)
     required_by_type: dict[str, Optional[list[str]]] = {}
     seen: set[str] = set()
     items: list[ChangeItem] = []
