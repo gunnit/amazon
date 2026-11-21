@@ -30,6 +30,9 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
+# Local dev state: seeded fixtures and dev.env secrets (scripts/dev_seed_catalog_monitor.py)
+backend/var/
+
 # Testing
 .coverage
 htmlcov/
