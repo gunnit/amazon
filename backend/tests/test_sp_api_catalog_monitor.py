@@ -322,7 +322,7 @@ def test_get_aplus_publish_record_count(monkeypatch):
     client = _make_client()
     fake = _install(
         client, "_aplus_content_api",
-        _Recorder({"search_content_publish_records": {"publishRecordSet": [{}, {}]}}), monkeypatch,
+        _Recorder({"search_content_publish_records": {"publishRecordList": [{}, {}]}}), monkeypatch,
     )
     assert client.get_aplus_publish_record_count("B0TEST0001") == 2
     assert fake.calls[0][2]["asin"] == "B0TEST0001"
@@ -368,3 +368,22 @@ def test_get_feed_status_without_result_document(monkeypatch):
     client = _make_client()
     _install(client, "_feeds_api", _Recorder({"get_feed": {"processingStatus": "IN_PROGRESS"}}), monkeypatch)
     assert client.get_feed_status("F1") == {"processingStatus": "IN_PROGRESS", "resultFeedDocumentId": None}
+
+
+def test_submit_json_listings_feed_does_not_retry_on_throttle(monkeypatch):
+    client = _make_client()
+    calls = []
+
+    class _Api:
+        def submit_feed(self, *args, **kwargs):
+            calls.append(1)
+            # Bypass __init__: the real exception needs headers.
+            raise sp_api_module.SellingApiRequestThrottledException.__new__(
+                sp_api_module.SellingApiRequestThrottledException
+            )
+
+    _install(client, "_feeds_api", _Api(), monkeypatch)
+    with pytest.raises(AmazonAPIError) as exc:
+        client.submit_json_listings_feed({"messages": []})
+    assert exc.value.error_code == "THROTTLED"
+    assert len(calls) == 1

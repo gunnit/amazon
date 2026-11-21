@@ -1608,11 +1608,14 @@ class SPAPIClient:
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_aplus_publish_record_count(self, asin: str) -> int:
-        """Number of A+ Content publish records for an ASIN (0 when none)."""
+        """Number of A+ publish records on the first page for an ASIN (0 when none).
+
+        nextPageToken is ignored: the count is a presence signal, not a total.
+        """
         response = self._aplus_content_api().search_content_publish_records(
             marketplaceId=self.marketplace.marketplace_id, asin=asin,
         )
-        return len((response.payload or {}).get("publishRecordSet") or [])
+        return len((response.payload or {}).get("publishRecordList") or [])
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_aplus_content_for_asin(self, asin: str) -> Dict[str, Any]:
@@ -2531,18 +2534,32 @@ class SPAPIClient:
 
     # ---- Feeds ----
 
-    @with_throttle_retry(max_retries=3, base_delay=2.0)
     def submit_json_listings_feed(self, document: Dict[str, Any]) -> str:
-        """Upload a JSON_LISTINGS_FEED document and return the feed id."""
+        """Upload a JSON_LISTINGS_FEED document and return the feed id.
+
+        Not retried on throttling: creating a feed is not idempotent, so a
+        retry could create a second feed. Errors surface as AmazonAPIError.
+        """
         content_type = "application/json; charset=UTF-8"
         # Bytes, so the library does not re-encode the upload as iso-8859-1.
         payload = io.BytesIO(json.dumps(document).encode("utf-8"))
-        _document_response, feed_response = self._feeds_api().submit_feed(
-            "JSON_LISTINGS_FEED",
-            payload,
-            content_type,
-            marketplaceIds=[self.marketplace.marketplace_id],
-        )
+        try:
+            _document_response, feed_response = self._feeds_api().submit_feed(
+                "JSON_LISTINGS_FEED",
+                payload,
+                content_type,
+                marketplaceIds=[self.marketplace.marketplace_id],
+            )
+        except SellingApiRequestThrottledException as e:
+            raise AmazonAPIError(
+                f"SP-API throttled on submit_json_listings_feed: {e}",
+                error_code="THROTTLED",
+            ) from e
+        except SellingApiException as e:
+            raise AmazonAPIError(
+                f"SP-API error on submit_json_listings_feed: {e}",
+                error_code=getattr(e, "code", None) or "SP_API_ERROR",
+            ) from e
         return (feed_response.payload or {})["feedId"]
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
