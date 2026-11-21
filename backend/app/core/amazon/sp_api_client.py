@@ -74,6 +74,11 @@ except ImportError:  # pragma: no cover - supports tests with a minimal sp_api s
     Finances = None
     ListingsItems = None
     ProductFees = None
+try:
+    from sp_api.api import Feeds, ProductTypeDefinitions
+except ImportError:  # pragma: no cover - supports tests with a minimal sp_api stub
+    Feeds = None
+    ProductTypeDefinitions = None
 
 from app.config import settings
 from app.core.exceptions import AmazonAPIError
@@ -242,6 +247,16 @@ class SPAPIClient:
         if ListingsItems is None:
             raise AmazonAPIError("Listings Items API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
         return ListingsItems(**self._api_kwargs)
+
+    def _feeds_api(self) -> Feeds:
+        if Feeds is None:
+            raise AmazonAPIError("Feeds API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
+        return Feeds(**self._api_kwargs)
+
+    def _product_type_definitions_api(self) -> ProductTypeDefinitions:
+        if ProductTypeDefinitions is None:
+            raise AmazonAPIError("Product Type Definitions API client is not available in installed sp_api package", error_code="API_CLIENT_UNAVAILABLE")
+        return ProductTypeDefinitions(**self._api_kwargs)
 
     def _product_fees_api(self) -> ProductFees:
         if ProductFees is None:
@@ -1123,6 +1138,24 @@ class SPAPIClient:
             return None
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_catalog_item_full(self, asin: str) -> Optional[Dict]:
+        """Catalog item with every section the catalogue monitor reads.
+
+        Unlike ``get_catalog_item_details`` this raises ``AmazonAPIError`` on
+        non-throttle failures so a scan can tell "unreadable" from "empty".
+        """
+        api = self._catalog_api()
+        response = api.get_catalog_item(
+            asin=asin,
+            marketplaceIds=self.marketplace.marketplace_id,
+            includedData=[
+                "attributes", "images", "relationships", "summaries",
+                "classifications", "productTypes", "salesRanks", "identifiers",
+            ],
+        )
+        return response.payload
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_competitive_pricing(self, asin: str) -> Optional[Decimal]:
         """Get competitive pricing for a product."""
         try:
@@ -1574,6 +1607,14 @@ class SPAPIClient:
         }
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_aplus_publish_record_count(self, asin: str) -> int:
+        """Number of A+ Content publish records for an ASIN (0 when none)."""
+        response = self._aplus_content_api().search_content_publish_records(
+            marketplaceId=self.marketplace.marketplace_id, asin=asin,
+        )
+        return len((response.payload or {}).get("publishRecordSet") or [])
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_aplus_content_for_asin(self, asin: str) -> Dict[str, Any]:
         """Best-effort A+ Content API lookup for one ASIN."""
         api = self._aplus_content_api()
@@ -1856,6 +1897,22 @@ class SPAPIClient:
             )
 
     # ---- Vendor-specific methods ----
+
+    def resolve_vendor_code(self) -> Optional[str]:
+        """Vendor code from the selling party of a recent purchase order.
+
+        Vendor accounts only. Looks at purchase orders created in the last 90
+        days; returns None for seller accounts or when there are none.
+        """
+        if not self.is_vendor:
+            return None
+        today = date.today()
+        orders = self.get_vendor_purchase_orders(today - timedelta(days=90), today)
+        for order in orders or []:
+            party_id = ((order.get("orderDetails") or {}).get("sellingParty") or {}).get("partyId")
+            if party_id:
+                return party_id
+        return None
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_vendor_purchase_orders(
@@ -2362,7 +2419,7 @@ class SPAPIClient:
         api = self._listings_api()
         kwargs: Dict[str, Any] = {
             "marketplaceIds": [self.marketplace.marketplace_id],
-            "includedData": included_data or ["summaries", "attributes", "issues", "offers"],
+            "includedData": included_data or ["summaries", "attributes", "issues", "offers", "relationships", "productTypes"],
         }
         response = api.get_listings_item(sellerId=seller_id, sku=sku, **kwargs)
         return response.payload or {}
@@ -2374,8 +2431,14 @@ class SPAPIClient:
         sku: str,
         product_type: str,
         patches: List[Dict[str, Any]],
+        mode: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Partially update a listing via JSON-patch operations on top-level attributes."""
+        """Partially update a listing via JSON-patch operations on top-level attributes.
+
+        ``mode="VALIDATION_PREVIEW"`` validates without writing. Amazon answers
+        HTTP 200 with ``status`` ACCEPTED, VALID or INVALID; the payload is
+        returned as is so callers must check ``status`` and ``issues``.
+        """
         if not patches:
             raise AmazonAPIError("No patches supplied", error_code="INVALID_PATCH")
 
@@ -2384,13 +2447,116 @@ class SPAPIClient:
             "productType": product_type,
             "patches": patches,
         }
+        kwargs: Dict[str, Any] = {}
+        if mode:
+            kwargs["mode"] = mode
         response = api.patch_listings_item(
             sellerId=seller_id,
             sku=sku,
             marketplaceIds=[self.marketplace.marketplace_id],
             body=body,
+            **kwargs,
         )
         return response.payload or {}
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def put_listing(
+        self,
+        seller_id: str,
+        sku: str,
+        product_type: str,
+        attributes: Dict[str, Any],
+        mode: Optional[str] = None,
+        requirements: str = "LISTING",
+    ) -> Dict[str, Any]:
+        """Create or fully replace a listing; ``mode`` as in ``patch_listing``."""
+        body = {
+            "productType": product_type,
+            "requirements": requirements,
+            "attributes": attributes,
+        }
+        kwargs: Dict[str, Any] = {}
+        if mode:
+            kwargs["mode"] = mode
+        response = self._listings_api().put_listings_item(
+            sellerId=seller_id,
+            sku=sku,
+            marketplaceIds=[self.marketplace.marketplace_id],
+            body=body,
+            **kwargs,
+        )
+        return response.payload or {}
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def search_listings_by_asins(self, seller_id: str, asins: List[str]) -> List[Dict[str, Any]]:
+        """Seller's listings (summaries and issues) for the given ASINs, 20 per call."""
+        api = self._listings_api()
+        items: List[Dict[str, Any]] = []
+        for chunk in self._chunk_values(list(asins), 20):
+            response = api.search_listings_items(
+                sellerId=seller_id,
+                marketplaceIds=[self.marketplace.marketplace_id],
+                identifiers=chunk,
+                identifiersType="ASIN",
+                includedData=["summaries", "issues"],
+            )
+            items.extend((response.payload or {}).get("items") or [])
+        return items
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_product_type_definition(
+        self, product_type: str, seller_id: Optional[str] = None, locale: str = "it_IT"
+    ) -> Dict[str, Any]:
+        """Product type definition (schema link and property groups) for LISTING."""
+        kwargs: Dict[str, Any] = {
+            "marketplaceIds": [self.marketplace.marketplace_id],
+            "requirements": "LISTING",
+            "requirementsEnforced": "ENFORCED",
+            "locale": locale,
+        }
+        if seller_id:
+            kwargs["sellerId"] = seller_id
+        response = self._product_type_definitions_api().get_definitions_product_type(
+            productType=product_type, **kwargs
+        )
+        return response.payload or {}
+
+    def fetch_json_schema(self, url: str) -> Dict[str, Any]:
+        """Download a product type JSON schema from its (pre-signed) link."""
+        import httpx
+
+        response = httpx.get(url, timeout=30)
+        response.raise_for_status()
+        return response.json()
+
+    # ---- Feeds ----
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def submit_json_listings_feed(self, document: Dict[str, Any]) -> str:
+        """Upload a JSON_LISTINGS_FEED document and return the feed id."""
+        content_type = "application/json; charset=UTF-8"
+        # Bytes, so the library does not re-encode the upload as iso-8859-1.
+        payload = io.BytesIO(json.dumps(document).encode("utf-8"))
+        _document_response, feed_response = self._feeds_api().submit_feed(
+            "JSON_LISTINGS_FEED",
+            payload,
+            content_type,
+            marketplaceIds=[self.marketplace.marketplace_id],
+        )
+        return (feed_response.payload or {})["feedId"]
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_feed_status(self, feed_id: str) -> Dict[str, Any]:
+        payload = self._feeds_api().get_feed(feed_id).payload or {}
+        return {
+            "processingStatus": payload.get("processingStatus"),
+            "resultFeedDocumentId": payload.get("resultFeedDocumentId"),
+        }
+
+    @with_throttle_retry(max_retries=3, base_delay=2.0)
+    def get_feed_result(self, document_id: str) -> Dict[str, Any]:
+        """Download and parse the JSON processing report of a finished feed."""
+        return json.loads(self._feeds_api().get_feed_result_document(document_id))
 
     def update_listing_attributes(
         self,
