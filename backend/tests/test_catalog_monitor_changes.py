@@ -13,7 +13,12 @@ import pytest
 from app.config import settings
 from app.core.exceptions import AmazonAPIError
 from app.models.amazon_account import AccountType
-from app.models.catalog_monitor import CatalogAnomaly, CatalogApiCapability, CatalogChangeRequest
+from app.models.catalog_monitor import (
+    CatalogAnomaly,
+    CatalogApiCapability,
+    CatalogChangeRequest,
+    ListingContentBaseline,
+)
 from app.services.catalog_monitor.changes import (
     LANGUAGE_TAG_BY_MARKETPLACE,
     ChangeItem,
@@ -27,7 +32,12 @@ from app.services.catalog_monitor.changes import (
     text_value,
     variation_patches,
 )
-from app.services.catalog_monitor.content import ImageRef, ListingContent
+from app.services.catalog_monitor.content import (
+    ImageRef,
+    ListingContent,
+    content_from_dict,
+    content_to_dict,
+)
 from app.services.catalog_monitor.repository import CatalogMonitorRepository
 
 MKT = "APJ6JRA9NG5V4"
@@ -88,13 +98,24 @@ class FakeClient:
 
 
 class FakeRepo(CatalogMonitorRepository):
-    def __init__(self, vendor_code=None, feed_requests=()):
+    def __init__(self, vendor_code=None, feed_requests=(), baselines=None):
         super().__init__(db=None)
         self.cap = CatalogApiCapability(account_id=ACC, results={}, vendor_code=vendor_code)
         self.feed_requests = list(feed_requests)
+        self.baseline_rows = dict(baselines or {})
+        self.upserts: list[tuple] = []
 
     async def capability(self, account_id):
         return self.cap
+
+    async def baselines(self, account_id):
+        return dict(self.baseline_rows)
+
+    async def upsert_baseline(self, account_id, asin, content, source, user_id):
+        self.upserts.append((asin, content, source, user_id))
+        row = self.baseline_rows[asin]
+        row.content, row.source, row.approved_by_user_id = content_to_dict(content), source, user_id
+        return row
 
     async def change_requests_for_feed(self, account_id, feed_id):
         return [
@@ -750,3 +771,61 @@ def test_image_slots_patch_replaces_only_named_slots():
     ]
     with pytest.raises(ValueError):
         patches_from_content({"image_slots": {"title": "https://img.test/x.jpg"}}, MKT)
+
+
+# ---- accepted changes become the protected baseline (found in the end-to-end run) ----
+
+
+def _baseline_rows(*asins):
+    return {
+        asin: ListingContentBaseline(
+            account_id=ACC, asin=asin, source="live_snapshot",
+            content=content_to_dict(ListingContent(asin=asin, marketplace_id=MKT, title="Vecchio")),
+        )
+        for asin in asins
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_accepted_bulk_update_updates_the_baseline_and_a_failed_one_does_not():
+    client = FakeClient(
+        responses={(_sku(2), None): {"status": "INVALID", "issues": [ERROR], "submissionId": "s2"}},
+    )
+    repo = FakeRepo(baselines=_baseline_rows("B0TEST0001", "B0TEST0002"))
+    svc, client, _ = _service(client, repo)
+    rows = await _approved(svc, _seller(), [_item(1), _item(2)])
+
+    await svc.submit(_seller(), rows)
+
+    assert [r.status for r in rows] == ["accepted", "failed"]
+    assert [(asin, c.title, source, user) for asin, c, source, user in repo.upserts] == [
+        ("B0TEST0001", "Titolo 1", "live_snapshot", ADMIN)
+    ]
+    assert content_from_dict(repo.baseline_rows["B0TEST0002"].content).title == "Vecchio"
+
+
+@pytest.mark.asyncio
+async def test_an_accepted_restore_leaves_the_baseline_alone():
+    repo = FakeRepo(baselines=_baseline_rows("B0TEST0001"))
+    svc, _, _ = _service(repo=repo)
+    rows = await _approved(svc, _seller(), [_item(1, kind="content_restore")])
+    await svc.submit(_seller(), rows)
+    assert rows[0].status == "accepted" and repo.upserts == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_feed_puts_accepted_bulk_updates_into_the_baseline():
+    rows = [_submitted(1), _submitted(2)]
+    for row in rows:
+        row.approved_by_user_id = ADMIN
+    client = FakeClient(
+        feed_status={"processingStatus": "DONE", "resultFeedDocumentId": "doc-1"},
+        feed_report={"issues": [{**ERROR, "messageId": 2}]},
+    )
+    repo = FakeRepo(feed_requests=rows, baselines=_baseline_rows("B0TEST0001", "B0TEST0002"))
+    svc, _, _ = _service(client, repo)
+
+    await svc.refresh_feed(_seller(), FEED_ID)
+
+    assert [r.status for r in rows] == ["accepted", "failed"]
+    assert [(asin, c.title, user) for asin, c, _, user in repo.upserts] == [("B0TEST0001", "Titolo 1", ADMIN)]

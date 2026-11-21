@@ -12,6 +12,10 @@ first checked it with ``mode="VALIDATION_PREVIEW"`` and an admin approved it:
                   -> submitted             (otherwise: one JSON_LISTINGS_FEED)
     refresh_feed  -> accepted | failed     (from the feed's processing report)
 
+An accepted bulk update or new item also updates its ASIN's baseline, so content
+protection does not flag the approved change (``baselines.apply_accepted_changes``).
+A request marked as uploaded by hand does not: the next scan shows what went live.
+
 A file-only request is never validated or submitted through the API, also once
 approved (``payload["file_only"]`` keeps the mark): ``build_listings_feed`` turns
 it into a file for a manual upload; ``submit`` also requires a passed validation.
@@ -35,6 +39,7 @@ from uuid import UUID
 from app.config import settings
 from app.models.amazon_account import AccountType
 from app.models.catalog_monitor import CatalogAnomaly, CatalogChangeRequest
+from app.services.catalog_monitor.baselines import apply_accepted_changes
 from app.services.catalog_monitor.capabilities import listing_seller_id
 from app.services.catalog_monitor.clients import (
     ClientFactory,
@@ -561,6 +566,7 @@ class ChangeRequestService:
                     await self._submit_each(client, seller_id, todo, now)
                 else:
                     await self._submit_feed(client, seller_id, account.marketplace_id, todo, now)
+        await apply_accepted_changes(self.repo, account.id, todo)
         await self.db.flush()
 
     async def _submit_each(
@@ -654,6 +660,7 @@ class ChangeRequestService:
                     "processingStatus": processing,
                     "issues": issues,
                 }
+            await apply_accepted_changes(self.repo, account.id, requests)
         else:
             return
         await self.db.flush()

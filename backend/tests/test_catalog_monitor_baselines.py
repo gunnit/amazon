@@ -183,3 +183,88 @@ async def test_import_overrides_only_given_cells():
     assert got.description == "Live desc"
     assert [i.url for i in got.images] == ["https://x.test/m.jpg", "https://x.test/1.jpg", "https://x.test/new2.jpg"]
     assert got.attributes["color"] == [{"value": "Verde", "marketplace_id": MKT}]
+
+
+# ---- accepted changes become the baseline (found in the end-to-end run) ----
+
+
+def _accepted(asin, kind="bulk_update", operation="PATCH", **payload):
+    from app.models.catalog_monitor import CatalogChangeRequest
+
+    return CatalogChangeRequest(
+        account_id=ACC, asin=asin, sku="TEST-SKU-001", kind=kind, operation=operation,
+        product_type="HOME", payload=payload, status="accepted", approved_by_user_id=USER,
+    )
+
+
+def test_baseline_after_change_applies_every_changed_field():
+    from app.services.catalog_monitor.changes import patches_from_content, text_value
+
+    base = _content(
+        "B0TEST0001",
+        images=[ImageRef("MAIN", "https://x.test/m.jpg"), ImageRef("PT01", "https://x.test/1.jpg"),
+                ImageRef("PT02", "https://x.test/2.jpg")],
+        attributes={"color": text_value("Rosso", MKT), "item_highlights": text_value("Vecchia", MKT)},
+    )
+    patches = patches_from_content({
+        "title": "Titolo nuovo",
+        "bullets": ["b1", "b2 nuovo", "b3", "b4", "b5"],
+        "description": "Descrizione nuova",
+        "backend_keywords": "alfa beta",
+        "item_highlights": "Nuova evidenza",
+        "image_slots": {"main_product_image_locator": "https://x.test/m2.jpg",
+                        "other_product_image_locator_3": "https://x.test/3.jpg"},
+        "attribute:color": text_value("Blu", MKT),
+    }, MKT)
+    after = baselines.baseline_after_change(base, _accepted("B0TEST0001", patches=patches))
+    assert (after.title, after.description, after.backend_keywords, after.item_highlights) == (
+        "Titolo nuovo", "Descrizione nuova", "alfa beta", "Nuova evidenza"
+    )
+    assert after.bullets == ["b1", "b2 nuovo", "b3", "b4", "b5"]
+    assert [(i.variant, i.url) for i in after.images] == [
+        ("MAIN", "https://x.test/m2.jpg"), ("PT01", "https://x.test/1.jpg"),
+        ("PT02", "https://x.test/2.jpg"), ("PT03", "https://x.test/3.jpg"),
+    ]
+    assert after.attributes["color"] == text_value("Blu", MKT)
+    assert after.attributes["item_highlights"] == text_value("Nuova evidenza", MKT)
+    assert base.title == "Title B0TEST0001"  # the input is not mutated
+
+
+def test_baseline_after_change_reads_put_attributes_and_image_deletes():
+    from app.services.catalog_monitor.changes import text_value
+
+    base = _content("B0TEST0001", images=[ImageRef("MAIN", "https://x.test/m.jpg"),
+                                          ImageRef("PT01", "https://x.test/1.jpg")])
+    put = _accepted("B0TEST0001", kind="new_item", operation="PUT",
+                    attributes={"item_name": text_value("Nuovo articolo", MKT),
+                                "material": text_value("Vetro", MKT)})
+    after = baselines.baseline_after_change(base, put)
+    assert after.title == "Nuovo articolo" and after.attributes["material"] == text_value("Vetro", MKT)
+    delete = _accepted("B0TEST0001", patches=[{
+        "op": "delete", "path": "/attributes/other_product_image_locator_1",
+        "value": [{"marketplace_id": MKT}],
+    }])
+    assert [i.variant for i in baselines.baseline_after_change(base, delete).images] == ["MAIN"]
+
+
+@pytest.mark.asyncio
+async def test_accepted_changes_update_the_baseline_of_their_asin_only():
+    from app.services.catalog_monitor.changes import patches_from_content
+
+    repo = _Repo()
+    repo.base["B0TEST0001"] = ListingContentBaseline(
+        account_id=ACC, asin="B0TEST0001", content=content_to_dict(_content("B0TEST0001")),
+        source=baselines.SOURCE_UPLOAD,
+    )
+    title = patches_from_content({"title": "Nuovo"}, MKT)
+    requests = [
+        _accepted("B0TEST0001", patches=title),
+        _accepted("B0TEST0002", patches=title),  # no baseline: nothing to update
+        _accepted("B0TEST0001", kind="content_restore", patches=patches_from_content({"title": "Altro"}, MKT)),
+        _accepted("B0TEST0001", kind="variation_restore", patches=title),
+    ]
+    assert await baselines.apply_accepted_changes(repo, ACC, requests) == 1
+    row = repo.base["B0TEST0001"]
+    assert content_from_dict(row.content).title == "Nuovo"
+    assert (row.source, row.approved_by_user_id) == (baselines.SOURCE_UPLOAD, USER)
+    assert set(repo.base) == {"B0TEST0001"}
