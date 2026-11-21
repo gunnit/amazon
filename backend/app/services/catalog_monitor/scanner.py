@@ -255,10 +255,13 @@ class CatalogScanService:
         listing_fetched = False
         if run.seller_id and product.sku:
             try:
-                content = merge_listing(content, run.client.get_listing(run.seller_id, product.sku))
-                listing_fetched = True
+                listing = run.client.get_listing(run.seller_id, product.sku)
             except Exception as exc:  # noqa: BLE001 - keep the previous listing fields
+                listing = None
                 logger.info("Listings Items unavailable for %s: %s", asin, exc)
+            if listing:  # an empty 200 says nothing: keep the previous listing fields
+                content = merge_listing(content, listing)
+                listing_fetched = True
 
         aplus_fetched = False
         if run.aplus_ok:
@@ -396,7 +399,12 @@ class CatalogScanService:
             if (asin, kind) in current:
                 continue
             if kind == "child_detached":
-                known = asin not in children or run.live.get(asin) is not None
+                # Back only when the child names the parent again: a broken family
+                # gets no per-child findings, yet its children are still detached.
+                live_child = run.live.get(asin)
+                known = asin not in children or (
+                    live_child is not None and parent in live_child.parent_asins
+                )
             else:
                 known = live_parent is not None
             if known:  # an unknown member keeps its anomaly open

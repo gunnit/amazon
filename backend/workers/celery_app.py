@@ -4,6 +4,8 @@ from celery.schedules import crontab
 from celery.signals import setup_logging
 import os
 
+from app.config import settings
+
 # Get Redis URL from environment
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/2")
@@ -103,10 +105,12 @@ celery_app.conf.beat_schedule = {
         "task": "workers.tasks.extraction.sync_brand_search_terms",
         "schedule": crontab(hour=7, minute=0, day_of_week=3),
     },
-    # Listing-quality snapshots weekly on Sunday at 7:30 AM
-    "listing-quality-snapshot": {
-        "task": "workers.tasks.extraction.snapshot_listing_quality",
-        "schedule": crontab(hour=7, minute=30, day_of_week=0),
+    # Catalogue monitor daily (live content, traffic lights, anomalies; R1-R3)
+    "catalog-monitor-scan": {
+        "task": "workers.tasks.extraction.scan_catalogs",
+        "schedule": crontab(
+            hour=settings.CATALOG_SCAN_HOUR_UTC, minute=settings.CATALOG_SCAN_MINUTE_UTC
+        ),
     },
     # Generate forecasts weekly on Sunday at 3 AM
     "weekly-forecasts": {

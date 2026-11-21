@@ -488,6 +488,25 @@ async def test_failed_listing_or_aplus_call_creates_no_new_version():
     assert rules["aplus"]["state"] != "grey"
 
 
+@pytest.mark.asyncio
+async def test_empty_listing_payload_counts_as_not_fetched():
+    account = _account()
+    repo = FakeRepo([_product("B0TEST0001", sku="TEST-SKU-001")])
+    client = FakeClient(
+        {"B0TEST0001": _child()}, listings={"TEST-SKU-001": _fixture("listing_seller")}
+    )
+    service = _service(repo, client)
+    await service.scan_account(account)
+
+    client.listings["TEST-SKU-001"] = {}  # HTTP 200 without a body
+    second = await service.scan_account(account)
+
+    assert (second.scanned, second.new_versions) == (1, 0)
+    [version] = repo.versions_by_asin["B0TEST0001"]
+    assert version.content["backend_keywords"] == "parola uno parola due"
+    assert repo.rules("B0TEST0001")["backend_keywords"]["state"] != "grey"
+
+
 # ---- R2: variation families ----
 
 
@@ -569,6 +588,40 @@ async def test_partial_catalog_payload_neither_detaches_nor_resolves_child():
     assert repo.open_rows() == [known]
     # the stored family of B0TEST0001 is kept, so its version does not change
     assert len(repo.versions_by_asin["B0TEST0001"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_broken_family_keeps_child_detached_open():
+    account = _account()
+    parent = _fixture("catalog_parent")
+    parent["relationships"][0]["relationships"][0]["childAsins"] = []
+    repo = FakeRepo(
+        [_product("B0TEST0001"), _product("B0TEST0002")],
+        families=[_family(["B0TEST0001", "B0TEST0002"])],
+    )
+    detached = CatalogAnomaly(
+        account_id=account.id,
+        asin="B0TEST0002",
+        kind="child_detached",
+        field=f"parent:{PARENT}",
+        baseline_value=PARENT,
+        live_value=[],
+        status="open",
+    )
+    repo.anomalies.append(detached)
+    client = FakeClient(
+        {
+            "B0TEST0001": _child("B0TEST0001", parents=()),
+            "B0TEST0002": _child("B0TEST0002", parents=()),
+            PARENT: parent,
+        }
+    )
+
+    summary = await _service(repo, client).scan_account(account)
+
+    assert summary.anomalies_resolved == 0
+    open_keys = {(a.asin, a.kind) for a in repo.open_rows()}
+    assert open_keys == {("B0TEST0002", "child_detached"), (PARENT, "family_broken")}
 
 
 # ---- main keyword ----
@@ -700,3 +753,23 @@ def test_scan_summary_dict_is_json_ready():
     summary = ScanSummary(account_id=uuid4(), scanned=2, errors=["x"])
     data = summary.to_dict()
     assert json.loads(json.dumps(data)) == data
+
+
+def test_celery_beat_runs_the_catalog_scan_and_not_the_old_snapshot(monkeypatch):
+    from workers.celery_app import celery_app
+    from workers.tasks import extraction as extraction_tasks
+
+    schedule = celery_app.conf.beat_schedule
+    assert "listing-quality-snapshot" not in schedule
+    assert not hasattr(extraction_tasks, "snapshot_listing_quality")
+    entry = schedule["catalog-monitor-scan"]
+    assert entry["task"] == "workers.tasks.extraction.scan_catalogs"
+    assert entry["schedule"].hour == {settings.CATALOG_SCAN_HOUR_UTC}
+    assert entry["schedule"].minute == {settings.CATALOG_SCAN_MINUTE_UTC}
+    for item in schedule.values():
+        module, _, name = item["task"].rpartition(".")
+        if module == "workers.tasks.extraction":
+            assert hasattr(extraction_tasks, name), item["task"]
+
+    monkeypatch.setattr(scanner, "run_catalog_scan_all", lambda: {"status": "success"})
+    assert extraction_tasks.scan_catalogs.run() == {"status": "success"}

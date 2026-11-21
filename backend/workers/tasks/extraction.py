@@ -187,11 +187,11 @@ def sync_brand_search_terms():
 
 
 @celery_app.task
-def snapshot_listing_quality():
-    """Weekly listing-quality score snapshots."""
-    from app.services.extraction_runner import run_listing_quality_snapshot_all
+def scan_catalogs():
+    """Daily catalogue monitor scan of every account (R1-R3); also the listing-quality snapshots."""
+    from app.services.catalog_monitor import scanner
 
-    return run_listing_quality_snapshot_all()
+    return scanner.run_catalog_scan_all()
 
 
 @celery_app.task
