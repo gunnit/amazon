@@ -1,0 +1,201 @@
+{
+  "asin": "B0TEST0001",
+  "attributes": {
+    "item_name": [
+      {
+        "value": "TESTBRAND Prodotto di prova 500 ml",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "brand": [
+      {
+        "value": "TESTBRAND",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "bullet_point": [
+      {
+        "value": "Punto elenco 1",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      },
+      {
+        "value": "Punto elenco 2",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      },
+      {
+        "value": "Punto elenco 3",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      },
+      {
+        "value": "Punto elenco 4",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      },
+      {
+        "value": "Punto elenco 5",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      },
+      {
+        "value": "Bullet in German",
+        "language_tag": "de_DE",
+        "marketplace_id": "A1PA6795UKMFR9"
+      }
+    ],
+    "product_description": [
+      {
+        "value": "Descrizione di prova del prodotto.",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "item_highlights": [
+      {
+        "value": "Highlight uno",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "color": [
+      {
+        "value": "Blu",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "purchasable_offer": [
+      {
+        "currency": "EUR",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "list_price": [
+      {
+        "value": 9.99,
+        "currency": "EUR",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "condition_type": [
+      {
+        "value": "new_new",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ]
+  },
+  "images": [
+    {
+      "marketplaceId": "APJ6JRA9NG5V4",
+      "images": [
+        {
+          "variant": "PT02",
+          "link": "https://example.test/img/PT02-500.jpg",
+          "height": 500,
+          "width": 500
+        },
+        {
+          "variant": "MAIN",
+          "link": "https://example.test/img/MAIN-500.jpg",
+          "height": 500,
+          "width": 500
+        },
+        {
+          "variant": "MAIN",
+          "link": "https://example.test/img/MAIN-1000.jpg",
+          "height": 1000,
+          "width": 1000
+        },
+        {
+          "variant": "PT01",
+          "link": "https://example.test/img/PT01-500.jpg",
+          "height": 500,
+          "width": 500
+        },
+        {
+          "variant": "PT01",
+          "link": "https://example.test/img/PT01-1500.jpg",
+          "height": 1500,
+          "width": 1500
+        },
+        {
+          "variant": "SWCH",
+          "link": "https://example.test/img/SWCH-30.jpg",
+          "height": 30,
+          "width": 30
+        },
+        {
+          "variant": "PT10",
+          "link": "https://example.test/img/PT10-500.jpg",
+          "height": 500,
+          "width": 500
+        },
+        {
+          "variant": "PT03",
+          "link": "https://example.test/img/PT03-500.jpg",
+          "height": 500,
+          "width": 500
+        }
+      ]
+    }
+  ],
+  "productTypes": [
+    {
+      "marketplaceId": "APJ6JRA9NG5V4",
+      "productType": "HEALTH_PERSONAL_CARE"
+    }
+  ],
+  "relationships": [
+    {
+      "marketplaceId": "APJ6JRA9NG5V4",
+      "relationships": [
+        {
+          "type": "VARIATION",
+          "parentAsins": [
+            "B0TEST0100"
+          ],
+          "variationTheme": {
+            "attributes": [
+              "color"
+            ],
+            "theme": "COLOR"
+          }
+        }
+      ]
+    }
+  ],
+  "summaries": [
+    {
+      "marketplaceId": "APJ6JRA9NG5V4",
+      "brand": "TESTBRAND",
+      "itemName": "TESTBRAND Prodotto di prova 500 ml",
+      "browseClassification": {
+        "displayName": "Leaf",
+        "classificationId": "333"
+      }
+    }
+  ],
+  "classifications": [
+    {
+      "marketplaceId": "APJ6JRA9NG5V4",
+      "classifications": [
+        {
+          "displayName": "Leaf",
+          "classificationId": "333",
+          "parent": {
+            "displayName": "Mid",
+            "classificationId": "222",
+            "parent": {
+              "displayName": "Root",
+              "classificationId": "111"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

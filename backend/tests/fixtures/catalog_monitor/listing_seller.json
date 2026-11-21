@@ -1,0 +1,70 @@
+{
+  "sku": "TEST-SKU-001",
+  "summaries": [
+    {
+      "marketplaceId": "APJ6JRA9NG5V4",
+      "asin": "B0TEST0001",
+      "productType": "HEALTH_PERSONAL_CARE",
+      "status": [
+        "BUYABLE",
+        "DISCOVERABLE"
+      ],
+      "itemName": "TESTBRAND Prodotto di prova 500 ml",
+      "mainImage": {
+        "link": "https://example.test/img/MAIN-1000.jpg"
+      }
+    }
+  ],
+  "attributes": {
+    "item_name": [
+      {
+        "value": "Titolo dal listing (non deve vincere)",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "generic_keyword": [
+      {
+        "value": "parola uno parola due",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "bullet_point": [
+      {
+        "value": "Bullet dal listing",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "fulfillment_availability": [
+      {
+        "fulfillment_channel_code": "DEFAULT",
+        "quantity": 5
+      }
+    ],
+    "merchant_shipping_group": [
+      {
+        "value": "legacy-template",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "special_feature": [
+      {
+        "value": "Resistente",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ]
+  },
+  "issues": [
+    {
+      "code": "90220",
+      "message": "Attribute missing",
+      "severity": "WARNING",
+      "attributeNames": [
+        "material"
+      ]
+    }
+  ]
+}

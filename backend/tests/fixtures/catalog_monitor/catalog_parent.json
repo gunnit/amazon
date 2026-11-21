@@ -1,0 +1,66 @@
+{
+  "asin": "B0TEST0100",
+  "attributes": {
+    "item_name": [
+      {
+        "value": "TESTBRAND Prodotto di prova",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ],
+    "brand": [
+      {
+        "value": "TESTBRAND",
+        "language_tag": "it_IT",
+        "marketplace_id": "APJ6JRA9NG5V4"
+      }
+    ]
+  },
+  "images": [
+    {
+      "marketplaceId": "APJ6JRA9NG5V4",
+      "images": [
+        {
+          "variant": "MAIN",
+          "link": "https://example.test/img/MAIN-1000.jpg",
+          "height": 1000,
+          "width": 1000
+        }
+      ]
+    }
+  ],
+  "productTypes": [
+    {
+      "marketplaceId": "APJ6JRA9NG5V4",
+      "productType": "HEALTH_PERSONAL_CARE"
+    }
+  ],
+  "relationships": [
+    {
+      "marketplaceId": "APJ6JRA9NG5V4",
+      "relationships": [
+        {
+          "type": "VARIATION",
+          "childAsins": [
+            "B0TEST0001",
+            "B0TEST0002",
+            "B0TEST0003"
+          ],
+          "variationTheme": {
+            "attributes": [
+              "color"
+            ],
+            "theme": "COLOR"
+          }
+        }
+      ]
+    }
+  ],
+  "summaries": [
+    {
+      "marketplaceId": "APJ6JRA9NG5V4",
+      "brand": "TESTBRAND",
+      "itemName": "TESTBRAND Prodotto di prova"
+    }
+  ]
+}
