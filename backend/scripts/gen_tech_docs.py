@@ -122,6 +122,11 @@ SETTING_NOTES = {
         "valid entry scans nothing. The scan skips the day while another scheduled sync "
         "holds the shared lock."
     ),
+    "DEV_FIXTURE_AMAZON_DIR": (
+        "Local development only: the catalogue monitor's Amazon calls are answered from "
+        "this fixture directory when `APP_ENV` is `development` or `test`, and ignored in "
+        "any other environment. Production refuses to start while it is set."
+    ),
 }
 
 

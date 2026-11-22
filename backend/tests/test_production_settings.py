@@ -58,3 +58,9 @@ def test_placeholder_app_secret_only_warns(caplog):
     )
 
     assert "APP_SECRET_KEY" in caplog.text
+
+
+def test_fixture_amazon_dir_is_refused_in_production():
+    # The fixture seam answers Amazon calls from local files: never in production.
+    with pytest.raises(RuntimeError, match="DEV_FIXTURE_AMAZON_DIR"):
+        validate_production_settings(_prod_settings(DEV_FIXTURE_AMAZON_DIR="/tmp/fixtures"))

@@ -1,6 +1,6 @@
 """SP-API client construction for the catalogue monitor (R1-R4).
 
-Outside production, ``DEV_FIXTURE_AMAZON_DIR`` swaps SP-API for a ``FixtureClient``
+In development and test, ``DEV_FIXTURE_AMAZON_DIR`` swaps SP-API for a ``FixtureClient``
 that reads and writes JSON files, so the monitor runs locally without Amazon.
 """
 from __future__ import annotations

@@ -1,8 +1,8 @@
 """Local stand-in for SP-API: the catalogue monitor's Amazon calls answered from JSON files (R1-R4).
 
 Development only. ``default_client_factory`` returns a ``FixtureClient`` when
-``DEV_FIXTURE_AMAZON_DIR`` is set and the app is not in production; production
-ignores the setting. ``scripts/dev_seed_catalog_monitor.py`` writes the directory:
+``DEV_FIXTURE_AMAZON_DIR`` is set and ``APP_ENV`` is development or test; any other
+environment ignores the setting, and production refuses to start with it. ``scripts/dev_seed_catalog_monitor.py`` writes the directory:
 
     catalog/<ASIN>.json        Catalog Items payload (getCatalogItem, all sections)
     listings/<SKU>.json        Listings Items payload (getListingsItem)
@@ -47,20 +47,35 @@ _LISTING_ONLY_ATTRIBUTES = frozenset({"generic_keyword"})
 _LOCK = threading.Lock()  # scans run in a thread while requests write
 
 
+FIXTURE_ENVIRONMENTS = frozenset({"development", "test"})
+
+
+def _fixture_environment() -> bool:
+    return (settings.APP_ENV or "").lower() in FIXTURE_ENVIRONMENTS
+
+
 def active_fixture_dir() -> Optional[str]:
-    """The fixture directory when the seam is on: set, and not in production."""
+    """The fixture directory when the seam is on: set, and APP_ENV development or test.
+
+    An allowlist on purpose: a staging environment or a mistyped APP_ENV must
+    never answer real accounts from local files. Production refuses to start
+    with the setting (``validate_production_settings``).
+    """
     directory = settings.DEV_FIXTURE_AMAZON_DIR
-    if not directory or settings.is_production:
+    if not directory or not _fixture_environment():
         return None
     return directory
 
 
 def log_fixture_mode(log: logging.Logger = logger) -> None:
-    """At startup: a warning when Amazon calls go to fixtures, an error when production ignores them."""
+    """At startup: a warning when Amazon calls go to fixtures, an error when the setting is ignored."""
     if not settings.DEV_FIXTURE_AMAZON_DIR:
         return
-    if settings.is_production:
-        log.error("DEV_FIXTURE_AMAZON_DIR is set in production: ignored, SP-API is used")
+    if not _fixture_environment():
+        log.error(
+            "DEV_FIXTURE_AMAZON_DIR is set with APP_ENV=%r: ignored, SP-API is used",
+            settings.APP_ENV,
+        )
     else:
         log.warning(
             "DEV_FIXTURE_AMAZON_DIR is set: catalogue monitor Amazon calls are answered "

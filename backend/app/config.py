@@ -159,7 +159,8 @@ class Settings(BaseSettings):
     # Local development only: a directory of JSON fixtures that answers the
     # catalogue monitor's Amazon calls instead of SP-API (see
     # app/services/catalog_monitor/fixture_client.py and
-    # scripts/dev_seed_catalog_monitor.py). Ignored in production.
+    # scripts/dev_seed_catalog_monitor.py). Used only with APP_ENV development or
+    # test; production refuses to start while it is set.
     DEV_FIXTURE_AMAZON_DIR: Optional[str] = None
     # How often the in-process scheduler finalizes brand-analysis jobs whose
     # worker/thread stalled (e.g. killed by a deploy mid-run).
@@ -259,6 +260,13 @@ def validate_production_settings(s: "Settings") -> None:
         raise RuntimeError(
             "ENCRYPTION_KEY is not set. Amazon credentials cannot be stored or "
             "read without it."
+        )
+
+    if s.DEV_FIXTURE_AMAZON_DIR:
+        raise RuntimeError(
+            "DEV_FIXTURE_AMAZON_DIR must not be set in production: it answers the "
+            "catalogue monitor's Amazon calls from local files. Remove it from the "
+            "deploy environment."
         )
 
     if "localhost" in s.APP_FRONTEND_URL or "127.0.0.1" in s.APP_FRONTEND_URL:

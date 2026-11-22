@@ -97,3 +97,4 @@ Every setting on `Settings` in `app/config.py`. Secrets show `—` instead of a 
 
 - `CATALOG_SCAN_ENABLED`: The daily catalogue scan (job `catalog-monitor-scan`, and its Celery twin) does nothing unless this is `true`. Off by default so a first night over every client account neither burns Catalog quota nor runs the single 512 MB instance out of memory. "Avvia scansione" (`POST /catalog-monitor/scan`) works either way.
 - `CATALOG_SCAN_ACCOUNT_IDS`: Comma-separated account UUIDs the daily scan covers when enabled; empty means every active account. Entries that are not UUIDs are ignored, and a list with no valid entry scans nothing. The scan skips the day while another scheduled sync holds the shared lock.
+- `DEV_FIXTURE_AMAZON_DIR`: Local development only: the catalogue monitor's Amazon calls are answered from this fixture directory when `APP_ENV` is `development` or `test`, and ignored in any other environment. Production refuses to start while it is set.

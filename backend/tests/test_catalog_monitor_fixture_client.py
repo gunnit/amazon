@@ -121,6 +121,17 @@ def test_production_ignores_the_fixture_dir(dev_mode, monkeypatch):
         clients.default_client_factory(_account(), None)
 
 
+@pytest.mark.parametrize("env,active", [
+    ("development", True), ("Development", True), ("test", True), ("TEST", True),
+    ("production", False), ("staging", False), ("prod", False), ("", False),
+])
+def test_the_seam_is_on_only_in_development_and_test(dev_mode, monkeypatch, env, active):
+    # An allowlist, not "anything but production": a typo or a staging env must
+    # never answer real accounts from local files.
+    monkeypatch.setattr(settings, "APP_ENV", env)
+    assert (active_fixture_dir() is not None) is active
+
+
 def test_without_the_setting_the_factory_builds_sp_api(monkeypatch):
     monkeypatch.setattr(settings, "DEV_FIXTURE_AMAZON_DIR", None)
     monkeypatch.setattr(settings, "APP_ENV", "development")
