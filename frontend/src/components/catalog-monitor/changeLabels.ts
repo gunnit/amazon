@@ -144,9 +144,25 @@ export function requestFields(request: ChangeRequest): FieldEdit[] {
 /** "/attributes/other_product_image_locator_5" -> "other_product_image_locator_5" */
 export const pathField = (path: string) => path.split('/').filter(Boolean).pop() ?? path
 
-/** Restorable through Amazon: still open and not A+ (A+ cannot be written via Listings Items). */
+/** Request statuses that can still go out: while the linked restore has one, it is in progress. */
+const LIVE_RESTORE_STATUSES: ChangeRequestStatus[] = ['pending', 'valid', 'file_only', 'approved']
+
+/** A restore that can still go out: no second restore, no accept (backend restore_in_progress). */
+export const restoreInProgress = (a: CatalogAnomaly) =>
+  a.status === 'restore_requested' &&
+  !!a.change_request_status &&
+  LIVE_RESTORE_STATUSES.includes(a.change_request_status)
+
+/**
+ * Restorable through Amazon: open, or its restore was already sent or ended (an anomaly the
+ * scan still sees after an accepted restore must not stay stuck), and not A+ (A+ cannot be
+ * written via Listings Items).
+ */
 export const canRestoreAnomaly = (a: CatalogAnomaly) =>
-  (a.status === 'open' || a.status === 'acknowledged') && a.field !== 'aplus'
+  (a.status === 'open' ||
+    a.status === 'acknowledged' ||
+    (a.status === 'restore_requested' && !restoreInProgress(a))) &&
+  a.field !== 'aplus'
 
 /** The approvals list returns at most this many requests, newest first (backend _MAX_REQUESTS). */
 export const CHANGES_LIST_CAP = 500

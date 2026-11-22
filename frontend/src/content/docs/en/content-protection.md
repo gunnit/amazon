@@ -24,7 +24,7 @@ Each difference becomes a change to review, with its type: **Modified**, **Remov
 | Restore requested | A request already exists in Approvals |
 | Resolved | The live content is the same as the approved version again |
 
-A change closes on its own when the content matches again; a second one is not opened for the same difference.
+A change closes on its own when the content matches again; a second one is not opened for the same difference. While its restore request is in Approvals (pending, validated, file only or approved) the change is locked; once the request was sent or closed and the scan still sees the difference, the change can be accepted or restored again.
 
 ## Side-by-side comparison
 

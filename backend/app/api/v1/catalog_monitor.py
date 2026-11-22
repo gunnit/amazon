@@ -611,6 +611,11 @@ _OPEN_STATUSES = ("open", "acknowledged", "restore_requested")
 _RESTORABLE_STATUSES = frozenset({"open", "acknowledged"})
 _VARIATION_KINDS = ("child_detached", "unexpected_child", "family_broken", "theme_changed")
 _DEAD_RESTORE_STATUSES = frozenset({"rejected", "invalid", "failed"})
+# A restore is in progress only while its request can still go out. Once it was
+# sent (accepted, submitted) or ended (failed, rejected, invalid), an anomaly still
+# marked restore_requested can be accepted or restored again: otherwise a change
+# Amazon accepted but the scan still sees would stay stuck.
+_LIVE_REQUEST_STATUSES = frozenset({"pending", "valid", "file_only", "approved"})
 _MAX_REQUESTS = 500
 
 
@@ -643,7 +648,23 @@ def anomaly_change(kind: str, baseline: Any, live: Any) -> Optional[str]:
     return "modified"
 
 
-def anomaly_out(anomaly: Any, title: Optional[str] = None) -> AnomalyOut:
+def restore_in_progress(anomaly: Any, request_status: Optional[str]) -> bool:
+    """The anomaly waits for a restore request that can still go out."""
+    return anomaly.status == "restore_requested" and request_status in _LIVE_REQUEST_STATUSES
+
+
+def can_restore_again(anomaly: Any, request_status: Optional[str]) -> bool:
+    """Open, acknowledged, or restore_requested with a request already sent or ended."""
+    if anomaly.status in _RESTORABLE_STATUSES:
+        return True
+    return anomaly.status == "restore_requested" and not restore_in_progress(
+        anomaly, request_status
+    )
+
+
+def anomaly_out(
+    anomaly: Any, title: Optional[str] = None, request_status: Optional[str] = None
+) -> AnomalyOut:
     return AnomalyOut(
         id=anomaly.id,
         account_id=anomaly.account_id,
@@ -658,6 +679,7 @@ def anomaly_out(anomaly: Any, title: Optional[str] = None) -> AnomalyOut:
         detected_at=anomaly.detected_at,
         last_seen_at=anomaly.last_seen_at,
         change_request_id=anomaly.change_request_id,
+        change_request_status=request_status,
     )
 
 
@@ -935,6 +957,23 @@ async def _anomalies_by_ids(
     return list((await db.execute(stmt)).scalars().all())
 
 
+async def _request_statuses(db, ids: list[UUID]) -> dict[UUID, str]:
+    """Status of each change request id (unknown ids are left out)."""
+    if not ids:
+        return {}
+    result = await db.execute(
+        select(CatalogChangeRequest.id, CatalogChangeRequest.status).where(
+            CatalogChangeRequest.id.in_(ids)
+        )
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
+async def _linked_statuses(db, anomalies: list[Any]) -> dict[UUID, str]:
+    ids = sorted({a.change_request_id for a in anomalies if a.change_request_id}, key=str)
+    return await _request_statuses(db, ids) if ids else {}
+
+
 async def _list_anomalies(
     db, account_id: UUID, kind: Optional[str], statuses: tuple[str, ...], search: Optional[str]
 ) -> list[tuple[CatalogAnomaly, Optional[str]]]:
@@ -1108,7 +1147,8 @@ async def list_anomalies(
     await _account_or_404(db, organization.id, account_id)
     statuses = (status_filter,) if status_filter else _OPEN_STATUSES
     rows = await _list_anomalies(db, account_id, kind, statuses, search)
-    return [anomaly_out(a, title) for a, title in rows]
+    linked = await _linked_statuses(db, [a for a, _ in rows])
+    return [anomaly_out(a, title, linked.get(a.change_request_id)) for a, title in rows]
 
 
 @router.post("/anomalies/restore", response_model=ChangeBatchResponse)
@@ -1125,12 +1165,13 @@ async def restore_anomalies(
     if len({a.account_id for a in anomalies}) > 1:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Anomalies of one account only")
     account = await _account_or_404(db, organization.id, anomalies[0].account_id)
+    linked = await _linked_statuses(db, anomalies)
     skipped: list[dict] = []
     eligible = []
     for anomaly in anomalies:
         if anomaly.kind != "content_changed":
             skipped.append(_notice(anomaly, "not_content_anomaly"))
-        elif anomaly.status not in _RESTORABLE_STATUSES:
+        elif not can_restore_again(anomaly, linked.get(anomaly.change_request_id)):
             skipped.append(_notice(anomaly, f"status_{anomaly.status}"))
         else:
             eligible.append(anomaly)
@@ -1170,7 +1211,10 @@ async def accept_anomaly_route(
     if not found:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Anomaly not found")
     anomaly = found[0]
-    if anomaly.status in ("resolved", "restore_requested"):
+    linked = await _linked_statuses(db, [anomaly])
+    if anomaly.status == "resolved" or restore_in_progress(
+        anomaly, linked.get(anomaly.change_request_id)
+    ):
         raise HTTPException(status.HTTP_409_CONFLICT, f"Anomaly is {anomaly.status}")
     try:
         await accept_anomaly(
@@ -1269,14 +1313,16 @@ async def restore_variation(
         for a in await _variation_anomalies(db, account.id, lock=True)
         if _family_of(a) == family.parent_asin
     ]
-    # Only open or acknowledged anomalies can be restored; a pending restore is not repeated.
+    # Open or acknowledged anomalies can be restored, and those whose restore was
+    # already sent or ended; a restore still in the queue is not repeated.
+    linked = await _linked_statuses(db, mine)
     by_child: dict[str, list[Any]] = defaultdict(list)
     skipped: list[dict] = []
     pending: set[str] = set()
     for anomaly in mine:
         if anomaly.kind != "child_detached":
             continue
-        if anomaly.status in _RESTORABLE_STATUSES:
+        if can_restore_again(anomaly, linked.get(anomaly.change_request_id)):
             by_child[anomaly.asin].append(anomaly)
         else:
             pending.add(anomaly.asin)

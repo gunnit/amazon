@@ -13,7 +13,7 @@ import { catalogMonitorApi } from '@/services/api'
 import { apiErrorDetail } from '@/lib/apiError'
 import type { CatalogAnomaly } from '@/types'
 import type { TabProps } from '@/components/catalog/types'
-import { changeTypeLabel, fieldLabel } from './changeLabels'
+import { changeTypeLabel, fieldLabel, restoreInProgress } from './changeLabels'
 import { DiffLegend, FieldCompare } from './FieldCompare'
 
 interface Props extends Pick<TabProps, 't' | 'toast'> {
@@ -44,7 +44,7 @@ export function DiffView({ anomaly, onClose, onRestore, restoring, onShowHistory
       }),
   })
 
-  const pending = anomaly?.status === 'restore_requested'
+  const pending = anomaly !== null && restoreInProgress(anomaly)
   const isAplus = anomaly?.field === 'aplus'
 
   return (

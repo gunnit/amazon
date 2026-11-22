@@ -1370,6 +1370,8 @@ export interface CatalogAnomaly {
   detected_at: string
   last_seen_at: string
   change_request_id: string | null
+  /** Status of the linked restore request (null when none is linked). */
+  change_request_status?: ChangeRequestStatus | null
 }
 
 export interface RestoreNotice {

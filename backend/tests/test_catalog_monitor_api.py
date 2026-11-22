@@ -799,7 +799,11 @@ class _ScalarsDb(_FakeDb):
 
 def test_second_variation_restore_creates_nothing(monkeypatch):
     pending = _anomaly("B0TEST0011", "child_detached", "parent:B0TEST0010", status="restore_requested")
+    pending.change_request_id = uuid4()  # its restore still waits for approval
     created = []
+
+    async def _statuses(db, ids):
+        return {i: "approved" for i in ids}
 
     async def _account(db, organization_id, account_id):
         return SimpleNamespace(id=account_id, organization_id=organization_id, marketplace_id=MP)
@@ -823,6 +827,7 @@ def test_second_variation_restore_creates_nothing(monkeypatch):
     monkeypatch.setattr(api, "_account_or_404", _account)
     monkeypatch.setattr(api, "_family_baselines", _families)
     monkeypatch.setattr(api, "_variation_anomalies", _anoms)
+    monkeypatch.setattr(api, "_request_statuses", _statuses)
     monkeypatch.setattr(api, "ChangeRequestService", _Svc)
     client, _ = _client()
     for body in (
@@ -1367,3 +1372,133 @@ def test_cors_exposes_the_download_headers():
     ]
     exposed = next(k.value for k in cors.keywords if k.arg == "expose_headers")
     assert {"X-Skipped-Requests", "Content-Disposition"} <= set(ast.literal_eval(exposed))
+
+
+# ---- final review: stuck restore_requested anomalies ----
+
+
+@pytest.mark.parametrize("request_status,in_progress", [
+    ("pending", True), ("valid", True), ("file_only", True), ("approved", True),
+    ("accepted", False), ("submitted", False), ("failed", False), ("rejected", False),
+    ("invalid", False), (None, False),
+])
+def test_restore_in_progress_only_while_the_linked_request_can_still_go_out(
+    request_status, in_progress
+):
+    anomaly = _anomaly("B0TEST0001", status="restore_requested")
+    assert api.restore_in_progress(anomaly, request_status) is in_progress
+    assert api.restore_in_progress(_anomaly("B0TEST0001"), request_status) is False
+
+
+def _linked(status, request_status):
+    anomaly = _anomaly("B0TEST0001", status=status)
+    anomaly.change_request_id = uuid4()
+    return anomaly, {anomaly.change_request_id: request_status}
+
+
+def _accept_app(monkeypatch, anomaly, statuses):
+    accepted = []
+
+    async def _by_ids(db, organization_id, ids, lock=False):
+        return [anomaly]
+
+    async def _statuses(db, ids):
+        return {i: statuses[i] for i in ids if i in statuses}
+
+    async def _accept(repo, an, user_id, now):
+        an.status = "resolved"
+        accepted.append(an.id)
+
+    monkeypatch.setattr(api, "_anomalies_by_ids", _by_ids)
+    monkeypatch.setattr(api, "_request_statuses", _statuses)
+    monkeypatch.setattr(api, "accept_anomaly", _accept)
+    return accepted
+
+
+@pytest.mark.parametrize("request_status", ["accepted", "submitted"])
+def test_accept_unblocks_an_anomaly_whose_restore_went_out(monkeypatch, request_status):
+    # The restore went out but the scan still sees the change (Amazon re-hosted the
+    # image, or edited it again): without this the anomaly stays stuck for ever.
+    anomaly, statuses = _linked("restore_requested", request_status)
+    accepted = _accept_app(monkeypatch, anomaly, statuses)
+    client, db = _client()
+    res = client.post(f"/catalog-monitor/anomalies/{anomaly.id}/accept")
+    assert res.status_code == 200, res.text
+    assert accepted == [anomaly.id] and db.commits == 1
+
+
+def test_accept_refuses_while_the_restore_is_still_in_the_queue(monkeypatch):
+    anomaly, statuses = _linked("restore_requested", "approved")
+    accepted = _accept_app(monkeypatch, anomaly, statuses)
+    client, _ = _client()
+    res = client.post(f"/catalog-monitor/anomalies/{anomaly.id}/accept")
+    assert res.status_code == 409 and accepted == []
+
+
+def test_restore_again_after_the_linked_restore_was_accepted(monkeypatch, known_account):
+    stuck, stuck_statuses = _linked("restore_requested", "accepted")
+    queued, queued_statuses = _linked("restore_requested", "valid")
+    queued.asin = "B0TEST0002"
+    created = {}
+
+    async def _by_ids(db, organization_id, ids, lock=False):
+        return [stuck, queued]
+
+    async def _statuses(db, ids):
+        both = {**stuck_statuses, **queued_statuses}
+        return {i: both[i] for i in ids if i in both}
+
+    async def _baselines(db, account_id, *args):
+        return {a: _baseline_row(a) for a in ("B0TEST0001", "B0TEST0002")}
+
+    async def _versions(db, account_id, asins):
+        return {a: {"sku": f"SKU-{a}", "product_type": "LUGGAGE"} for a in asins}
+
+    async def _products(db, account_id, asins):
+        return {}
+
+    class _Svc:
+        def __init__(self, db):
+            pass
+
+        async def create(self, account, items, user_id, batch_id=None):
+            created["anomalies"] = [a.id for item in items for a in item.anomalies]
+            return [_req(batch=batch_id)]
+
+        async def validate(self, account, requests):
+            pass
+
+    async def _reopen(db, requests):
+        pass
+
+    monkeypatch.setattr(api, "_anomalies_by_ids", _by_ids)
+    monkeypatch.setattr(api, "_request_statuses", _statuses)
+    monkeypatch.setattr(api, "_baselines", _baselines)
+    monkeypatch.setattr(api, "_latest_content_dicts", _versions)
+    monkeypatch.setattr(api, "_products_by_asin", _products)
+    monkeypatch.setattr(api, "_reopen_for_requests", _reopen)
+    monkeypatch.setattr(api, "ChangeRequestService", _Svc)
+    client, _ = _client()
+    res = client.post("/catalog-monitor/anomalies/restore",
+                      json={"anomaly_ids": [str(stuck.id), str(queued.id)]})
+    assert res.status_code == 200, res.text
+    assert created["anomalies"] == [stuck.id]
+    assert [(s["asin"], s["reason"]) for s in res.json()["skipped"]] == [
+        ("B0TEST0002", "status_restore_requested")
+    ]
+
+
+def test_anomalies_route_returns_the_linked_request_status(monkeypatch, known_account):
+    anomaly, statuses = _linked("restore_requested", "accepted")
+
+    async def _list(db, account_id, kind, statuses_filter, search):
+        return [(anomaly, "Titolo")]
+
+    async def _statuses(db, ids):
+        return {i: statuses[i] for i in ids if i in statuses}
+
+    monkeypatch.setattr(api, "_list_anomalies", _list)
+    monkeypatch.setattr(api, "_request_statuses", _statuses)
+    client, _ = _client()
+    [body] = client.get("/catalog-monitor/anomalies", params={"account_id": str(ACCOUNT_ID)}).json()
+    assert (body["status"], body["change_request_status"]) == ("restore_requested", "accepted")

@@ -143,6 +143,9 @@ class AnomalyOut(BaseModel):
     detected_at: datetime
     last_seen_at: datetime
     change_request_id: Optional[UUID] = None
+    # Status of the linked restore request: while it is pending, valid, file_only or
+    # approved the restore is in progress; otherwise accept and restore work again.
+    change_request_status: Optional[str] = None
 
 
 class AnomalyRestoreRequest(BaseModel):

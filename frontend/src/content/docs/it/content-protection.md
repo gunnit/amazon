@@ -24,7 +24,7 @@ Ogni differenza diventa una modifica da controllare, con il tipo di modifica: **
 | Ripristino richiesto | Esiste già una richiesta in Approvazioni |
 | Risolta | Il contenuto online è tornato uguale alla versione approvata |
 
-Una modifica si chiude da sola quando il contenuto torna uguale; non se ne apre una seconda per la stessa differenza.
+Una modifica si chiude da sola quando il contenuto torna uguale; non se ne apre una seconda per la stessa differenza. Finché la richiesta di ripristino è in Approvazioni (da verificare, validata, solo file o approvata) la modifica resta bloccata; quando la richiesta è stata inviata o si è chiusa e la scansione vede ancora la differenza, la modifica si può di nuovo accettare o ripristinare.
 
 ## Confronto affiancato
 
