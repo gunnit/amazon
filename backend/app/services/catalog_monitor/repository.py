@@ -86,10 +86,17 @@ class CatalogMonitorRepository:
 
     # ---- baselines ----
 
-    async def baselines(self, account_id: UUID) -> dict[str, ListingContentBaseline]:
-        result = await self.db.execute(
-            select(ListingContentBaseline).where(ListingContentBaseline.account_id == account_id)
-        )
+    async def baselines(
+        self, account_id: UUID, asins: Optional[list[str]] = None
+    ) -> dict[str, ListingContentBaseline]:
+        """Baselines of the account, or only of ``asins``: each holds a full content
+        payload, so callers working at catalogue scale pass the ASINs they need."""
+        stmt = select(ListingContentBaseline).where(ListingContentBaseline.account_id == account_id)
+        if asins is not None:
+            if not asins:
+                return {}
+            stmt = stmt.where(ListingContentBaseline.asin.in_(asins))
+        result = await self.db.execute(stmt)
         return {row.asin: row for row in result.scalars()}
 
     async def upsert_baseline(

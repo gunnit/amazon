@@ -177,8 +177,9 @@ class FakeRepo(CatalogMonitorRepository):
         rows.append(row)
         return row, True
 
-    async def baselines(self, account_id):
-        return dict(self.baseline_rows)
+    async def baselines(self, account_id, asins=None):
+        self.baseline_calls = getattr(self, "baseline_calls", []) + [asins]
+        return {a: r for a, r in self.baseline_rows.items() if asins is None or a in asins}
 
     async def family_baselines(self, account_id):
         return list(self.families)
@@ -394,7 +395,7 @@ async def test_scan_continues_after_one_failed_asin():
 
 
 @pytest.mark.asyncio
-async def test_catalog_calls_are_spaced_and_work_is_committed_every_25_products():
+async def test_catalog_calls_are_spaced_and_work_is_committed_per_product():
     account = _account()
     asins = [f"B0TEST{1000 + i}" for i in range(30)]
     repo = FakeRepo([_product(a) for a in asins])
@@ -405,7 +406,7 @@ async def test_catalog_calls_are_spaced_and_work_is_committed_every_25_products(
 
     assert summary.scanned == 30
     assert sleeps == [settings.CATALOG_SCAN_REQUEST_INTERVAL_S] * 29
-    assert db.commits == 2  # after product 25 and at the end
+    assert db.commits >= 30  # every product is committed on its own
     # one image download and one image_checks row per URL per scan, one PTD lookup per type
     assert fetch.calls == ["https://example.test/img/MAIN-1000.jpg"]
     assert sum(isinstance(o, ImageCheck) for o in db.added) == 1
@@ -872,3 +873,140 @@ def test_an_empty_switch_from_the_environment_means_off(monkeypatch):
     assert Settings().CATALOG_SCAN_ENABLED is False
     monkeypatch.setenv("CATALOG_SCAN_ENABLED", "true")
     assert Settings().CATALOG_SCAN_ENABLED is True
+
+
+# ---- memory and transactions at scale (final review) ----
+
+
+class _TxDb(FakeDb):
+    """Tracks whether a transaction is open: any statement opens one, commit closes it."""
+
+    def __init__(self):
+        super().__init__()
+        self.open = False
+        self.events: list = []
+
+    async def execute(self, stmt):
+        self.open = True
+        return await super().execute(stmt)
+
+    def add(self, obj):
+        self.open = True
+        super().add(obj)
+
+    async def commit(self):
+        self.open = False
+        self.events.append("commit")
+        await super().commit()
+
+    def begin_nested(self):
+        db = self
+
+        class _Nested(_Savepoint):
+            async def __aenter__(self):
+                db.open = True
+                return self
+
+        return _Nested()
+
+
+def _tracked_repo(repo, db):
+    """Every repository call runs in the session: it opens a transaction."""
+    for name in ("latest_versions", "save_version", "baselines", "family_baselines",
+                 "open_or_touch_anomaly", "resolve_anomaly", "save_quality_snapshot"):
+        method = getattr(repo, name)
+
+        def wrap(method=method, name=name):
+            async def call(*args, **kwargs):
+                db.open = True
+                if name == "save_version":
+                    db.events.append(("save", args[1]))
+                return await method(*args, **kwargs)
+            return call
+
+        setattr(repo, name, wrap())
+    return repo
+
+
+class _NoTxClient(FakeClient):
+    """Fails the test when Amazon is called while the session holds a transaction."""
+
+    def __init__(self, db, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.db = db
+        self.called_in_tx: list = []
+
+    def _check(self, name, key):
+        if self.db.open:
+            self.called_in_tx.append((name, key))
+        self.db.events.append((name, key))
+        super()._check(name, key)
+
+
+@pytest.mark.asyncio
+async def test_no_amazon_call_or_image_download_inside_a_transaction():
+    account = _account()
+    db = _TxDb()
+    parent = _fixture("catalog_parent")
+    parent["relationships"][0]["relationships"][0]["childAsins"] = ["B0TEST0001", "B0TEST0003"]
+    repo = _tracked_repo(FakeRepo(
+        [_product("B0TEST0001", sku="TEST-SKU-001"), _product("B0TEST0002"),
+         _product("B0TEST0004")],
+        capability=_capability(aplus_ok=True),
+        baselines={"B0TEST0001": _baseline(_child())},
+        families=[_family(["B0TEST0001", "B0TEST0002", "B0TEST0003"])],
+    ), db)
+    client = _NoTxClient(
+        db,
+        {"B0TEST0001": _child("B0TEST0001"), "B0TEST0002": _child("B0TEST0002", parents=()),
+         "B0TEST0003": _child("B0TEST0003"), "B0TEST0004": _vendor_item(), PARENT: parent},
+        listings={"TEST-SKU-001": _fixture("listing_seller")},
+        aplus={"B0TEST0001": 2},
+    )
+    downloads_in_tx: list = []
+    plain = _fetcher()
+
+    async def fetch(url):
+        if db.open:
+            downloads_in_tx.append(url)
+        return await plain(url)
+
+    summary = await _service(repo, client, fetch=fetch, db=db).scan_account(account)
+
+    assert (summary.scanned, summary.failed) == (3, 0) and summary.anomalies_opened == 1
+    assert client.count("ptd") >= 1 and len(plain.calls) >= 1
+    assert client.called_in_tx == [] and downloads_in_tx == []
+    # each product's work is committed before the next product's first Amazon call
+    for index, event in enumerate(db.events):
+        if isinstance(event, tuple) and event[0] == "save":
+            following = db.events[index + 1:]
+            nxt = next((e for e in following if e == "commit" or e[0] == "catalog"), None)
+            assert nxt == "commit", (event, nxt)
+
+
+@pytest.mark.asyncio
+async def test_baselines_are_loaded_one_product_at_a_time_and_families_keep_no_content():
+    account = _account()
+    repo = FakeRepo(
+        [_product("B0TEST0001"), _product("B0TEST0002")],
+        baselines={"B0TEST0001": _baseline(_child()), "B0TEST0002": _baseline(_child("B0TEST0002"))},
+        families=[_family(["B0TEST0001", "B0TEST0002"])],
+    )
+    client = FakeClient({"B0TEST0001": _child(), "B0TEST0002": _child("B0TEST0002"),
+                         PARENT: _fixture("catalog_parent")})
+    seen = {}
+
+    class _Spy(CatalogScanService):
+        async def _check_families(self, run, scanned, subset):
+            seen["live"] = dict(run.live)
+            return await super()._check_families(run, scanned, subset)
+
+    service = _Spy(FakeDb(), repo=repo, client_factory=lambda a, o: client,
+                   image_fetch=_fetcher(), sleep=lambda _s: None, today=lambda: DAY)
+    await service.scan_account(account)
+
+    assert repo.baseline_calls and all(len(c) == 1 for c in repo.baseline_calls)
+    assert sorted(c[0] for c in repo.baseline_calls) == ["B0TEST0001", "B0TEST0002"]
+    for value in seen["live"].values():
+        assert isinstance(value, scanner.FamilyView)
+    assert seen["live"]["B0TEST0001"].parent_asins == (PARENT,)

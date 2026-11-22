@@ -16,8 +16,11 @@ evaluation as a ``ListingQualitySnapshot``, and opens, touches or resolves:
   An ASIN whose Catalog payload came without relationships, or could not be
   read, is unknown: it neither opens nor resolves a variation anomaly.
 
-A product that fails is counted and the scan moves on (each product runs in a
-savepoint). ``run_catalog_scan_all`` (scheduler; only with CATALOG_SCAN_ENABLED,
+A product that fails is counted and the scan moves on: each product's writes run
+in a savepoint and are committed at once, and no Amazon call or image download
+happens while a transaction is open. Only light family data is kept per ASIN
+until the family pass, and baselines are read product by product, so memory does
+not grow with the catalogue. ``run_catalog_scan_all`` (scheduler; only with CATALOG_SCAN_ENABLED,
 for CATALOG_SCAN_ACCOUNT_IDS) and ``start_account_scan`` ("Scan now", background
 thread, always available) never raise; their state lives in process memory,
 keyed by account id.
@@ -53,9 +56,14 @@ from app.services.catalog_monitor.content import (
     with_aplus,
 )
 from app.services.catalog_monitor.diff import diff_content, diff_family
-from app.services.catalog_monitor.images import ImageAnalysis, get_image_analysis
+from app.services.catalog_monitor.images import (
+    ImageAnalysis,
+    cached_image_analysis,
+    download_and_analyze,
+    store_image_analysis,
+)
 from app.services.catalog_monitor.keywords import resolve_main_keywords
-from app.services.catalog_monitor.ptd import ProductTypeDefinitionService
+from app.services.catalog_monitor.ptd import ProductTypeDefinitionService, fetch_definition
 from app.services.catalog_monitor.repository import CatalogMonitorRepository
 from app.services.catalog_monitor.rule_config import resolve_rule_configs
 from app.services.catalog_monitor.rules import RuleContext, evaluate_listing
@@ -68,7 +76,6 @@ from app.services.extraction_runner import (
 
 logger = logging.getLogger(__name__)
 
-COMMIT_EVERY = 25
 MAX_RECORDED_ERRORS = 50
 CONTENT_CHANGED = "content_changed"
 VARIATION_KINDS = frozenset(
@@ -104,6 +111,25 @@ class ScanSummary:
         return data
 
 
+@dataclass(frozen=True)
+class FamilyView:
+    """What the variation check needs of an ASIN's live content, and nothing more.
+
+    Kept for every scanned ASIN until the family pass: a full ``ListingContent``
+    (10-30 KB of Catalog data each) would grow with the catalogue.
+    """
+
+    parent_asins: tuple[str, ...]
+    child_asins: tuple[str, ...]
+    variation_theme: Optional[str]
+
+
+def family_view(content: ListingContent) -> FamilyView:
+    return FamilyView(
+        tuple(content.parent_asins), tuple(content.child_asins), content.variation_theme
+    )
+
+
 @dataclass
 class _Run:
     """Per-scan state shared by the product loop and the family pass."""
@@ -115,16 +141,37 @@ class _Run:
     aplus_ok: bool
     keywords: dict[str, str]
     overrides: list
-    baselines: dict
     now: datetime
     day: date
     summary: ScanSummary
     # asin -> {(kind, field): anomaly}, loaded once per scan
     open: dict[str, dict[tuple[str, str], Any]]
-    # content used for variation decisions; None = unknown
-    live: dict[str, Optional[ListingContent]] = field(default_factory=dict)
+    # family data used for variation decisions; None = unknown
+    live: dict[str, Optional[FamilyView]] = field(default_factory=dict)
     images: dict[str, ImageAnalysis] = field(default_factory=dict)
     required: dict[str, Optional[list[str]]] = field(default_factory=dict)
+
+
+@dataclass
+class _Fetched:
+    """One product's Amazon answers, read before any transaction is opened."""
+
+    content: ListingContent
+    relationships_known: bool
+    listing_fetched: bool
+    aplus_fetched: bool
+
+
+@dataclass
+class _Lookups:
+    """What the database already knows about a product, read in one short transaction."""
+
+    baseline: Optional[ListingContent]
+    image_url: Optional[str]
+    image: Optional[ImageAnalysis]  # cached analysis; None = download needed (or no image)
+    product_type: Optional[str]
+    required: Optional[list[str]]  # fresh or stale cache; None = unknown
+    required_fresh: bool
 
 
 def _index_open(rows: dict[tuple[str, str, str], Any]) -> dict[str, dict[tuple[str, str], Any]]:
@@ -139,7 +186,23 @@ def _aplus_ok(capability: Any) -> bool:
     return bool((results.get("aplus") or {}).get("ok"))
 
 
+def _main_image_url(content: ListingContent) -> Optional[str]:
+    if not content.images or content.images[0].variant != "MAIN":
+        return None
+    return content.images[0].url
+
+
 class CatalogScanService:
+    """Scans an account product by product.
+
+    Each product runs in three steps so that no SP-API call or image download
+    happens while a database transaction is open: Amazon (Catalog, Listings,
+    A+), then the stored data it needs (previous version, baseline, image and
+    product type caches) in one short read, then the missing product type
+    definition and image download, then the writes in a savepoint, committed at
+    once. The family pass works the same way.
+    """
+
     def __init__(
         self,
         db,
@@ -155,10 +218,11 @@ class CatalogScanService:
         self.image_fetch = image_fetch
         self.sleep = sleep
         self.today = today
+        self.ptd = ProductTypeDefinitionService(db)
         self._catalog_calls = 0
 
     async def scan_account(self, account, asins: Optional[list[str]] = None) -> ScanSummary:
-        """Scan the account's active products (or only ``asins``); commits as it goes."""
+        """Scan the account's active products (or only ``asins``); commits product by product."""
         organization = await load_organization(self.db, account)
         client = self.client_factory(account, organization)
         capability = await self.repo.capability(account.id)
@@ -175,7 +239,6 @@ class CatalogScanService:
             aplus_ok=_aplus_ok(capability),
             keywords=await resolve_main_keywords(self.db, account.id, products),
             overrides=await self.repo.rule_overrides(account.organization_id),
-            baselines=await self.repo.baselines(account.id),
             now=datetime.now(timezone.utc),
             day=self.today(),
             summary=ScanSummary(account_id=account.id),
@@ -183,10 +246,8 @@ class CatalogScanService:
         )
         self._catalog_calls = 0
 
-        for done, product in enumerate(products, start=1):
+        for product in products:
             await self._scan_product(run, product)
-            if done % COMMIT_EVERY == 0:
-                await self.db.commit()
         await self._check_families(
             run, scanned={p.asin for p in products}, subset=asins is not None
         )
@@ -207,21 +268,29 @@ class CatalogScanService:
         asin = product.asin
         writing = False
         try:
+            await self.db.commit()  # no transaction stays open while Amazon answers
+            fetched = self._fetch_live(run, product)
             async with self.db.begin_nested():
-                content, relationships_known = await self._live_content(run, product)
-                configs = resolve_rule_configs(
-                    run.overrides, run.marketplace_id, content.product_type
-                )
-                ctx = RuleContext(
-                    main_keyword=run.keywords.get(asin),
-                    required_attributes=await self._required_attributes(run, content.product_type),
-                    main_image=await self._main_image(run, content),
-                )
-                evaluation = evaluate_listing(content, ctx, configs)
-                writing = True
+                content = await self._with_previous(run, asin, fetched)
+                lookups = await self._lookups(run, asin, content)
+            await self.db.commit()
+            image, required, definition = await self._fetch_missing(run, lookups)
+            configs = resolve_rule_configs(run.overrides, run.marketplace_id, content.product_type)
+            ctx = RuleContext(
+                main_keyword=run.keywords.get(asin),
+                required_attributes=required,
+                main_image=image,
+            )
+            evaluation = evaluate_listing(content, ctx, configs)
+            writing = True
+            async with self.db.begin_nested():
+                await self._store_fetched(run, lookups, definition)
                 _, is_new = await self.repo.save_version(run.account.id, asin, content, run.now)
                 await self.repo.save_quality_snapshot(run.account.id, asin, evaluation, run.day)
-                opened, resolved = await self._sync_content_anomalies(run, asin, content)
+                opened, resolved = await self._sync_content_anomalies(
+                    run, asin, content, lookups.baseline
+                )
+            await self.db.commit()
         except Exception as exc:  # noqa: BLE001 - one product never stops the scan
             run.live[asin] = None
             run.summary.failed += 1
@@ -237,7 +306,7 @@ class CatalogScanService:
         run.summary.new_versions += int(is_new)
         run.summary.anomalies_opened += opened
         run.summary.anomalies_resolved += resolved
-        run.live[asin] = content if relationships_known else None
+        run.live[asin] = family_view(content) if fetched.relationships_known else None
 
     def _catalog_item(self, client, asin: str) -> dict:
         """One Catalog Items call, spaced from the previous one to respect the rate limit."""
@@ -249,12 +318,13 @@ class CatalogScanService:
             raise LookupError("Catalog Items returned no item")
         return payload
 
-    async def _live_content(self, run: _Run, product) -> tuple[ListingContent, bool]:
-        """Today's content, and whether the Catalog payload included relationships."""
+    def _fetch_live(self, run: _Run, product) -> _Fetched:
+        """Today's Amazon content: Catalog, then Listings and A+ when available. No database."""
         asin = product.asin
         payload = self._catalog_item(run.client, asin)
         relationships_known = "relationships" in payload
         content = content_from_catalog(payload, run.marketplace_id)
+        del payload
         if not content.asin:
             content = replace(content, asin=asin)
 
@@ -277,11 +347,16 @@ class CatalogScanService:
                 aplus_fetched = True
             except Exception as exc:  # noqa: BLE001 - keep the previous A+ fields
                 logger.info("A+ publish records unavailable for %s: %s", asin, exc)
+        return _Fetched(content, relationships_known, listing_fetched, aplus_fetched)
 
+    async def _with_previous(self, run: _Run, asin: str, fetched: _Fetched) -> ListingContent:
+        """Today's content with what a failed call could not supply taken from the last version."""
         latest = (await self.repo.latest_versions(run.account.id, [asin])).get(asin)
         previous = content_from_dict(latest.content) if latest is not None else None
-        content = carry_forward(content, previous, listing_fetched, aplus_fetched)
-        if not relationships_known and previous is not None:
+        content = carry_forward(
+            fetched.content, previous, fetched.listing_fetched, fetched.aplus_fetched
+        )
+        if not fetched.relationships_known and previous is not None:
             # A partial payload says nothing about the family: keep the stored one.
             content = replace(
                 content,
@@ -289,36 +364,71 @@ class CatalogScanService:
                 child_asins=list(previous.child_asins),
                 variation_theme=previous.variation_theme,
             )
-        return content, relationships_known
+        return content
 
-    async def _main_image(self, run: _Run, content: ListingContent) -> Optional[ImageAnalysis]:
-        if not content.images or content.images[0].variant != "MAIN":
-            return None
-        url = content.images[0].url
-        if url not in run.images:  # one download and one image_checks row per URL per scan
-            run.images[url] = await get_image_analysis(self.db, url, fetch=self.image_fetch)
-        return run.images[url]
+    async def _lookups(self, run: _Run, asin: str, content: ListingContent) -> _Lookups:
+        baseline_row = (await self.repo.baselines(run.account.id, [asin])).get(asin)
+        url = _main_image_url(content)
+        image = None
+        if url is not None:
+            # one download and one image_checks row per URL per scan
+            image = run.images.get(url) or await cached_image_analysis(self.db, url)
+        product_type = content.product_type
+        required, fresh = None, True
+        if product_type and product_type not in run.required:
+            row = await self.ptd.cached_row(run.marketplace_id, product_type)
+            fresh = self.ptd.is_fresh(row)
+            required = list(row.required_attributes) if row is not None else None
+        elif product_type:
+            required = run.required[product_type]
+        return _Lookups(
+            baseline=content_from_dict(baseline_row.content) if baseline_row is not None else None,
+            image_url=url,
+            image=image,
+            product_type=product_type,
+            required=required,
+            required_fresh=fresh,
+        )
 
-    async def _required_attributes(
-        self, run: _Run, product_type: Optional[str]
-    ) -> Optional[list[str]]:
-        if not product_type:
-            return None
-        if product_type not in run.required:
-            try:
-                run.required[product_type] = await ProductTypeDefinitionService(
-                    self.db
-                ).required_attributes(run.client, run.marketplace_id, product_type)
-            except Exception as exc:  # noqa: BLE001 - attributes light turns grey
-                logger.warning("Product type %s requirements unavailable: %s", product_type, exc)
-                run.required[product_type] = None
-        return run.required[product_type]
+    async def _fetch_missing(
+        self, run: _Run, lookups: _Lookups
+    ) -> tuple[Optional[ImageAnalysis], Optional[list[str]], Optional[tuple[list[str], list[str]]]]:
+        """Main image analysis, required attributes, and a newly fetched product type
+        definition (to store), downloading only what no cache held. No database."""
+        image = lookups.image
+        if lookups.image_url is not None:
+            if image is None:
+                image = await download_and_analyze(lookups.image_url, self.image_fetch)
+            run.images[lookups.image_url] = image
+
+        definition = None
+        required = lookups.required
+        product_type = lookups.product_type
+        if product_type and product_type not in run.required:
+            if not lookups.required_fresh:
+                try:
+                    definition = fetch_definition(run.client, product_type)
+                    required = definition[0]
+                except Exception as exc:  # noqa: BLE001 - stale cache, else a grey light
+                    logger.warning(
+                        "Product type %s requirements unavailable: %s", product_type, exc
+                    )
+            run.required[product_type] = required
+        return image, required, definition
+
+    async def _store_fetched(
+        self, run: _Run, lookups: _Lookups, definition: Optional[tuple[list[str], list[str]]]
+    ) -> None:
+        """Cache rows for what ``_fetch_missing`` downloaded for this product."""
+        if lookups.image_url is not None and lookups.image is None:
+            await store_image_analysis(self.db, lookups.image_url, run.images[lookups.image_url])
+        if definition is not None and lookups.product_type:
+            await self.ptd.store(run.marketplace_id, lookups.product_type, *definition)
 
     async def _sync_content_anomalies(
-        self, run: _Run, asin: str, content: ListingContent
+        self, run: _Run, asin: str, content: ListingContent, baseline: Optional[ListingContent]
     ) -> tuple[int, int]:
-        baseline = run.baselines.get(asin)
-        changes = diff_content(content_from_dict(baseline.content), content) if baseline else []
+        changes = diff_content(baseline, content) if baseline is not None else []
         rows = run.open.setdefault(asin, {})
         opened = resolved = 0
         current: set[str] = set()
@@ -349,14 +459,19 @@ class CatalogScanService:
         for family in await self.repo.family_baselines(run.account.id):
             parent = family.parent_asin
             children = [c for c in family.child_asins or [] if c]
+            theme = family.variation_theme
             if subset and parent not in scanned and not scanned.intersection(children):
                 continue
             try:
+                await self.db.commit()  # members outside the scan are read with no transaction open
+                for asin in (parent, *children):
+                    if asin not in run.live:
+                        run.live[asin] = self._relationships_only(run, asin)
                 async with self.db.begin_nested():
                     opened, resolved = await self._check_family(
-                        run, parent, family.variation_theme, children,
-                        by_family.get(family_field(parent), []),
+                        run, parent, theme, children, by_family.get(family_field(parent), [])
                     )
+                await self.db.commit()
             except Exception as exc:  # noqa: BLE001 - one family never stops the scan
                 run.summary.record_error(f"family {parent}", exc)
                 logger.warning("Variation check of %s failed: %s", parent, exc)
@@ -364,8 +479,8 @@ class CatalogScanService:
             run.summary.anomalies_opened += opened
             run.summary.anomalies_resolved += resolved
 
-    def _relationships_only(self, run: _Run, asin: str) -> Optional[ListingContent]:
-        """Content of an ASIN outside the scanned set, for variation decisions only."""
+    def _relationships_only(self, run: _Run, asin: str) -> Optional[FamilyView]:
+        """Family data of an ASIN outside the scanned set, for variation decisions only."""
         try:
             payload = self._catalog_item(run.client, asin)
         except Exception as exc:  # noqa: BLE001 - unknown, not detached
@@ -373,7 +488,7 @@ class CatalogScanService:
             return None
         if "relationships" not in payload:
             return None
-        return content_from_catalog(payload, run.marketplace_id)
+        return family_view(content_from_catalog(payload, run.marketplace_id))
 
     async def _check_family(
         self,
@@ -383,9 +498,7 @@ class CatalogScanService:
         children: list[str],
         open_rows: list[tuple[str, str, Any]],
     ) -> tuple[int, int]:
-        for asin in (parent, *children):
-            if asin not in run.live:
-                run.live[asin] = self._relationships_only(run, asin)
+        """Open, touch or resolve the family's anomalies; every member is already in run.live."""
         live_parent = run.live.get(parent)
         findings = diff_family(
             parent, theme, children, live_parent, {c: run.live.get(c) for c in children}

@@ -109,28 +109,39 @@ def _age_exceeds(checked_at: Optional[datetime], limit: timedelta) -> bool:
     return datetime.now(timezone.utc) - checked_at > limit
 
 
-async def get_image_analysis(
-    db, url: str, fetch: Optional[Callable[[str], Awaitable[bytes]]] = None
-) -> ImageAnalysis:
-    """Cached analysis of ``url``. Does not commit; the caller owns the transaction."""
-    key = url_hash(url)
-    row = (
-        await db.execute(select(ImageCheck).where(ImageCheck.url_hash == key))
-    ).scalar_one_or_none()
-    if row is not None:
-        # Amazon image URLs are immutable, so a good result never expires;
-        # failures are retried after a day.
-        if row.error is None or not _age_exceeds(row.checked_at, ERROR_RETRY_AFTER):
-            return _from_row(row)
+async def cached_image_analysis(db, url: str) -> Optional[ImageAnalysis]:
+    """The stored analysis of ``url``, or None when it must be downloaded (again).
 
+    Amazon image URLs are immutable, so a good result never expires; failures
+    are retried after a day.
+    """
+    row = (
+        await db.execute(select(ImageCheck).where(ImageCheck.url_hash == url_hash(url)))
+    ).scalar_one_or_none()
+    if row is not None and (row.error is None or not _age_exceeds(row.checked_at, ERROR_RETRY_AFTER)):
+        return _from_row(row)
+    return None
+
+
+async def download_and_analyze(
+    url: str, fetch: Optional[Callable[[str], Awaitable[bytes]]] = None
+) -> ImageAnalysis:
+    """Download and analyse ``url``; no database. A failed download is an error result."""
     try:
         data = await (fetch or _default_fetch)(url)
         if len(data) > MAX_DOWNLOAD_BYTES:
             raise ValueError("image too large")
-        result = analyze_main_image(data)
+        return analyze_main_image(data)
     except Exception:  # noqa: BLE001 - any download failure is a grey rule, never a crash
-        result = ImageAnalysis(False, 0.0, 0, 0, error="download_failed")
+        return ImageAnalysis(False, 0.0, 0, 0, error="download_failed")
 
+
+async def store_image_analysis(db, url: str, result: ImageAnalysis) -> None:
+    """Insert or refresh the ``image_checks`` row of ``url``. Does not commit."""
+    key = url_hash(url)
+    row = (
+        await db.execute(select(ImageCheck).where(ImageCheck.url_hash == key))
+    ).scalar_one_or_none()
     if row is None:
         row = ImageCheck(url_hash=key, url=url)
         db.add(row)
@@ -140,4 +151,19 @@ async def get_image_analysis(
     row.height = result.height
     row.error = result.error
     row.checked_at = datetime.now(timezone.utc)
+
+
+async def get_image_analysis(
+    db, url: str, fetch: Optional[Callable[[str], Awaitable[bytes]]] = None
+) -> ImageAnalysis:
+    """Cached analysis of ``url``. Does not commit; the caller owns the transaction.
+
+    The scan uses the three steps separately, so that no download happens while
+    its transaction is open.
+    """
+    cached = await cached_image_analysis(db, url)
+    if cached is not None:
+        return cached
+    result = await download_and_analyze(url, fetch)
+    await store_image_analysis(db, url, result)
     return result
