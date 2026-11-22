@@ -102,3 +102,42 @@ def test_probe_uses_sample_product_type_and_fetches_catalog_once():
     probe_capabilities(client, _account(), "B0TEST0001", "TEST-SKU-001")
     assert ("ptd", ("TESTTYPE",)) in client.calls
     assert [c for c in client.calls if c[0] == "catalog"] == [("catalog", ("B0TEST0001",))]
+
+
+def test_the_access_check_probes_amazon_off_the_event_loop():
+    import asyncio
+
+    from app.services.catalog_monitor.capabilities import check_account_capabilities
+
+    class _Result:
+        def scalar_one_or_none(self):
+            return None
+
+    class _Db:
+        def __init__(self):
+            self.added = []
+
+        async def execute(self, _stmt):
+            return _Result()
+
+        def add(self, obj):
+            self.added.append(obj)
+
+        async def flush(self):
+            pass
+
+    class LoopCheckingClient(FakeClient):
+        def list_recent_feeds(self, page_size=1):
+            try:
+                asyncio.get_running_loop()
+                self.on_loop = True
+            except RuntimeError:
+                self.on_loop = False
+            return super().list_recent_feeds(page_size)
+
+    client = LoopCheckingClient()
+    account = SimpleNamespace(id="acc", organization_id="org", account_type=AccountType.SELLER,
+                              seller_id="SELLER1")
+    row = asyncio.run(check_account_capabilities(_Db(), account, lambda a, o: client))
+    assert set(row.results) == set(CAPABILITY_KEYS)
+    assert client.on_loop is False  # five blocking SP-API probes never stall the API

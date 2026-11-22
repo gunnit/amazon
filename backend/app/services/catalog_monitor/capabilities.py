@@ -5,6 +5,7 @@ Vendor account without Listings access is reported rather than breaking the scan
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -125,7 +126,8 @@ async def check_account_capabilities(
     organization = await load_organization(db, account)
     client = client_factory(account, organization)
     asin, sku = await _pick_sample(db, account.id)
-    results, vendor_code = probe_capabilities(client, account, asin, sku)
+    # Five blocking SP-API calls, each with throttle retries: off the event loop.
+    results, vendor_code = await asyncio.to_thread(probe_capabilities, client, account, asin, sku)
     return await CatalogMonitorRepository(db).save_capability(
         account.id, results, vendor_code, datetime.now(timezone.utc)
     )

@@ -822,9 +822,11 @@ export const catalogMonitorApi = {
   },
 
   checkCapabilities: async (accountId: string): Promise<CatalogCapabilities> => {
-    const response = await api.post('/catalog-monitor/capabilities/check', {
-      account_id: accountId,
-    })
+    const response = await api.post(
+      '/catalog-monitor/capabilities/check',
+      { account_id: accountId },
+      { timeout: LONG_TIMEOUT_MS }, // five Amazon probes, each may wait out throttling
+    )
     return response.data
   },
 

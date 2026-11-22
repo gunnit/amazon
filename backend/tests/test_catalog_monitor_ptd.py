@@ -141,3 +141,25 @@ async def test_api_failure_returns_stale_cache():
     client = FakeClient(exc=AmazonAPIError("boom"))
     out = await ProductTypeDefinitionService(db).required_attributes(client, MKT, "TESTTYPE")
     assert out == ["brand", "color"]
+
+
+def _on_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+@pytest.mark.asyncio
+async def test_amazon_calls_run_off_the_event_loop():
+    class LoopCheckingClient(FakeClient):
+        def get_product_type_definition(self, product_type, seller_id=None, locale="it_IT"):
+            self.on_loop = _on_event_loop()
+            return super().get_product_type_definition(product_type, seller_id, locale)
+
+    client = LoopCheckingClient(schema=SCHEMA)
+    assert await ProductTypeDefinitionService(FakeDb()).required_attributes(client, MKT, "T")
+    assert client.on_loop is False  # a blocking SP-API call never stalls the API

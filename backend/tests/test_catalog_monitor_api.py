@@ -1542,3 +1542,65 @@ def test_accepting_an_anomaly_requires_admin(monkeypatch):
     client, _ = _client(db=_FakeDb(row=(ORG, UserRole.MEMBER)), admin=False)
     res = client.post(f"/catalog-monitor/anomalies/{anomaly.id}/accept")
     assert res.status_code == 403 and accepted == []
+
+
+# ---- final review: xlsx work off the event loop ----
+
+
+def _on_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def _spy(monkeypatch, name):
+    """Wrap an api module function; records whether each call ran on the event loop."""
+    original = getattr(api, name)
+    seen: list[bool] = []
+
+    def wrapper(*args, **kwargs):
+        seen.append(_on_event_loop())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(api, name, wrapper)
+    return seen
+
+
+def test_upload_parsing_runs_off_the_event_loop(monkeypatch, bulk_account):
+    _bulk_fakes(monkeypatch, [_product("B0TEST0001")], {"B0TEST0001": _live("B0TEST0001")})
+    seen = _spy(monkeypatch, "parse_upload")
+    client, _ = _client()
+    assert _upload(client, _xlsx(["asin", "title"], [["B0TEST0001", "Nuovo"]])).status_code == 200
+    assert seen == [False]
+
+
+def test_new_item_parsing_and_template_run_off_the_event_loop(monkeypatch, bulk_account):
+    _bulk_fakes(monkeypatch, [], {})
+    _ptd(monkeypatch, ["brand"])
+    parsed = _spy(monkeypatch, "parse_new_items")
+    built = _spy(monkeypatch, "build_new_item_template")
+    client, _ = _client()
+    data = _xlsx(["sku", "product_type", "brand"], [["TEST-NEW-001", "HOME", "TESTBRAND"]])
+    assert client.post("/catalog-monitor/new-items/upload", data={"account_id": str(ACCOUNT_ID)},
+                       files={"file": ("n.xlsx", data, XLSX)}).status_code == 200
+    assert client.get("/catalog-monitor/new-items/template",
+                      params={"account_id": str(ACCOUNT_ID), "product_type": "HOME"}).status_code == 200
+    assert (parsed, built) == ([False], [False])
+
+
+def test_quality_export_is_built_off_the_event_loop(monkeypatch, known_account):
+    async def _load(db, account_id, search=None, asin=None):
+        return [{"asin": "B0TEST0001", "sku": "S", "title": "T", "score": 90,
+                 "components": {"state": "green", "score": 90, "results": []}}]
+
+    monkeypatch.setattr(api, "_load_quality_rows", _load)
+    seen = _spy(monkeypatch, "build_quality_workbook")
+    client, _ = _client()
+    res = client.get("/catalog-monitor/quality/export", params={"account_id": str(ACCOUNT_ID)})
+    assert res.status_code == 200 and seen == [False]
+    ws = load_workbook(io.BytesIO(res.content))["quality"]
+    assert [c.value for c in ws[2]][:5] == ["B0TEST0001", "S", "T", "green", 90]

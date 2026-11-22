@@ -439,6 +439,36 @@ async def get_quality(
     )
 
 
+def build_quality_workbook(items: list[dict]) -> bytes:
+    """One row per ASIN, worst first: overall state and score, then state and code per rule."""
+    from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
+    from openpyxl.styles import Font
+
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("quality")
+    ws.freeze_panes = "A2"
+    header = ["asin", "sku", "title", "state", "score"]
+    for key in RULE_KEYS:
+        header += [f"{key}_state", f"{key}_code"]
+    bold = []
+    for name in header:
+        cell = WriteOnlyCell(ws, value=name)
+        cell.font = Font(bold=True)
+        bold.append(cell)
+    ws.append(bold)
+    for item in sort_items(items):
+        by_key = {r["key"]: r for r in item["results"]}
+        row = [item["asin"], item["sku"], item["title"], item["state"], item["score"]]
+        for key in RULE_KEYS:
+            r = by_key.get(key)
+            row += [r["state"], r["code"]] if r else [None, None]
+        ws.append(row)
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
 @router.get("/quality/export")
 async def export_quality(
     current_user: CurrentUser,
@@ -447,33 +477,11 @@ async def export_quality(
     account_id: UUID,
 ):
     """One row per ASIN: overall state and score, then state and code for every rule."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font
-
     await _account_or_404(db, organization.id, account_id)
     items, _ = split_scanned(await _load_quality_rows(db, account_id))
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "quality"
-    header = ["asin", "sku", "title", "state", "score"]
-    for key in RULE_KEYS:
-        header += [f"{key}_state", f"{key}_code"]
-    ws.append(header)
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-    for item in sort_items(items):
-        by_key = {r["key"]: r for r in item["results"]}
-        row = [item["asin"], item["sku"], item["title"], item["state"], item["score"]]
-        for key in RULE_KEYS:
-            r = by_key.get(key)
-            row += [r["state"], r["code"]] if r else [None, None]
-        ws.append(row)
-    ws.freeze_panes = "A2"
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
+    content = await asyncio.to_thread(build_quality_workbook, items)
     return StreamingResponse(
-        buffer,
+        iter([content]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="listing_quality.xlsx"'},
     )
@@ -1590,9 +1598,10 @@ async def _read_upload(file: UploadFile) -> tuple[bytes, str]:
     return data, name
 
 
-def _parse_file(parser, data: bytes, name: str):
+async def _parse_file(parser, data: bytes, name: str):
+    """Parse an upload in a worker thread: a large xlsx would stall the event loop."""
     try:
-        return parser(data, name)
+        return await asyncio.to_thread(parser, data, name)
     except Exception as exc:  # noqa: BLE001 - corrupt xlsx, bad encoding, odd csv: all 422
         logger.warning("Unreadable bulk upload %r: %s", name, type(exc).__name__)
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, _UNREADABLE_FILE) from exc
@@ -1703,7 +1712,7 @@ async def upload_bulk(
         await get_admin_organization(current_user, db)
     account = await _account_or_404(db, organization.id, account_id)
     data, name = await _read_upload(file)
-    parsed = _parse_file(parse_upload, data, name)
+    parsed = await _parse_file(parse_upload, data, name)
     products = await _account_products(db, account.id)
     skus = {row.sku for row in parsed if row.sku}
     named = {row.asin for row in parsed if row.asin} | {p.asin for p in products if p.sku in skus}
@@ -1771,7 +1780,7 @@ async def new_items_template(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, _PTD_UNAVAILABLE)
     await db.commit()  # keeps the definition cache row
     recommended = list(DEFAULT_RULES["attributes"].params["recommended_attributes"])
-    content = build_new_item_template(product_type, required, recommended)
+    content = await asyncio.to_thread(build_new_item_template, product_type, required, recommended)
     return _xlsx_response(content, f"nuovi-articoli-{product_type}.xlsx")
 
 
@@ -1786,7 +1795,7 @@ async def upload_new_items(
     """New items: one validated PUT request per row that fills the required attributes."""
     account = await _account_or_404(db, organization.id, account_id)
     data, name = await _read_upload(file)
-    parsed = _parse_file(parse_new_items, data, name)
+    parsed = await _parse_file(parse_new_items, data, name)
     existing_skus = {p.sku for p in await _account_products(db, account.id) if p.sku}
     existing_skus |= await _live_skus(db, account.id)
     required_by_type: dict[str, Optional[list[str]]] = {}
