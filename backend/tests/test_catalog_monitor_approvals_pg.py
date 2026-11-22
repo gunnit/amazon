@@ -100,3 +100,44 @@ async def test_marked_upload_persists_as_submitted(db, account):
     await db.flush()
     await db.refresh(row)
     assert row.status == "submitted" and row.submission_result["manual"] is True
+
+
+
+@pytest.mark.asyncio
+async def test_failed_baseline_update_does_not_undo_the_accepted_submission(db, account, monkeypatch):
+    from sqlalchemy import select
+
+    from app.models.catalog_monitor import CatalogChangeRequest, ListingContentBaseline
+    from app.services.catalog_monitor import changes
+
+    class _Accepting:
+        def patch_listing(self, seller_id, sku, product_type, patches, mode=None):
+            status = "VALID" if mode else "ACCEPTED"
+            return {"status": status, "issues": [], "submissionId": "s1"}
+
+    async def _half_written(repo, account_id, requests):
+        repo.db.add(ListingContentBaseline(
+            account_id=account_id, asin="B0TEST0003", content={}, source="live_snapshot",
+        ))
+        await repo.db.flush()
+        raise RuntimeError("baseline update failed after a write")
+
+    monkeypatch.setattr(changes, "apply_accepted_changes", _half_written)
+    service = ChangeRequestService(db, client_factory=lambda acc, org: _Accepting())
+    item = ChangeItem(
+        asin="B0TEST0003", sku="TEST-SKU-003", product_type="LUGGAGE", kind="bulk_update",
+        patches=[{"op": "replace", "path": "/attributes/item_name", "value": []}],
+    )
+    [row] = await service.create(account, [item], None)
+    await service.validate(account, [row])
+    await service.approve([row], None, True)
+    await service.submit(account, [row])
+
+    stored = (await db.execute(
+        select(CatalogChangeRequest.status).where(CatalogChangeRequest.id == row.id)
+    )).scalar_one()
+    assert stored == "accepted"  # Amazon accepted it: the record must survive
+    leftover = (await db.execute(select(ListingContentBaseline).where(
+        ListingContentBaseline.account_id == account.id
+    ))).scalars().all()
+    assert leftover == []  # the half-written baseline update was rolled back

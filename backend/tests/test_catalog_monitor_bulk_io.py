@@ -347,3 +347,33 @@ def test_limits_apply_only_to_cells_that_differ_from_live():
     ]), "u.xlsx")[0]
     errors = " ".join(bulk_io.upload_errors(changed, live))
     assert "item_highlights" in errors and "bullet_2" in errors
+
+
+# ---- formula injection (final review) ----
+
+FORMULA = '=HYPERLINK("http://evil.test","clic")'
+
+
+def test_export_writes_amazon_text_as_text_never_as_a_formula():
+    live = _content(title=FORMULA, bullets=["+1+1", "-2", "@SUM(A1)", "Bullet cinque"],
+                    attributes={"color": _val("=1+1")})
+    data = build_export_workbook([(_product(), live)])
+    ws = load_workbook(io.BytesIO(data))["Catalogo"]
+    headers = [c.value for c in ws[1]]
+    cells = dict(zip(headers, ws[2]))
+    for column, text in [("title", FORMULA), ("bullet_1", "+1+1"), ("bullet_3", "@SUM(A1)"),
+                         ("attr:color", "=1+1")]:
+        assert (cells[column].data_type, cells[column].value) == ("s", text), column
+    # the text survives the round trip unchanged: no change request from an untouched file
+    [row] = parse_upload(data, "catalogo.xlsx")
+    assert row_to_change_item(row, live, MKT) is None
+
+
+def test_new_item_template_writes_names_as_text():
+    data = bulk_io.build_new_item_template("=TYPE", ["=brand"], ["color"])
+    wb = load_workbook(io.BytesIO(data))
+    header = wb["Nuovi articoli"][1]
+    assert [(c.value, c.data_type) for c in header][:3] == [
+        ("sku", "s"), ("product_type", "s"), ("=brand", "s")
+    ]
+    assert all(c.data_type == "s" for row in wb["Istruzioni"].iter_rows() for c in row if c.value)

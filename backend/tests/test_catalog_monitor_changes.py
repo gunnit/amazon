@@ -136,10 +136,26 @@ class FakeRepo(CatalogMonitorRepository):
         ]
 
 
+class _Savepoint:
+    def __init__(self, db):
+        self.db = db
+
+    async def __aenter__(self):
+        self.db.savepoints += 1
+        return self
+
+    async def __aexit__(self, *exc):
+        return False  # a failure inside propagates, as with a real savepoint
+
+
 class FakeDb:
     def __init__(self):
         self.added: list = []
         self.commits = 0
+        self.savepoints = 0
+
+    def begin_nested(self):
+        return _Savepoint(self)
 
     async def execute(self, _stmt):  # load_organization
         return SimpleNamespace(scalar_one_or_none=lambda: None)
@@ -931,3 +947,36 @@ async def test_new_item_sku_check_with_the_fixture_client(tmp_path):
     await svc.validate(_seller(), rows)
     assert [r.status for r in rows] == ["invalid", "valid"]  # unknown SKU: not found, proceed
     assert rows[0].validation_issues[0]["code"] == "SKU_EXISTS"
+
+
+
+# ---- the submission record survives a failed baseline update (final review) ----
+
+
+class _BrokenBaselines(FakeRepo):
+    async def upsert_baseline(self, account_id, asin, content, source, user_id):
+        raise RuntimeError("baseline write failed")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_baseline_update_keeps_the_accepted_submission(caplog):
+    repo = _BrokenBaselines(baselines=_baseline_rows("B0TEST0001"))
+    svc, client, db = _service(repo=repo)
+    rows = await _approved(svc, _seller(), [_item(1)])
+
+    await svc.submit(_seller(), rows)  # never raises: Amazon already accepted the change
+
+    assert rows[0].status == "accepted" and rows[0].submission_result["status"] == "ACCEPTED"
+    assert db.savepoints == 1 and len(client.writes()) == 1
+    assert "baseline" in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_baseline_update_keeps_the_settled_feed():
+    rows = [_submitted(1)]
+    client = FakeClient(feed_status={"processingStatus": "DONE", "resultFeedDocumentId": "doc-1"},
+                        feed_report={"issues": []})
+    repo = _BrokenBaselines(feed_requests=rows, baselines=_baseline_rows("B0TEST0001"))
+    svc, _, db = _service(client, repo)
+    await svc.refresh_feed(_seller(), FEED_ID)
+    assert rows[0].status == "accepted" and db.savepoints == 1

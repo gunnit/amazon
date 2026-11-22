@@ -1641,3 +1641,16 @@ def test_the_change_cap_is_300_by_default():
     from app.config import Settings
 
     assert Settings.model_fields["CATALOG_UPLOAD_MAX_CHANGES"].default == 300
+
+
+def test_quality_export_writes_titles_as_text(monkeypatch, known_account):
+    async def _load(db, account_id, search=None, asin=None):
+        return [{"asin": "B0TEST0001", "sku": "=SKU", "title": "=1+1", "score": 90,
+                 "components": {"state": "green", "score": 90, "results": []}}]
+
+    monkeypatch.setattr(api, "_load_quality_rows", _load)
+    client, _ = _client()
+    res = client.get("/catalog-monitor/quality/export", params={"account_id": str(ACCOUNT_ID)})
+    cells = load_workbook(io.BytesIO(res.content))["quality"][2]
+    assert [(c.value, c.data_type) for c in cells[1:3]] == [("=SKU", "s"), ("=1+1", "s")]
+    assert cells[4].value == 90  # numbers stay numbers

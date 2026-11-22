@@ -240,7 +240,8 @@ def _backend_keywords(c: ListingContent, ctx: RuleContext, cfg: RuleConfig):
     return _res("green", "ok", bytes=size, limit=maximum)
 
 
-_ENTRY_METADATA = frozenset({"marketplace_id", "language_tag"})
+# Keys that describe a value without being one: an entry holding only these is empty.
+_ENTRY_METADATA = frozenset({"marketplace_id", "language_tag", "unit"})
 
 
 def _filled(value: Any) -> bool:

@@ -15,7 +15,8 @@ first checked it with ``mode="VALIDATION_PREVIEW"`` and an admin approved it:
     refresh_feed  -> accepted | failed     (from the feed's processing report)
 
 An accepted bulk update or new item also updates its ASIN's baseline, so content
-protection does not flag the approved change (``baselines.apply_accepted_changes``).
+protection does not flag the approved change (``baselines.apply_accepted_changes``,
+in a savepoint: a failure there is logged and never undoes the submission record).
 A request marked as uploaded by hand does not: the next scan shows what went live.
 
 A file-only request is never validated or submitted through the API, also once
@@ -31,6 +32,7 @@ Amazon errors become issues on the request; requests handed to ``validate`` or
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -51,6 +53,8 @@ from app.services.catalog_monitor.clients import (
 )
 from app.services.catalog_monitor.content import ListingContent
 from app.services.catalog_monitor.repository import CatalogMonitorRepository
+
+logger = logging.getLogger(__name__)
 
 LANGUAGE_TAG_BY_MARKETPLACE: dict[str, str] = {
     "APJ6JRA9NG5V4": "it_IT",  # IT
@@ -599,8 +603,17 @@ class ChangeRequestService:
                     await self._submit_each(client, seller_id, sendable, now)
                 else:
                     await self._submit_feed(client, seller_id, account.marketplace_id, sendable, now)
-        await apply_accepted_changes(self.repo, account.id, todo)
+        await self._update_baselines(account.id, todo)
         await self.db.flush()
+
+    async def _update_baselines(self, account_id, requests: list[CatalogChangeRequest]) -> None:
+        """Accepted changes into their baselines, in a savepoint: Amazon already applied
+        them, so a failure here is logged and never undoes the submission record."""
+        try:
+            async with self.db.begin_nested():
+                await apply_accepted_changes(self.repo, account_id, requests)
+        except Exception:  # noqa: BLE001 - the next scan shows the change as an anomaly
+            logger.exception("Baseline update after accepted changes failed for account %s", account_id)
 
     async def _without_live_skus(
         self, client: Any, seller_id: str, requests: list[CatalogChangeRequest], now: datetime
@@ -713,7 +726,7 @@ class ChangeRequestService:
                     "processingStatus": processing,
                     "issues": issues,
                 }
-            await apply_accepted_changes(self.repo, account.id, requests)
+            await self._update_baselines(account.id, requests)
         else:
             return
         await self.db.flush()

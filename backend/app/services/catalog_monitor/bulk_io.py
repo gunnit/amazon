@@ -198,6 +198,21 @@ _INSTRUCTIONS = [
 ]
 
 
+def text_cell(sheet: Any, value: Any, font: Optional[Font] = None) -> WriteOnlyCell:
+    """A write-only cell; a string is stored as text, exactly as given.
+
+    Text from Amazon or an operator that starts with =, +, - or @ would otherwise
+    become a formula when the file is opened (formula injection). The value is
+    not altered, so an untouched file uploads back without changes.
+    """
+    cell = WriteOnlyCell(sheet, value=value)
+    if isinstance(value, str) and value:
+        cell.data_type = "s"
+    if font is not None:
+        cell.font = font
+    return cell
+
+
 def _column_width(header: str) -> int:
     if header in ("asin", "sku"):
         return 16
@@ -224,13 +239,7 @@ class CatalogExportWriter:
         for index, header in enumerate(self.headers, start=1):
             self.sheet.column_dimensions[get_column_letter(index)].width = _column_width(header)
         self.sheet.freeze_panes = "A2"
-        self.sheet.append([self._cell(h, font=Font(bold=True)) for h in self.headers])
-
-    def _cell(self, value: Any, font: Optional[Font] = None) -> WriteOnlyCell:
-        cell = WriteOnlyCell(self.sheet, value=value)
-        if font is not None:
-            cell.font = font
-        return cell
+        self.sheet.append([text_cell(self.sheet, h, Font(bold=True)) for h in self.headers])
 
     def add(self, rows: Iterable[tuple[Any, Optional[ListingContent]]]) -> None:
         """Append one row per (product, live content); the product needs asin, sku,
@@ -240,7 +249,7 @@ class CatalogExportWriter:
             for name in self.attribute_names:
                 value = _simple_attribute(content, name) if content is not None else None
                 data[f"{ATTR_PREFIX}{name}"] = value or ""
-            self.sheet.append([data.get(h, "") for h in self.headers])
+            self.sheet.append([text_cell(self.sheet, data.get(h, "")) for h in self.headers])
 
     def finish(self) -> bytes:
         """Write the instructions sheet and return the file."""
@@ -255,10 +264,8 @@ def _guide_sheet(workbook: Workbook, lines: list[str], fonts: dict[int, Font]) -
     guide = workbook.create_sheet(INSTRUCTIONS_SHEET)
     guide.column_dimensions["A"].width = 120
     for number, line in enumerate(lines, start=1):
-        cell = WriteOnlyCell(guide, value=line)
+        cell = text_cell(guide, line, fonts.get(number))
         cell.alignment = Alignment(wrap_text=True, vertical="top")
-        if number in fonts:
-            cell.font = fonts[number]
         guide.append([cell])
 
 
@@ -534,28 +541,23 @@ _NEW_ITEM_INSTRUCTIONS = [
 def build_new_item_template(
     product_type: str, required: list[str], recommended: list[str]
 ) -> bytes:
-    """Empty new-item sheet: sku, product_type, required attributes, then recommended ones."""
+    """Empty new-item sheet: sku, product_type, required attributes, then recommended ones.
+
+    Names come from Amazon's product type definition: written as text, never formulas.
+    """
     attributes = list(required) + [name for name in recommended if name not in required]
-    wb = Workbook()
-    ws = wb.active
-    ws.title = NEW_ITEMS_SHEET
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet(NEW_ITEMS_SHEET)
     headers = ["sku", "product_type"] + attributes
-    ws.append(headers)
     for index, header in enumerate(headers, start=1):
-        ws.cell(row=1, column=index).font = Font(bold=True)
         ws.column_dimensions[get_column_letter(index)].width = max(16, min(len(header) + 4, 40))
     ws.freeze_panes = "A2"
-    guide = wb.create_sheet(INSTRUCTIONS_SHEET)
+    ws.append([text_cell(ws, header, Font(bold=True)) for header in headers])
     lines = list(_NEW_ITEM_INSTRUCTIONS)
     lines.append(f"Tipo prodotto: {product_type}")
     lines.append("Attributi obbligatori: " + (", ".join(required) or "nessuno"))
     lines.append("Attributi consigliati: " + (", ".join(n for n in recommended if n not in required) or "nessuno"))
-    for line in lines:
-        guide.append([line])
-    guide.column_dimensions["A"].width = 120
-    for row in guide.iter_rows():
-        row[0].alignment = Alignment(wrap_text=True, vertical="top")
-    guide["A1"].font = Font(bold=True, size=14)
+    _guide_sheet(wb, lines, {1: Font(bold=True, size=14)})
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

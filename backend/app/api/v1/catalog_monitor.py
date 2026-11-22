@@ -89,6 +89,7 @@ from app.services.catalog_monitor.bulk_io import (
     parse_new_items,
     parse_upload,
     row_to_change_item,
+    text_cell,
     upload_errors,
     validate_new_item,
     wrap_new_item_attributes,
@@ -443,7 +444,6 @@ async def get_quality(
 def build_quality_workbook(items: list[dict]) -> bytes:
     """One row per ASIN, worst first: overall state and score, then state and code per rule."""
     from openpyxl import Workbook
-    from openpyxl.cell import WriteOnlyCell
     from openpyxl.styles import Font
 
     wb = Workbook(write_only=True)
@@ -452,19 +452,15 @@ def build_quality_workbook(items: list[dict]) -> bytes:
     header = ["asin", "sku", "title", "state", "score"]
     for key in RULE_KEYS:
         header += [f"{key}_state", f"{key}_code"]
-    bold = []
-    for name in header:
-        cell = WriteOnlyCell(ws, value=name)
-        cell.font = Font(bold=True)
-        bold.append(cell)
-    ws.append(bold)
+    ws.append([text_cell(ws, name, Font(bold=True)) for name in header])
     for item in sort_items(items):
         by_key = {r["key"]: r for r in item["results"]}
         row = [item["asin"], item["sku"], item["title"], item["state"], item["score"]]
         for key in RULE_KEYS:
             r = by_key.get(key)
             row += [r["state"], r["code"]] if r else [None, None]
-        ws.append(row)
+        # titles and SKUs come from Amazon: text, never formulas
+        ws.append([text_cell(ws, v) if isinstance(v, str) else v for v in row])
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()

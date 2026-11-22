@@ -330,3 +330,11 @@ def test_score_rounds_half_up():
     # images yellow (0.5, w1), description red (w1), title red (w2): 0.5/4 = 12.5
     ev = evaluate_listing(good(title=None, description=None, images=imgs(6)), ctx(), cfg)
     assert ev.score == 13
+
+
+def test_an_entry_with_only_a_unit_is_not_present():
+    full = {k: [{"value": "v"}] for k in DEFAULT_RULES["attributes"].params["recommended_attributes"]}
+    unit_only = {**full, "item_weight": [{"unit": "kilograms", "marketplace_id": "APJ6JRA9NG5V4"}]}
+    assert res(good(attributes=unit_only), ctx(), "attributes").details["missing"] == ["item_weight"]
+    nested = {**full, "item_dimensions": [{"length": {"unit": "centimeters"}}]}
+    assert res(good(attributes=nested), ctx(), "attributes").details["missing"] == ["item_dimensions"]
