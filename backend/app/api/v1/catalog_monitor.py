@@ -1511,6 +1511,7 @@ async def refresh_feed(
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 EXPORT_CHUNK = 200  # products whose live content is held at once while exporting
+UPLOAD_CHUNK = 200  # upload rows whose live content is held at once
 _UPLOAD_SUFFIXES = (".xlsx", ".xlsm", ".csv")
 _XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _MAX_KEYWORD_LENGTH = 255
@@ -1534,20 +1535,24 @@ def row_error(row: Any, message: str, asin: Optional[str] = None, sku: Optional[
 
 
 def match_upload_rows(
-    rows: list[ParsedRow], products: list[Any], live: Optional[dict[str, Any]] = None
+    rows: list[ParsedRow],
+    products: list[Any],
+    live: Optional[dict[str, Any]] = None,
+    seen: Optional[set[str]] = None,
 ) -> tuple[list[tuple[ParsedRow, Any]], list[RowErrorOut]]:
     """Rows that belong to the account (by asin, else sku), plus the errors of the others.
 
     A row with parse errors, an unknown product or a product already seen in the
     file is reported and skipped. Matched rows get the product's asin and sku.
     ``live`` maps ASIN to its live ``ListingContent``: cells equal to it are not
-    checked against the limits, since they become no patch.
+    checked against the limits, since they become no patch. ``seen`` carries the
+    ASINs already matched across calls when a file is processed in chunks.
     """
     by_asin = {p.asin: p for p in products if p.asin}
     by_sku = {p.sku: p for p in products if p.sku}
     matched: list[tuple[ParsedRow, Any]] = []
     errors: list[RowErrorOut] = []
-    seen: set[str] = set()
+    seen = set() if seen is None else seen
     for row in rows:
         product = by_asin.get(row.asin) if row.asin else None
         if product is None and row.sku:
@@ -1720,15 +1725,33 @@ async def upload_bulk(
     data, name = await _read_upload(file)
     parsed = await _parse_file(parse_upload, data, name)
     products = await _account_products(db, account.id)
-    skus = {row.sku for row in parsed if row.sku}
-    named = {row.asin for row in parsed if row.asin} | {p.asin for p in products if p.sku in skus}
-    live = {
-        asin: content_from_dict(content)
-        for asin, content in (
-            await _latest_content_dicts(db, account.id, sorted(a for a in named if a))
-        ).items()
-    }
-    matched, errors = match_upload_rows(parsed, products, live)
+    by_sku = {p.sku: p for p in products if p.sku}
+    matched: list[tuple[ParsedRow, Any]] = []
+    errors: list[RowErrorOut] = []
+    items: list[ChangeItem] = []
+    seen: set[str] = set()
+    # Live content (10-30 KB per ASIN) is read UPLOAD_CHUNK rows at a time: a
+    # re-uploaded export can name every product of the account.
+    for start in range(0, len(parsed), UPLOAD_CHUNK):
+        chunk = parsed[start : start + UPLOAD_CHUNK]
+        named = {row.asin for row in chunk if row.asin} | {
+            by_sku[row.sku].asin for row in chunk if row.sku in by_sku
+        }
+        live = {
+            asin: content_from_dict(content)
+            for asin, content in (
+                await _latest_content_dicts(db, account.id, sorted(a for a in named if a))
+            ).items()
+        }
+        chunk_matched, chunk_errors = match_upload_rows(chunk, products, live, seen)
+        matched += chunk_matched
+        errors += chunk_errors
+        if mode == "update":
+            for row, _ in chunk_matched:
+                item = row_to_change_item(row, live.get(row.asin), account.marketplace_id)
+                if item is not None:
+                    items.append(item)
+        del live
 
     if mode == "baseline":
         keywords_updated = apply_main_keyword_cells(matched)
@@ -1748,11 +1771,6 @@ async def upload_bulk(
             row_errors=[*errors, *(row_error(None, message) for message in import_errors)],
         )
 
-    items: list[ChangeItem] = []
-    for row, _ in matched:
-        item = row_to_change_item(row, live.get(row.asin), account.marketplace_id)
-        if item is not None:
-            items.append(item)
     if len(items) > settings.CATALOG_UPLOAD_MAX_CHANGES:
         # Refused whole, before Amazon is asked and before any keyword is stored.
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, too_many_changes(len(items)))

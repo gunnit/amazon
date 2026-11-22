@@ -1654,3 +1654,29 @@ def test_quality_export_writes_titles_as_text(monkeypatch, known_account):
     cells = load_workbook(io.BytesIO(res.content))["quality"][2]
     assert [(c.value, c.data_type) for c in cells[1:3]] == [("=SKU", "s"), ("=1+1", "s")]
     assert cells[4].value == 90  # numbers stay numbers
+
+
+def test_upload_reads_live_content_a_chunk_at_a_time(monkeypatch, bulk_account):
+    # Re-uploading a whole export is the documented workflow: thousands of rows,
+    # a few changed. Live content (10-30 KB per ASIN) is read 200 rows at a time.
+    monkeypatch.setattr(api, "UPLOAD_CHUNK", 2)
+    asins = [f"B0TEST000{n}" for n in range(1, 6)]
+    _bulk_fakes(monkeypatch, [_product(a) for a in asins], {a: _live(a) for a in asins})
+    calls = []
+    fake_contents = api._latest_content_dicts
+
+    async def _contents(db, account_id, chunk):
+        calls.append(list(chunk))
+        return await fake_contents(db, account_id, chunk)
+
+    monkeypatch.setattr(api, "_latest_content_dicts", _contents)
+    rows = [[a, "Titolo nuovo" if a == "B0TEST0004" else "Titolo vecchio"] for a in asins]
+    rows.append(["B0TEST0001", "Duplicato"])  # same ASIN in a later chunk
+    client, _ = _client()
+    res = _upload(client, _xlsx(["asin", "title"], rows))
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert all(len(c) <= 2 for c in calls) and len(calls) == 3
+    assert (body["changes"], body["unchanged"]) == (1, 4)
+    assert [i.asin for i in _BatchSvc.created] == ["B0TEST0004"]
+    assert [(e["row"], e["message"]) for e in body["row_errors"]] == [(7, "ASIN ripetuto nel file")]
