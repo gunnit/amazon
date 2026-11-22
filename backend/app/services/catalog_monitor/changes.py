@@ -5,10 +5,12 @@ Bulk updates, content restores, variation restores and new items all become
 first checked it with ``mode="VALIDATION_PREVIEW"`` and an admin approved it:
 
     create        -> pending, or file_only (no listing seller id / vendor code, or no SKU)
-    validate      -> valid | invalid       (pending, valid and invalid requests)
+    validate      -> valid | invalid       (pending, valid and invalid requests; a new
+                                            item whose SKU already has a listing is invalid)
     approve       -> approved              (valid and file_only requests; admin only)
     reject        -> rejected              (anything not yet sent)
-    submit        -> accepted | failed     (fewer than CATALOG_FEED_THRESHOLD: one call per SKU)
+    submit        -> accepted | failed     (fewer than CATALOG_FEED_THRESHOLD: one call per SKU;
+                                            a new item whose SKU went live meanwhile fails)
                   -> submitted             (otherwise: one JSON_LISTINGS_FEED)
     refresh_feed  -> accepted | failed     (from the feed's processing report)
 
@@ -37,6 +39,7 @@ from typing import Any, Iterable, Literal, Optional
 from uuid import UUID
 
 from app.config import settings
+from app.core.exceptions import AmazonAPIError
 from app.models.amazon_account import AccountType
 from app.models.catalog_monitor import CatalogAnomaly, CatalogChangeRequest
 from app.services.catalog_monitor.baselines import apply_accepted_changes
@@ -84,6 +87,7 @@ _VALIDATABLE = frozenset({"pending", "valid", "invalid"})
 _APPROVABLE = frozenset({"valid", "file_only"})
 _REJECTABLE = frozenset({"pending", "valid", "invalid", "approved", "file_only"})
 _FEED_FAILED = frozenset({"FATAL", "CANCELLED"})
+_NOT_FOUND_CODES = frozenset({"404", "NOT_FOUND"})
 
 
 # ---- patch builders (pure) ----
@@ -370,6 +374,30 @@ def _send(client: Any, seller_id: str, request: CatalogChangeRequest, mode: Opti
     return response or {}
 
 
+def _is_not_found(exc: Exception) -> bool:
+    """Amazon's 404 for a listing (SP-API client: error_code 404; fixtures: NOT_FOUND)."""
+    return isinstance(exc, AmazonAPIError) and str(exc.error_code) in _NOT_FOUND_CODES
+
+
+def existing_listing_issue(client: Any, seller_id: str, sku: str) -> Optional[dict]:
+    """None when the SKU has no listing yet; otherwise the ERROR issue that stops a PUT.
+
+    A PUT replaces the whole listing, so a new item may only go out for a SKU
+    Amazon answers 404 for. A live listing is ``SKU_EXISTS``; any other answer
+    (an error, an empty payload) is ``SKU_CHECK_FAILED``: when in doubt, nothing
+    is replaced.
+    """
+    try:
+        listing = client.get_listing(seller_id, sku)
+    except Exception as exc:  # noqa: BLE001 - only a 404 lets the PUT through
+        if _is_not_found(exc):
+            return None
+        return _issue("SKU_CHECK_FAILED", f"Could not check whether SKU {sku} exists: {exc}"[:500])
+    if listing:
+        return _issue("SKU_EXISTS", f"SKU {sku} already has a listing: a new item would replace it")
+    return _issue("SKU_CHECK_FAILED", f"Amazon did not say whether SKU {sku} exists")
+
+
 def _check_item(item: ChangeItem) -> None:
     if item.kind not in KINDS:
         raise ValueError(f"unknown change kind: {item.kind!r}")
@@ -500,6 +528,10 @@ class ChangeRequestService:
             return [_no_listing_access()], False
         if not _clean(request.product_type):
             return [_issue("MISSING_PRODUCT_TYPE", "The product type is unknown")], False
+        if request.operation == "PUT" and _clean(request.sku):
+            exists = await asyncio.to_thread(existing_listing_issue, client, seller_id, request.sku)
+            if exists is not None:
+                return [exists], False
         try:
             response = await asyncio.to_thread(
                 _send, client, seller_id, request, VALIDATION_PREVIEW
@@ -562,12 +594,33 @@ class ChangeRequestService:
             except Exception as exc:  # noqa: BLE001
                 _fail(todo, _api_error(exc), now)
             else:
-                if len(todo) < settings.CATALOG_FEED_THRESHOLD:
-                    await self._submit_each(client, seller_id, todo, now)
+                sendable = await self._without_live_skus(client, seller_id, todo, now)
+                if len(sendable) < settings.CATALOG_FEED_THRESHOLD:
+                    await self._submit_each(client, seller_id, sendable, now)
                 else:
-                    await self._submit_feed(client, seller_id, account.marketplace_id, todo, now)
+                    await self._submit_feed(client, seller_id, account.marketplace_id, sendable, now)
         await apply_accepted_changes(self.repo, account.id, todo)
         await self.db.flush()
+
+    async def _without_live_skus(
+        self, client: Any, seller_id: str, requests: list[CatalogChangeRequest], now: datetime
+    ) -> list[CatalogChangeRequest]:
+        """Fail the new items (PUT) whose SKU has a listing by now; return the others.
+
+        Checked again at submit: a listing created by hand after validation would
+        otherwise be replaced by the new item.
+        """
+        sendable = []
+        for request in requests:
+            if request.operation == "PUT" and _clean(request.sku):
+                issue = await asyncio.to_thread(
+                    existing_listing_issue, client, seller_id, request.sku
+                )
+                if issue is not None:
+                    _fail([request], issue, now)
+                    continue
+            sendable.append(request)
+        return sendable
 
     async def _submit_each(
         self, client: Any, seller_id: str, requests: list[CatalogChangeRequest], now: datetime

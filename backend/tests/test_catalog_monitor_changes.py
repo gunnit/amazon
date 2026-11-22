@@ -53,12 +53,25 @@ FEED_ID = "50001"
 class FakeClient:
     """Records calls; answers per SKU from ``responses`` or raises from ``errors``."""
 
-    def __init__(self, responses=None, errors=None, feed_status=None, feed_report=None):
+    def __init__(
+        self, responses=None, errors=None, feed_status=None, feed_report=None, listings=None,
+        listing_errors=None,
+    ):
         self.calls: list[tuple] = []
         self.responses = responses or {}
         self.errors = errors or {}
         self.feed_status = feed_status or {"processingStatus": "IN_PROGRESS"}
         self.feed_report = feed_report or {}
+        self.listings = dict(listings or {})  # sku -> live listing payload
+        self.listing_errors = dict(listing_errors or {})
+
+    def get_listing(self, seller_id, sku, included_data=None):
+        self.calls.append(("get_listing", seller_id, sku))
+        if sku in self.listing_errors:
+            raise self.listing_errors[sku]
+        if sku not in self.listings:
+            raise AmazonAPIError(f"SP-API error on get_listing: {sku} not found", error_code=404)
+        return self.listings[sku]
 
     def _answer(self, sku, mode):
         if sku in self.errors:
@@ -530,7 +543,10 @@ async def test_validate_put_uses_validation_preview():
     )
     await svc.validate(_seller(), rows)
     assert rows[0].status == "valid"
-    assert client.calls == [("put", SELLER, _sku(1), "HOME", attrs, "VALIDATION_PREVIEW")]
+    assert client.calls == [
+        ("get_listing", SELLER, _sku(1)),  # a new item must not exist yet
+        ("put", SELLER, _sku(1), "HOME", attrs, "VALIDATION_PREVIEW"),
+    ]
 
 
 # ---- approve / reject ----
@@ -829,3 +845,89 @@ async def test_refresh_feed_puts_accepted_bulk_updates_into_the_baseline():
 
     assert [r.status for r in rows] == ["accepted", "failed"]
     assert [(asin, c.title, user) for asin, c, _, user in repo.upserts] == [("B0TEST0001", "Titolo 1", ADMIN)]
+
+
+# ---- a new item never replaces a live listing ----
+
+LIVE_LISTING = {"sku": "TEST-SKU-001", "summaries": [{"marketplaceId": MKT, "asin": "B0TEST0001"}]}
+
+
+def _new_item(n=1):
+    return _item(n, asin=None, kind="new_item", operation="PUT",
+                 attributes={"item_name": text_value(f"Nuovo {n}", MKT)})
+
+
+@pytest.mark.asyncio
+async def test_validate_refuses_a_new_item_whose_sku_is_already_live():
+    client = FakeClient(listings={_sku(1): LIVE_LISTING})
+    svc, client, _ = _service(client)
+    rows = await svc.create(_seller(), [_new_item(1), _new_item(2)], USER)
+    await svc.validate(_seller(), rows)
+    assert [r.status for r in rows] == ["invalid", "valid"]
+    [issue] = rows[0].validation_issues
+    assert (issue["code"], issue["severity"]) == ("SKU_EXISTS", "ERROR")
+    assert [c[2] for c in client.previews()] == [_sku(2)]  # no PUT preview for the live SKU
+
+
+@pytest.mark.asyncio
+async def test_validate_refuses_a_new_item_when_the_sku_check_fails():
+    client = FakeClient(listing_errors={_sku(1): AmazonAPIError("throttled", error_code="THROTTLED")})
+    svc, client, _ = _service(client)
+    rows = await svc.create(_seller(), [_new_item(1)], USER)
+    await svc.validate(_seller(), rows)
+    assert rows[0].status == "invalid"
+    assert [i["code"] for i in rows[0].validation_issues] == ["SKU_CHECK_FAILED"]
+    assert client.previews() == []
+
+
+@pytest.mark.asyncio
+async def test_submit_fails_a_new_item_whose_sku_went_live_after_validation():
+    client = FakeClient()
+    svc, client, _ = _service(client)
+    rows = await _approved(svc, _seller(), [_new_item(1), _new_item(2)])
+    assert [r.status for r in rows] == ["approved", "approved"]
+    client.listings[_sku(1)] = LIVE_LISTING  # created by hand meanwhile
+
+    await svc.submit(_seller(), rows)
+
+    assert [r.status for r in rows] == ["failed", "accepted"]
+    assert [i["code"] for i in rows[0].submission_result["issues"]] == ["SKU_EXISTS"]
+    assert [c[2] for c in client.writes()] == [_sku(2)]
+
+
+@pytest.mark.asyncio
+async def test_submit_by_feed_leaves_out_a_new_item_whose_sku_is_live(monkeypatch):
+    monkeypatch.setattr(settings, "CATALOG_FEED_THRESHOLD", 2)
+    client = FakeClient()
+    svc, client, _ = _service(client)
+    rows = await _approved(svc, _seller(), [_new_item(1), _new_item(2), _new_item(3)])
+    client.listings[_sku(2)] = LIVE_LISTING
+
+    await svc.submit(_seller(), rows)
+
+    assert [r.status for r in rows] == ["submitted", "failed", "submitted"]
+    [feed] = [c[1] for c in client.calls if c[0] == "feed"]
+    assert [m["sku"] for m in feed["messages"]] == [_sku(1), _sku(3)]
+
+
+@pytest.mark.asyncio
+async def test_patch_requests_do_not_check_the_sku():
+    svc, client, _ = _service()
+    rows = await _approved(svc, _seller(), [_item(1)])
+    await svc.submit(_seller(), rows)
+    assert rows[0].status == "accepted"
+    assert not [c for c in client.calls if c[0] == "get_listing"]
+
+
+@pytest.mark.asyncio
+async def test_new_item_sku_check_with_the_fixture_client(tmp_path):
+    from app.services.catalog_monitor.fixture_client import FixtureClient
+
+    listing = tmp_path / "listings" / f"{_sku(1)}.json"
+    listing.parent.mkdir(parents=True)
+    listing.write_text('{"sku": "TEST-SKU-001", "summaries": [], "attributes": {}}')
+    svc, _, _ = _service(FixtureClient(str(tmp_path), MKT))
+    rows = await svc.create(_seller(), [_new_item(1), _new_item(2)], USER)
+    await svc.validate(_seller(), rows)
+    assert [r.status for r in rows] == ["invalid", "valid"]  # unknown SKU: not found, proceed
+    assert rows[0].validation_issues[0]["code"] == "SKU_EXISTS"
