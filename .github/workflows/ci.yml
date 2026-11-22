@@ -16,6 +16,24 @@ jobs:
     # ubuntu-latest moved to 26.04, where setup-python has no 3.11.11 build.
     # Stay on 24.04 until production's Python is raised.
     runs-on: ubuntu-24.04
+    # The Postgres-backed tests (catalogue monitor repository, approvals, scan,
+    # quality list and the end-to-end run) skip without TEST_DATABASE_URL: give
+    # them the same major version as production.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: inthezon_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/inthezon_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,10 +46,17 @@ jobs:
       - name: Install dependencies
         working-directory: backend
         run: pip install -r requirements.txt
+      - name: Migrate the test database
+        working-directory: backend
+        # alembic reads DATABASE_URL (and switches to the sync driver itself).
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/inthezon_test
+        run: alembic upgrade head
       - name: Run tests
         working-directory: backend
-        # No database and no network, but the credential-masking tests need a
-        # Fernet key to encrypt with. Generated per run and thrown away — it
+        # No network; the Postgres tests use the service above. The
+        # credential-masking tests need a Fernet key to encrypt with.
+        # Generated per run and thrown away — it
         # protects nothing and must never be a checked-in literal.
         # tests/conftest.py is what makes a single-process run trustworthy.
         run: |
@@ -55,6 +80,13 @@ jobs:
         working-directory: frontend
         # `build` is `tsc && vite build`, so this is the type check too.
         run: npm run build
+      - name: Check the content diff and the token refresh
+        working-directory: frontend
+        # Node scripts over pure modules: the side-by-side word diff and the
+        # single-flight access-token refresh that keeps users logged in.
+        run: |
+          npm run check:word-diff
+          npm run check:token-refresh
       - name: Check translation parity
         working-directory: frontend
         # A key present in one locale and missing in the other renders as a raw
