@@ -30,6 +30,7 @@ from app.api.deps import (
     DbSession,
     get_admin_organization,
 )
+from app.config import settings
 from app.models.amazon_account import AmazonAccount
 from app.models.catalog_monitor import (
     CatalogAnomaly,
@@ -1524,6 +1525,14 @@ _UNREADABLE_FILE = (
 )
 
 
+def too_many_changes(count: int) -> str:
+    limit = settings.CATALOG_UPLOAD_MAX_CHANGES
+    return (
+        f"Il file contiene {count} modifiche: il massimo per caricamento è {limit}. "
+        "Dividi il file in più parti."
+    )
+
+
 def row_error(row: Any, message: str, asin: Optional[str] = None, sku: Optional[str] = None) -> RowErrorOut:
     return RowErrorOut(row=row, asin=asin, sku=sku, message=message)
 
@@ -1703,7 +1712,8 @@ async def upload_bulk(
     mode: str = Form("update"),
     file: UploadFile = File(...),
 ):
-    """Edited export: ``update`` makes validated change requests of the changed cells,
+    """Edited export: ``update`` makes validated change requests of the changed cells
+    (at most CATALOG_UPLOAD_MAX_CHANGES per file, else 422 and nothing is stored),
     ``baseline`` (admin only) makes the file the approved content to protect.
     """
     if mode not in ("update", "baseline"):
@@ -1723,9 +1733,9 @@ async def upload_bulk(
         ).items()
     }
     matched, errors = match_upload_rows(parsed, products, live)
-    keywords_updated = apply_main_keyword_cells(matched)
 
     if mode == "baseline":
+        keywords_updated = apply_main_keyword_cells(matched)
         written, import_errors = await import_baseline_rows(
             CatalogMonitorRepository(db),
             account.id,
@@ -1747,6 +1757,10 @@ async def upload_bulk(
         item = row_to_change_item(row, live.get(row.asin), account.marketplace_id)
         if item is not None:
             items.append(item)
+    if len(items) > settings.CATALOG_UPLOAD_MAX_CHANGES:
+        # Refused whole, before Amazon is asked and before any keyword is stored.
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, too_many_changes(len(items)))
+    keywords_updated = apply_main_keyword_cells(matched)
     batch_id, requests = None, []
     if items:
         service = ChangeRequestService(db)

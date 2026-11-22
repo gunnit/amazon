@@ -1604,3 +1604,40 @@ def test_quality_export_is_built_off_the_event_loop(monkeypatch, known_account):
     assert res.status_code == 200 and seen == [False]
     ws = load_workbook(io.BytesIO(res.content))["quality"]
     assert [c.value for c in ws[2]][:5] == ["B0TEST0001", "S", "T", "green", 90]
+
+
+# ---- final review: at most 300 changes per upload ----
+
+
+def test_upload_over_the_change_cap_is_refused_before_amazon_is_asked(monkeypatch, bulk_account):
+    monkeypatch.setattr(api.settings, "CATALOG_UPLOAD_MAX_CHANGES", 3)
+    asins = [f"B0TEST000{n}" for n in range(1, 6)]
+    products = [_product(a, keyword="vecchia") for a in asins]
+    _bulk_fakes(monkeypatch, products, {a: _live(a) for a in asins})
+    data = _xlsx(["asin", "title", "main_keyword"],
+                 [[a, f"Titolo nuovo {a}", "nuova"] for a in asins])
+    client, db = _client()
+    res = _upload(client, data)
+    assert res.status_code == 422
+    assert res.json()["detail"] == (
+        "Il file contiene 5 modifiche: il massimo per caricamento è 3. Dividi il file in più parti."
+    )
+    assert _BatchSvc.created == [] and db.commits == 0  # nothing created, validated or stored
+    assert all(p.main_keyword == "vecchia" for p in products)
+
+
+def test_upload_at_the_change_cap_goes_through(monkeypatch, bulk_account):
+    monkeypatch.setattr(api.settings, "CATALOG_UPLOAD_MAX_CHANGES", 3)
+    asins = [f"B0TEST000{n}" for n in range(1, 6)]
+    _bulk_fakes(monkeypatch, [_product(a) for a in asins], {a: _live(a) for a in asins})
+    rows = [[a, f"Titolo nuovo {a}" if n < 3 else "Titolo vecchio"] for n, a in enumerate(asins)]
+    client, _ = _client()
+    res = _upload(client, _xlsx(["asin", "title"], rows))
+    assert res.status_code == 200, res.text
+    assert (res.json()["changes"], res.json()["unchanged"]) == (3, 2)
+
+
+def test_the_change_cap_is_300_by_default():
+    from app.config import Settings
+
+    assert Settings.model_fields["CATALOG_UPLOAD_MAX_CHANGES"].default == 300

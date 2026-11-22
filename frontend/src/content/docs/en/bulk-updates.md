@@ -8,7 +8,7 @@ In **Catalog > Bulk update**:
 
 1. **Export catalogue**: the Excel file holds the current content (ASIN, SKU, product type, title, bullets 1-5, description, backend keywords, item highlights, main keyword, main image, images 1-8, parent, parent SKU, theme, plus `attr:name` columns for simple attributes). It is also the template to upload again.
 2. Edit **only the cells to change**. An **empty cell keeps the current value**: there is no way to clear a field with the file. So a file that fills only `bullet_2` leaves the other bullets alone.
-3. **Upload file** (.xlsx or .csv, 10 MB maximum) and choose how to use it.
+3. **Upload file** (.xlsx or .csv, 10 MB maximum) and choose how to use it. A file may hold at most **300 changed rows**: one with more is refused as a whole (no request created, no keyword saved) and must be split into several files.
 
 Limits per row: title 200 characters, bullets 500, description 2000, item highlights 125, backend keywords 250 bytes; image URLs must start with `https://`. Rows over the limits are not used and are listed with the problem. Images are replaced position by position and none is deleted.
 

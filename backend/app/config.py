@@ -155,6 +155,9 @@ class Settings(BaseSettings):
     CATALOG_SCAN_MINUTE_UTC: int = 0
     CATALOG_SCAN_REQUEST_INTERVAL_S: float = 0.55
     CATALOG_FEED_THRESHOLD: int = 50
+    # Most changed rows one bulk upload may turn into change requests: each one is
+    # an Amazon validation call made while the operator waits.
+    CATALOG_UPLOAD_MAX_CHANGES: int = 300
     PTD_CACHE_DAYS: int = 7
     # Local development only: a directory of JSON fixtures that answers the
     # catalogue monitor's Amazon calls instead of SP-API (see

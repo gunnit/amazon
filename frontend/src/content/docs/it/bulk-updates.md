@@ -8,7 +8,7 @@ In **Catalogo > Aggiornamento massivo**:
 
 1. **Esporta catalogo**: il file Excel contiene i contenuti attuali (ASIN, SKU, tipo di prodotto, titolo, bullet 1-5, descrizione, keyword backend, item highlights, keyword principale, immagine principale, immagini 1-8, parent, SKU parent, tema, più colonne `attr:nome` per gli attributi semplici). È anche il modello da ricaricare.
 2. Modifica **solo le celle da cambiare**. Una cella **vuota lascia il valore com'è**: non esiste un modo per cancellare un campo con il file. Così un file che compila solo `bullet_2` non tocca gli altri bullet.
-3. **Carica file** (.xlsx o .csv, massimo 10 MB) e scegli come usarlo.
+3. **Carica file** (.xlsx o .csv, massimo 10 MB) e scegli come usarlo. Un file può contenere al massimo **300 righe modificate**: se ne ha di più viene rifiutato per intero (nessuna richiesta creata, nessuna keyword salvata) e va diviso in più file.
 
 Limiti per riga: titolo 200 caratteri, bullet 500, descrizione 2000, item highlights 125, keyword backend 250 byte; gli URL delle immagini devono iniziare con `https://`. Le righe fuori limite non vengono usate e sono elencate con il problema. Le immagini si sostituiscono posizione per posizione e non se ne cancella nessuna.
 

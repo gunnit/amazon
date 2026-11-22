@@ -41,6 +41,11 @@ const DETAIL_KEYS: Record<string, string> = {
   'no amazon account in scope': 'apiError.noAccountInScope',
 }
 
+// Details that carry a number: matched by pattern, the number goes into the message.
+const DETAIL_PATTERNS: Array<[RegExp, string]> = [
+  [/^il file contiene (\d+) modifiche/i, 'apiError.tooManyChanges'],
+]
+
 function rawDetail(error: unknown): string | null {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
   return typeof detail === 'string' ? detail : null
@@ -49,12 +54,16 @@ function rawDetail(error: unknown): string | null {
 /** Localized description for an API error, or undefined when we have none. */
 export function apiErrorDetail(
   error: unknown,
-  t: (key: string) => string,
+  t: (key: string, vars?: Record<string, string | number>) => string,
 ): string | undefined {
   const detail = rawDetail(error)
   if (!detail) return undefined
   const key = DETAIL_KEYS[detail.trim().toLowerCase()]
   if (key) return t(key)
+  for (const [pattern, patternKey] of DETAIL_PATTERNS) {
+    const match = pattern.exec(detail.trim())
+    if (match) return t(patternKey, { count: match[1] })
+  }
   // Some backends prefix a cause: match on the known head before the colon.
   const head = detail.split(':')[0].trim().toLowerCase()
   const headKey = DETAIL_KEYS[head]
