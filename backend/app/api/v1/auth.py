@@ -44,6 +44,10 @@ _auth_limit = RateLimiter(max_requests=10, window_seconds=60, scope="auth")
 # Keyed by the account being attacked, not by source address: rotating IPs
 # (or forging a header) no longer buys an attacker more attempts.
 _login_account_limit = RateLimiter(max_requests=10, window_seconds=900, scope="login-account")
+# Refresh has its own, wider budget: when the access token expires every open
+# request answers 401 and each one refreshes, so the login limit would log
+# people out (and then refuse their next login).
+_refresh_limit = RateLimiter(max_requests=60, window_seconds=60, scope="auth-refresh")
 
 
 class RefreshRequest(BaseModel):
@@ -83,7 +87,7 @@ async def login(user_in: UserLogin, db: DbSession):
     )
 
 
-@router.post("/refresh", response_model=Token, dependencies=[Depends(_auth_limit)])
+@router.post("/refresh", response_model=Token, dependencies=[Depends(_refresh_limit)])
 async def refresh_token(
     db: DbSession,
     body: RefreshRequest,

@@ -47,3 +47,48 @@ def test_clients_counted_separately(_redis):
 
     asyncio.run(limiter(_Req()))
     asyncio.run(limiter(_Other()))  # different ip, own budget
+
+
+def _route_limiters(router, path):
+    from fastapi.routing import APIRoute
+
+    route = next(r for r in router.routes if isinstance(r, APIRoute) and r.path == path)
+    return [d.call for d in route.dependant.dependencies if isinstance(d.call, RateLimiter)]
+
+
+def test_refresh_has_its_own_limit_separate_from_login():
+    # Parallel 401s after the access token expires each refresh: sharing the
+    # login budget (10/min) logged users out mid-session.
+    from app.api.v1 import auth
+
+    [refresh] = _route_limiters(auth.router, "/refresh")
+    [login] = _route_limiters(auth.router, "/login")
+    assert refresh is not login
+    assert (refresh.scope, refresh.max_requests, refresh.window_seconds) == ("auth-refresh", 60, 60)
+    assert login.scope != refresh.scope
+
+
+@patch("app.api.deps._get_redis", return_value=None)
+def test_exhausted_login_limit_leaves_refresh_open(_redis):
+    from app.api.v1 import auth
+
+    class _Ip(_Req):
+        class client:
+            host = "203.0.113.77"
+
+    req = _Ip()
+    [refresh] = _route_limiters(auth.router, "/refresh")
+    [login] = _route_limiters(auth.router, "/login")
+    try:
+        for _ in range(login.max_requests):
+            asyncio.run(login(req))
+        with pytest.raises(HTTPException):
+            asyncio.run(login(req))
+        for _ in range(refresh.max_requests):
+            asyncio.run(refresh(req))  # its own budget: never blocked by the logins
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(refresh(req))
+        assert exc.value.status_code == 429
+    finally:
+        login._local.pop(login._client_key(req), None)
+        refresh._local.pop(refresh._client_key(req), None)

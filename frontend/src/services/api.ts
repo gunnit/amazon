@@ -25,6 +25,7 @@ import type {
   BrandIntelligenceGenerateResponse, BrandIntelligenceSchedule,
   AlertRule, AlertBulkMutationResponse, AlertListResponse, AlertMutationResponse, AlertStatus, AlertSummary, AlertType,
 } from '@/types'
+import { createTokenRefresher } from './tokenRefresh'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
@@ -72,14 +73,42 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Response interceptor for token refresh
+// Response interceptor for token refresh: one refresh for every request that
+// answered 401 (see tokenRefresh.ts for the rules).
+const tokenRefresher = createTokenRefresher({
+  store: {
+    getAccess: () => localStorage.getItem('access_token'),
+    getRefresh: () => localStorage.getItem('refresh_token'),
+    save: ({ access_token, refresh_token }) => {
+      localStorage.setItem('access_token', access_token)
+      localStorage.setItem('refresh_token', refresh_token)
+    },
+    clear: () => {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('refresh_token')
+    },
+  },
+  requestRefresh: async (refreshToken) => {
+    const response = await axios.post(`${API_URL}/api/v1/auth/refresh`, {
+      refresh_token: refreshToken,
+    })
+    return response.data
+  },
+  redirectToLogin: () => {
+    window.location.href = '/login'
+  },
+})
+
+/** The new access token; concurrent callers share one refresh call. */
+export const refreshAccessToken = tokenRefresher.refreshAccessToken
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config
 
     // 403 from HTTPBearer means no/invalid Authorization header — redirect to login
-    if (error.response?.status === 403 && !originalRequest._retry) {
+    if (error.response?.status === 403 && !originalRequest?._retry) {
       const token = localStorage.getItem('access_token')
       if (!token) {
         window.location.href = '/login'
@@ -87,33 +116,16 @@ api.interceptors.response.use(
       }
     }
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true
-
-      const refreshToken = localStorage.getItem('refresh_token')
-      if (refreshToken) {
-        try {
-          const response = await axios.post(`${API_URL}/api/v1/auth/refresh`, {
-            refresh_token: refreshToken,
-          })
-          const { access_token, refresh_token } = response.data
-
-          localStorage.setItem('access_token', access_token)
-          localStorage.setItem('refresh_token', refresh_token)
-
-          originalRequest.headers.Authorization = `Bearer ${access_token}`
+      return tokenRefresher.recover(
+        originalRequest.headers?.Authorization,
+        (accessToken) => {
+          originalRequest.headers.Authorization = `Bearer ${accessToken}`
           return api(originalRequest)
-        } catch (refreshError) {
-          localStorage.removeItem('access_token')
-          localStorage.removeItem('refresh_token')
-          window.location.href = '/login'
-          return Promise.reject(error)
-        }
-      } else {
-        localStorage.removeItem('access_token')
-        window.location.href = '/login'
-        return Promise.reject(error)
-      }
+        },
+        error,
+      )
     }
 
     return Promise.reject(error)

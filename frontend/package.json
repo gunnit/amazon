@@ -9,7 +9,8 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "check:i18n": "node scripts/check-i18n-parity.mjs",
-    "check:word-diff": "node scripts/check-word-diff.mjs"
+    "check:word-diff": "node scripts/check-word-diff.mjs",
+    "check:token-refresh": "node scripts/check-token-refresh.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.4",
