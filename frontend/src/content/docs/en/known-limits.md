@@ -36,6 +36,7 @@ The **Check Amazon access** button in Catalog shows what is available for each a
 - **A+ content**: we compare only the number of modules, so edits inside a module are not detected. We detect and show it, but restoring is always by hand on Seller Central or Vendor Central.
 - **Amazon's official NIS templates**: not supported yet. New items are validated against the Amazon product type (required attributes and Amazon's own check).
 - **Images**: replaced from the bulk update by URL, but on Vendor accounts removals must be done by hand on Vendor Central.
+- **Images after an accepted change**: Amazon re-hosts uploaded images and publishes them under a different address from the one sent. So after an image change Amazon accepted (bulk update, new item or restore), the next scan may flag "Images" once in Content protection. Check the comparison: if the images are the right ones, an administrator accepts it as the new reference and the flag does not come back.
 - **Accounts without write access** (for example Vendor without a vendor code or SKU): approved changes come out as a file to upload by hand on Vendor Central.
 - **Amazon notifications**: not used. The catalogue is checked by a daily scan, so a change can be flagged up to the next day.
 

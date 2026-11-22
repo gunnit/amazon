@@ -36,6 +36,7 @@ Il pulsante **Verifica accesso Amazon** in Catalogo mostra cosa è disponibile p
 - **Contenuti A+**: confrontiamo solo il numero di moduli, quindi le modifiche all'interno di un modulo non vengono rilevate. Li rileviamo e li mostriamo, ma il ripristino è sempre a mano su Seller Central o Vendor Central.
 - **Modelli NIS ufficiali di Amazon**: non ancora supportati. I nuovi articoli si validano sul tipo di prodotto Amazon (attributi obbligatori e verifica di Amazon).
 - **Immagini**: si sostituiscono dall'aggiornamento massivo tramite URL, ma sugli account Vendor le rimozioni vanno fatte a mano su Vendor Central.
+- **Immagini dopo una modifica accettata**: Amazon ricarica le immagini sui propri server e le pubblica con un indirizzo diverso da quello inviato. Per questo, dopo una modifica delle immagini accettata da Amazon (aggiornamento massivo, nuovo articolo o ripristino), la scansione successiva può segnalare una volta «Immagini» in Protezione contenuti. Controlla il confronto: se le immagini sono quelle giuste, un amministratore la accetta come nuovo riferimento e la segnalazione non si ripresenta.
 - **Account senza accesso in scrittura** (per esempio Vendor senza codice vendor o SKU): le modifiche approvate escono come file da caricare a mano su Vendor Central.
 - **Notifiche di Amazon**: non le usiamo. Il catalogo si controlla con una scansione giornaliera, quindi una modifica può essere segnalata fino al giorno dopo.
 
