@@ -1502,3 +1502,12 @@ def test_anomalies_route_returns_the_linked_request_status(monkeypatch, known_ac
     client, _ = _client()
     [body] = client.get("/catalog-monitor/anomalies", params={"account_id": str(ACCOUNT_ID)}).json()
     assert (body["status"], body["change_request_status"]) == ("restore_requested", "accepted")
+
+
+def test_accepting_an_anomaly_requires_admin(monkeypatch):
+    # Accepting rewrites the protected baseline, like approving it: admins only.
+    anomaly, statuses = _linked("open", None)
+    accepted = _accept_app(monkeypatch, anomaly, statuses)
+    client, _ = _client(db=_FakeDb(row=(ORG, UserRole.MEMBER)), admin=False)
+    res = client.post(f"/catalog-monitor/anomalies/{anomaly.id}/accept")
+    assert res.status_code == 403 and accepted == []

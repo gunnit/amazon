@@ -32,7 +32,7 @@ Una modifica si chiude da sola quando il contenuto torna uguale; non se ne apre 
 
 ## Accetta o ripristina
 
-- **Accetta come nuovo riferimento**: la modifica era voluta, il contenuto online diventa la versione approvata.
+- **Accetta come nuovo riferimento**: la modifica era voluta, il contenuto online diventa la versione approvata. Solo amministratori, perché cambia la versione approvata.
 - **Ripristina**: riporta online il contenuto approvato. Non modifica nulla subito: crea una richiesta che passa da **Approvazioni** (vedi Aggiornamento massivo e approvazioni). Puoi selezionare più modifiche e ripristinarle insieme.
 
 I **contenuti A+** non si ripristinano dalle API: li ripristini a mano su Seller Central o Vendor Central.

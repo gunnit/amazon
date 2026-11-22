@@ -32,7 +32,7 @@ A change closes on its own when the content matches again; a second one is not o
 
 ## Accept or restore
 
-- **Accept as new reference**: the change was intended, the live content becomes the approved version.
+- **Accept as new reference**: the change was intended, the live content becomes the approved version. Administrators only, because it changes the approved version.
 - **Restore**: puts the approved content back online. It does not change anything right away: it creates a request that goes through **Approvals** (see Bulk update and approvals). You can select several changes and restore them together.
 
 **A+ content** cannot be restored through the APIs: restore it by hand on Seller Central or Vendor Central.

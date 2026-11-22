@@ -3,8 +3,8 @@ content protection, variations and the approval queue (R2, R3).
 
 Every route needs an authenticated user and the account must belong to the user's
 organisation (404 otherwise). The admin role is needed to replace the rule overrides,
-approve the live content or a file as the baseline, and approve, submit, mark as
-uploaded by hand or refresh change requests. All database access sits in small ``_``
+approve the live content or a file as the baseline, accept an anomaly (it rewrites the
+baseline), and approve, submit, mark as uploaded by hand or refresh change requests. All database access sits in small ``_``
 helpers so the sorting, filtering and summary logic stays pure.
 """
 from __future__ import annotations
@@ -1203,10 +1203,10 @@ async def restore_anomalies(
 async def accept_anomaly_route(
     anomaly_id: UUID,
     current_user: CurrentUser,
-    organization: CurrentOrganization,
+    organization: AdminOrganization,
     db: DbSession,
 ):
-    """Accept the live value: the baseline follows it and the anomaly is resolved."""
+    """Accept the live value: the baseline follows it and the anomaly is resolved; admin only."""
     found = await _anomalies_by_ids(db, organization.id, [anomaly_id], lock=True)
     if not found:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Anomaly not found")

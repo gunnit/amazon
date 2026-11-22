@@ -42,7 +42,7 @@ In **New items** type the Amazon product type and download the **template**: it 
 
 The **check** uses Amazon's trial mode (VALIDATION_PREVIEW): it publishes nothing. A request that has not been validated cannot be sent. File-only requests do not go through this check.
 
-Who can do what: all operators upload files, create restores and **reject**. **Approving**, **sending to Amazon**, **refreshing the feed status** and **marking as uploaded by hand** are for **administrators** only. Before sending, the tool asks for confirmation and shows how many pages will change.
+Who can do what: all operators upload files, create restores and **reject**. **Approving**, **sending to Amazon**, **refreshing the feed status**, **marking as uploaded by hand** and, in Content protection, **accepting a change as the new reference** are for **administrators** only. Before sending, the tool asks for confirmation and shows how many pages will change.
 
 Under 50 requests each page goes out with a direct call; from 50 up, a single feed is sent, and its outcome is read with **Refresh feed status**.
 

@@ -13,6 +13,7 @@ import { catalogMonitorApi } from '@/services/api'
 import { apiErrorDetail } from '@/lib/apiError'
 import type { CatalogAnomaly } from '@/types'
 import type { TabProps } from '@/components/catalog/types'
+import { AdminButton } from './AdminButton'
 import { changeTypeLabel, fieldLabel, restoreInProgress } from './changeLabels'
 import { DiffLegend, FieldCompare } from './FieldCompare'
 
@@ -88,15 +89,16 @@ export function DiffView({ anomaly, onClose, onRestore, restoring, onShowHistory
                 {t('cm.history.open')}
               </Button>
               <div className="flex flex-wrap gap-2">
-                <Button
+                <AdminButton
                   variant="outline"
+                  adminOnlyTitle={t('cm.diff.acceptAdminOnly')}
                   onClick={() => accept.mutate(anomaly.id)}
                   disabled={pending || accept.isPending || restoring}
                   title={t('cm.diff.acceptHelp')}
                 >
                   {accept.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {t('cm.diff.accept')}
-                </Button>
+                </AdminButton>
                 <Button
                   onClick={() => onRestore(anomaly.id)}
                   disabled={pending || isAplus || restoring || accept.isPending}

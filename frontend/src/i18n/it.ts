@@ -1978,6 +1978,7 @@ const it: Record<string, string> = {
   'cm.diff.legendAdded': 'testo nuovo',
   'cm.diff.legendSlot': 'immagine cambiata',
   'cm.diff.accept': 'Accetta come nuovo riferimento',
+  'cm.diff.acceptAdminOnly': 'Solo gli amministratori possono accettare una modifica come nuovo riferimento',
   'cm.diff.acceptHelp': 'Il contenuto online diventa la versione approvata da proteggere',
   'cm.diff.accepted': 'Nuovo riferimento salvato',
   'cm.diff.acceptedHint': 'Il contenuto online ora è la versione approvata.',

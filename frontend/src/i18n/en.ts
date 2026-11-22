@@ -1974,6 +1974,7 @@ const en: Record<string, string> = {
   'cm.diff.legendAdded': 'new text',
   'cm.diff.legendSlot': 'changed image',
   'cm.diff.accept': 'Accept as new reference',
+  'cm.diff.acceptAdminOnly': 'Only admins can accept a change as the new reference',
   'cm.diff.acceptHelp': 'The live content becomes the approved version to protect',
   'cm.diff.accepted': 'New reference saved',
   'cm.diff.acceptedHint': 'The live content is now the approved version.',

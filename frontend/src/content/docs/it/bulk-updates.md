@@ -42,7 +42,7 @@ In **Nuovi articoli** scrivi il tipo di prodotto Amazon e scarica il **modello**
 
 La **verifica** usa la modalità di prova di Amazon (VALIDATION_PREVIEW): non pubblica nulla. Una richiesta non validata non si può inviare. Le richieste solo file non passano da questa verifica.
 
-Chi può fare cosa: tutti gli operatori caricano file, creano ripristini e **rifiutano**. **Approvare**, **inviare ad Amazon**, **aggiornare lo stato del feed** e **segnare come caricato a mano** è riservato agli **amministratori**. Prima dell'invio il tool chiede conferma e mostra quante schede verranno modificate.
+Chi può fare cosa: tutti gli operatori caricano file, creano ripristini e **rifiutano**. **Approvare**, **inviare ad Amazon**, **aggiornare lo stato del feed**, **segnare come caricato a mano** e, in Protezione contenuti, **accettare una modifica come nuovo riferimento** è riservato agli **amministratori**. Prima dell'invio il tool chiede conferma e mostra quante schede verranno modificate.
 
 Sotto le 50 richieste ogni scheda parte con una chiamata diretta; da 50 in su parte un unico feed, il cui esito si legge con **Aggiorna stato feed**.
 
