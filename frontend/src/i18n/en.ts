@@ -2117,7 +2117,7 @@ const en: Record<string, string> = {
   'cm.approvals.batch': 'Batch of {date}',
   'cm.approvals.batchCount': 'requests: {count}',
   'cm.approvals.download': 'Download file for Vendor Central',
-  'cm.approvals.downloadHelp': 'JSON_LISTINGS_FEED file with the batch\'s approved and file-only requests, to upload by hand',
+  'cm.approvals.downloadHelp': 'JSON_LISTINGS_FEED file with the batch\'s approved file-only requests, to upload by hand',
   'cm.approvals.refreshFeed': 'Refresh feed status',
   'cm.approvals.confirmTitle': 'Send the changes to Amazon?',
   'cm.approvals.confirmBody': 'You are about to change {count} product pages on Amazon. Continue?',

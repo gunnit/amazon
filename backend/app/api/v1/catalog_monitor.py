@@ -611,7 +611,6 @@ _OPEN_STATUSES = ("open", "acknowledged", "restore_requested")
 _RESTORABLE_STATUSES = frozenset({"open", "acknowledged"})
 _VARIATION_KINDS = ("child_detached", "unexpected_child", "family_broken", "theme_changed")
 _DEAD_RESTORE_STATUSES = frozenset({"rejected", "invalid", "failed"})
-_FEED_STATUSES = ("approved", "file_only")
 _MAX_REQUESTS = 500
 
 
@@ -874,10 +873,26 @@ def submit_skip_reason(row: Any) -> Optional[str]:
     return None if passed_validation(row) else "not_validated"
 
 
+def parent_sku_missing(row: Any) -> bool:
+    return bool((row.summary or {}).get("parent_sku_missing"))
+
+
+def in_feed_file(row: Any) -> bool:
+    """What the Vendor Central file may hold: approved file-only requests.
+
+    API requests travel through Amazon's check and the API, never as a file; a
+    file-only request waits for an admin's approval like any other. A request
+    whose parent SKU is unknown is eligible but left out (``download_feed_file``).
+    """
+    return row.status == "approved" and is_file_only(row)
+
+
 def mark_uploaded_skip_reason(row: Any) -> Optional[str]:
     if row.status != "approved":
         return f"status_{row.status}"
-    return None if is_file_only(row) else "not_file_only"
+    if not is_file_only(row):
+        return "not_file_only"
+    return "not_in_file" if parent_sku_missing(row) else None
 
 
 def mark_uploaded(rows: list[Any], user_id: Any, now: datetime) -> None:
@@ -1333,18 +1348,18 @@ async def download_feed_file(
     db: DbSession,
     batch_id: UUID,
 ):
-    """The batch's approved and file-only requests as a JSON_LISTINGS_FEED file.
+    """The batch's approved file-only requests as a JSON_LISTINGS_FEED file.
 
-    Requests the feed cannot hold (no SKU or product type) are listed in the
-    ``X-Skipped-Requests`` header, comma separated.
+    Requests the feed cannot hold (no SKU or product type, or an unknown parent
+    SKU) are listed in the ``X-Skipped-Requests`` header, comma separated.
     """
-    rows = [r for r in await _batch_requests(db, organization.id, batch_id) if r.status in _FEED_STATUSES]
+    rows = [r for r in await _batch_requests(db, organization.id, batch_id) if in_feed_file(r)]
     if not rows:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "No approved or file-only requests in batch")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No approved file-only requests in batch")
     account = await _account_or_404(db, organization.id, rows[0].account_id)
     seller_id = listing_seller_id(account, await _stored_capability(db, account.id)) or ""
     # A request whose parent SKU is unknown would upload an invalid parent SKU: never in the file.
-    unusable = {r.id for r in rows if (r.summary or {}).get("parent_sku_missing")}
+    unusable = {r.id for r in rows if parent_sku_missing(r)}
     feed = build_listings_feed(
         [r for r in rows if r.account_id == account.id and r.id not in unusable],
         seller_id,

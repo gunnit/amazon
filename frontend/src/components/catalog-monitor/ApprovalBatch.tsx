@@ -55,8 +55,8 @@ export function ApprovalBatch({
   )
   const kinds = [...new Set(allInBatch.map((r) => kindLabel(t, r.kind)))].join(', ')
   const [confirmMark, setConfirmMark] = useState(false)
-  // requests missing their parent SKU never go into the file
-  const fileReady = allInBatch.some((r) => r.file_only && inFeedFile(r))
+  // approved file-only requests only; those missing their parent SKU never go into the file
+  const fileReady = allInBatch.some(inFeedFile)
   const toMark = allInBatch.filter(awaitsManualUpload).map((r) => r.id)
   const feedIds = [
     ...new Set(

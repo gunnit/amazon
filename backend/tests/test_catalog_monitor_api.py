@@ -693,16 +693,17 @@ def test_submit_reopens_failed_restores_and_skips_file_only(monkeypatch):
     assert approved.id in reopen.seen
 
 
-def test_feed_file_contains_only_batch_requests(monkeypatch):
-    batch = uuid4()
-    approved = _req("approved", batch=batch, sku="TEST-SKU-001")
-    file_only = _req("file_only", batch=batch, sku="TEST-SKU-002")
-    no_sku = _req("file_only", batch=batch, sku=None)
-    pending = _req("pending", batch=batch, sku="TEST-SKU-003")
+def _file_only(status="approved", **kw):
+    """A request that can only travel as a feed file (no listing access or no SKU)."""
+    kw.setdefault("payload", {"patches": [{"op": "replace", "path": "/attributes/x"}],
+                              "file_only": True})
+    return _req(status, **kw)
 
+
+def _feed_app(monkeypatch, batch, rows):
     async def _batch(db, organization_id, batch_id):
         assert batch_id == batch  # requests of other batches are never loaded
-        return [approved, file_only, no_sku, pending]
+        return rows
 
     async def _account(db, organization_id, account_id):
         return SimpleNamespace(id=account_id, organization_id=organization_id,
@@ -715,24 +716,37 @@ def test_feed_file_contains_only_batch_requests(monkeypatch):
     monkeypatch.setattr(api, "_account_or_404", _account)
     monkeypatch.setattr(api, "_stored_capability", _capability)
     monkeypatch.setattr(api, "listing_seller_id", lambda account, cap: "SELLER1")
+
+
+def test_feed_file_contains_only_approved_file_only_requests_of_the_batch(monkeypatch):
+    batch = uuid4()
+    approved_file = _file_only(batch=batch, sku="TEST-SKU-001")
+    approved_api = _req("approved", batch=batch, sku="TEST-SKU-002", validation_issues=[])
+    not_approved = _file_only("file_only", batch=batch, sku="TEST-SKU-003")
+    no_sku = _file_only(batch=batch, sku=None)
+    pending = _req("pending", batch=batch, sku="TEST-SKU-004")
+    _feed_app(monkeypatch, batch, [approved_file, approved_api, not_approved, no_sku, pending])
     client, _ = _client()
     res = client.get("/catalog-monitor/changes/feed-file", params={"batch_id": str(batch)})
     assert res.status_code == 200, res.text
     assert res.headers["content-disposition"] == f'attachment; filename="listings-feed-{batch}.json"'
     document = res.json()
-    assert [m["sku"] for m in document["messages"]] == ["TEST-SKU-001", "TEST-SKU-002"]
+    # An API request goes through Amazon's check and the API, never a file; a
+    # file-only request goes into the file only once an admin approved it.
+    assert [m["sku"] for m in document["messages"]] == ["TEST-SKU-001"]
     assert document["header"]["sellerId"] == "SELLER1"
     assert res.headers["x-skipped-requests"] == str(no_sku.id)
 
 
-def test_feed_file_404_when_batch_has_no_downloadable_request(monkeypatch):
-    async def _batch(db, organization_id, batch_id):
-        return [_req("pending")]
-
-    monkeypatch.setattr(api, "_batch_requests", _batch)
+def test_feed_file_404_when_batch_has_no_approved_file_only_request(monkeypatch):
+    batch = uuid4()
+    _feed_app(monkeypatch, batch, [
+        _req("pending", batch=batch), _file_only("file_only", batch=batch),
+        _req("approved", batch=batch, validation_issues=[]),
+    ])
     client, _ = _client()
     assert client.get(
-        "/catalog-monitor/changes/feed-file", params={"batch_id": str(uuid4())}
+        "/catalog-monitor/changes/feed-file", params={"batch_id": str(batch)}
     ).status_code == 404
 
 
@@ -848,22 +862,9 @@ def test_image_restore_deletes_only_live_filled_slots():
 
 def test_feed_file_excludes_requests_with_missing_parent_sku(monkeypatch):
     batch = uuid4()
-    good = _req("file_only", batch=batch, sku="TEST-SKU-001")
-    bad = _req("file_only", batch=batch, sku="TEST-SKU-002", summary={"parent_sku_missing": True})
-
-    async def _batch(db, organization_id, batch_id):
-        return [good, bad]
-
-    async def _account(db, organization_id, account_id):
-        return SimpleNamespace(id=account_id, organization_id=organization_id, marketplace_id=MP)
-
-    async def _capability(db, account_id):
-        return None
-
-    monkeypatch.setattr(api, "_batch_requests", _batch)
-    monkeypatch.setattr(api, "_account_or_404", _account)
-    monkeypatch.setattr(api, "_stored_capability", _capability)
-    monkeypatch.setattr(api, "listing_seller_id", lambda account, cap: "SELLER1")
+    good = _file_only(batch=batch, sku="TEST-SKU-001")
+    bad = _file_only(batch=batch, sku="TEST-SKU-002", summary={"parent_sku_missing": True})
+    _feed_app(monkeypatch, batch, [good, bad])
     client, _ = _client()
     res = client.get("/catalog-monitor/changes/feed-file", params={"batch_id": str(batch)})
     assert [m["sku"] for m in res.json()["messages"]] == ["TEST-SKU-001"]
@@ -1327,6 +1328,20 @@ def test_mark_uploaded_submits_only_approved_file_only_requests(monkeypatch):
         str(missing): "not_found",
     }
     assert db.commits == 1
+
+
+def test_mark_uploaded_skips_requests_never_in_the_file(monkeypatch):
+    in_file = _file_only()
+    parent_missing = _file_only(summary={"parent_sku_missing": True})
+    _approval_app(monkeypatch, [in_file, parent_missing])
+    client, _ = _client()
+    res = client.post(
+        "/catalog-monitor/changes/mark-uploaded",
+        json={"ids": [str(in_file.id), str(parent_missing.id)]},
+    )
+    assert res.status_code == 200, res.text
+    assert (in_file.status, parent_missing.status) == ("submitted", "approved")
+    assert res.json()["skipped"] == {str(parent_missing.id): "not_in_file"}
 
 
 def test_mark_uploaded_and_baseline_approval_require_admin():

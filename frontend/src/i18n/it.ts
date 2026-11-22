@@ -2121,7 +2121,7 @@ const it: Record<string, string> = {
   'cm.approvals.batch': 'Lotto del {date}',
   'cm.approvals.batchCount': 'richieste: {count}',
   'cm.approvals.download': 'Scarica file per Vendor Central',
-  'cm.approvals.downloadHelp': 'File JSON_LISTINGS_FEED con le richieste approvate e solo file del lotto, da caricare a mano',
+  'cm.approvals.downloadHelp': 'File JSON_LISTINGS_FEED con le richieste solo file approvate del lotto, da caricare a mano',
   'cm.approvals.refreshFeed': 'Aggiorna stato feed',
   'cm.approvals.confirmTitle': 'Inviare le modifiche ad Amazon?',
   'cm.approvals.confirmBody': 'Stai per modificare {count} schede prodotto su Amazon. Continuare?',

@@ -48,7 +48,7 @@ Sotto le 50 richieste ogni scheda parte con una chiamata diretta; da 50 in su pa
 
 ## Vendor Central: file e caricamento a mano
 
-Se un account non ha accesso in scrittura alle schede (nessun codice vendor, o manca lo SKU), le richieste sono **solo file**. Dopo l'approvazione usa **Scarica file per Vendor Central** (un file JSON_LISTINGS_FEED con le richieste approvate di quel lotto), caricalo a mano su Vendor Central, poi premi **Segna come caricato a mano**: le richieste passano a «Caricata a mano» e non risultano più da gestire. Le richieste a cui manca lo SKU o il tipo di prodotto restano fuori dal file. Amazon non le controlla prima dell'approvazione: il file lo controlla Vendor Central al caricamento.
+Se un account non ha accesso in scrittura alle schede (nessun codice vendor, o manca lo SKU), le richieste sono **solo file**. Dopo l'approvazione usa **Scarica file per Vendor Central** (un file JSON_LISTINGS_FEED con le sole richieste solo file approvate di quel lotto: quelle che passano dalle API non finiscono mai nel file), caricalo a mano su Vendor Central, poi premi **Segna come caricato a mano**: le richieste passano a «Caricata a mano» e non risultano più da gestire. Le richieste a cui manca lo SKU, il tipo di prodotto o lo SKU del parent restano fuori dal file e non si possono segnare come caricate. Amazon non le controlla prima dell'approvazione: il file lo controlla Vendor Central al caricamento.
 
 ## Immagini da togliere
 

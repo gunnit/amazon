@@ -48,7 +48,7 @@ Under 50 requests each page goes out with a direct call; from 50 up, a single fe
 
 ## Vendor Central: file and manual upload
 
-If an account has no write access to listings (no vendor code, or the SKU is missing), the requests are **file only**. After approval use **Download file for Vendor Central** (a JSON_LISTINGS_FEED file with that batch's approved requests), upload it by hand on Vendor Central, then press **Mark as uploaded by hand**: the requests move to "Uploaded by hand" and no longer count as to-do. Requests missing the SKU or the product type stay out of the file. Amazon does not check them before approval: Vendor Central checks the file when you upload it.
+If an account has no write access to listings (no vendor code, or the SKU is missing), the requests are **file only**. After approval use **Download file for Vendor Central** (a JSON_LISTINGS_FEED file with only that batch's approved file-only requests: requests that go through the API never end up in the file), upload it by hand on Vendor Central, then press **Mark as uploaded by hand**: the requests move to "Uploaded by hand" and no longer count as to-do. Requests missing the SKU, the product type or the parent SKU stay out of the file and cannot be marked as uploaded. Amazon does not check them before approval: Vendor Central checks the file when you upload it.
 
 ## Images to remove
 

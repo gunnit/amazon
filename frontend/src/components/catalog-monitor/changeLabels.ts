@@ -155,13 +155,15 @@ export const CHANGES_LIST_CAP = 500
 export const isManualUpload = (request: ChangeRequest) =>
   request.status === 'submitted' && request.submission_result?.manual === true
 
-/** An approved file-only request still waiting for the operator's manual upload. */
-export const awaitsManualUpload = (request: ChangeRequest) =>
-  request.status === 'approved' && request.file_only
-
-/** Goes into the Vendor Central file: approved or file-only, and not missing its parent SKU. */
+/**
+ * Goes into the Vendor Central file: a file-only request an admin approved, unless its
+ * parent SKU is missing. API requests never travel as a file (backend in_feed_file).
+ */
 export const inFeedFile = (request: ChangeRequest) =>
-  (request.status === 'approved' || request.status === 'file_only') && !parentSkuMissing(request)
+  request.status === 'approved' && request.file_only && !parentSkuMissing(request)
+
+/** An approved file-only request still waiting for the operator's manual upload: the file's requests. */
+export const awaitsManualUpload = inFeedFile
 
 const OPEN_STATUSES: ChangeRequestStatus[] = ['pending', 'valid', 'file_only', 'approved', 'submitted']
 

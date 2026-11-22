@@ -107,7 +107,7 @@ export function useApprovalActions({ accountId, requests, t, toast, onDone }: Op
     onSuccess: (file, batchId) => {
       saveBlob(file.blob, file.filename)
       const eligible = requests.filter(
-        (r) => r.batch_id === batchId && (r.status === 'approved' || r.status === 'file_only'),
+        (r) => r.batch_id === batchId && r.status === 'approved' && r.file_only,
       )
       // The header names the excluded requests; if it cannot be read, count them.
       const skippedIds =
