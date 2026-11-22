@@ -28,6 +28,15 @@ services:
         value: "false"
       - key: ENABLE_INPROCESS_SCHEDULER
         value: "true"
+      # Daily catalogue monitor scan (05:00 UTC): off unless CATALOG_SCAN_ENABLED
+      # is "true", so the first night neither burns client accounts' Catalog
+      # quota nor runs this single 512 MB instance out of memory. Then it scans
+      # CATALOG_SCAN_ACCOUNT_IDS (comma-separated account UUIDs), or every active
+      # account when that is empty. "Avvia scansione" in the app works either way.
+      - key: CATALOG_SCAN_ENABLED
+        sync: false
+      - key: CATALOG_SCAN_ACCOUNT_IDS
+        sync: false
       # There is no Redis in this deployment. Left unset, the setting defaults
       # to redis://localhost:6379 and /health/ready fails forever on a
       # dependency the app does not use. Empty makes the check report

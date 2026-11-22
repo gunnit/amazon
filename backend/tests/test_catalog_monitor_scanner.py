@@ -723,6 +723,7 @@ def test_run_catalog_scan_all_never_raises(monkeypatch):
     def unavailable():
         raise RuntimeError("database unavailable")
 
+    monkeypatch.setattr(settings, "CATALOG_SCAN_ENABLED", True)
     monkeypatch.setattr(extraction_runner, "_make_local_session_factory", unavailable)
 
     assert scanner.run_catalog_scan_all()["status"] == "error"
@@ -773,3 +774,101 @@ def test_celery_beat_runs_the_catalog_scan_and_not_the_old_snapshot(monkeypatch)
 
     monkeypatch.setattr(scanner, "run_catalog_scan_all", lambda: {"status": "success"})
     assert extraction_tasks.scan_catalogs.run() == {"status": "success"}
+
+
+# ---- the daily scan switch (final review ruling) ----
+
+
+class _FakeSession:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _scheduled_run(monkeypatch, account_ids):
+    """Run the scheduler entry with fake accounts; returns the ids it scanned."""
+    scanned = []
+
+    async def fake_scan_one(account_id, session_factory):
+        scanned.append(account_id)
+        return 1
+
+    async def fake_ids(db):
+        return list(account_ids)
+
+    monkeypatch.setattr(
+        extraction_runner, "_make_local_session_factory", lambda: (_FakeEngine(), _FakeSession)
+    )
+    monkeypatch.setattr(scanner, "list_active_account_ids", fake_ids)
+    monkeypatch.setattr(scanner, "_scheduled_scan_one", fake_scan_one)
+    return scanned
+
+
+def test_the_daily_scan_is_off_unless_enabled(monkeypatch):
+    def must_not_run():
+        raise AssertionError("the scan must not touch the database while disabled")
+
+    monkeypatch.setattr(settings, "CATALOG_SCAN_ENABLED", False)
+    monkeypatch.setattr(extraction_runner, "_make_local_session_factory", must_not_run)
+    assert scanner.run_catalog_scan_all() == {"status": "disabled", "accounts": 0, "records": 0}
+
+
+def test_the_daily_scan_covers_every_active_account_without_a_list(monkeypatch):
+    ids = [uuid4(), uuid4()]
+    scanned = _scheduled_run(monkeypatch, ids)
+    monkeypatch.setattr(settings, "CATALOG_SCAN_ENABLED", True)
+    monkeypatch.setattr(settings, "CATALOG_SCAN_ACCOUNT_IDS", "")
+    result = scanner.run_catalog_scan_all()
+    assert (result["status"], result["accounts"], scanned) == ("success", 2, ids)
+
+
+def test_the_daily_scan_covers_only_the_listed_accounts(monkeypatch):
+    chosen, other, missing = uuid4(), uuid4(), uuid4()
+    scanned = _scheduled_run(monkeypatch, [chosen, other])
+    monkeypatch.setattr(settings, "CATALOG_SCAN_ENABLED", True)
+    monkeypatch.setattr(settings, "CATALOG_SCAN_ACCOUNT_IDS", f" {chosen} , not-a-uuid,{missing}")
+    assert scanner.run_catalog_scan_all()["accounts"] == 1
+    assert scanned == [chosen]  # listed but inactive or unknown accounts are not scanned
+
+
+def test_a_list_with_no_valid_id_scans_nothing(monkeypatch):
+    scanned = _scheduled_run(monkeypatch, [uuid4()])
+    monkeypatch.setattr(settings, "CATALOG_SCAN_ENABLED", True)
+    monkeypatch.setattr(settings, "CATALOG_SCAN_ACCOUNT_IDS", "typo")
+    assert scanner.run_catalog_scan_all()["accounts"] == 0 and scanned == []
+
+
+def test_the_daily_scan_waits_for_no_other_scheduled_sync(monkeypatch):
+    scanned = _scheduled_run(monkeypatch, [uuid4()])
+    monkeypatch.setattr(settings, "CATALOG_SCAN_ENABLED", True)
+    assert extraction_runner._SCHEDULED_SYNC_LOCK.acquire(blocking=False)
+    try:
+        assert scanner.run_catalog_scan_all()["status"] == "skipped"
+    finally:
+        extraction_runner._SCHEDULED_SYNC_LOCK.release()
+    assert scanned == []
+
+
+def test_scan_now_works_with_the_daily_scan_off(monkeypatch):
+    account_id = uuid4()
+
+    async def fake_scan(aid, session_factory, asins=None):
+        return ScanSummary(account_id=aid, scanned=2)
+
+    monkeypatch.setattr(settings, "CATALOG_SCAN_ENABLED", False)
+    monkeypatch.setattr(scanner, "_scan_account_by_id", fake_scan)
+    monkeypatch.setattr(scanner, "_make_local_session_factory", lambda: (_FakeEngine(), None))
+    assert scanner.start_account_scan(account_id) is True
+    assert _wait_until(lambda: scanner.scan_state(account_id)["finished_at"] is not None)
+    assert scanner.scan_state(account_id)["summary"]["scanned"] == 2
+
+
+def test_an_empty_switch_from_the_environment_means_off(monkeypatch):
+    from app.config import Settings
+
+    monkeypatch.setenv("CATALOG_SCAN_ENABLED", "")
+    assert Settings().CATALOG_SCAN_ENABLED is False
+    monkeypatch.setenv("CATALOG_SCAN_ENABLED", "true")
+    assert Settings().CATALOG_SCAN_ENABLED is True

@@ -78,6 +78,8 @@ Every setting on `Settings` in `app/config.py`. Secrets show `—` instead of a 
 | `INPROCESS_SALES_REFRESH_MINUTE_UTC` | `int` | `15` |
 | `SCHEDULED_REPORT_SCAN_INTERVAL_MINUTES` | `int` | `10` |
 | `EXECUTE_TASKS_INLINE` | `bool` | `False` |
+| `CATALOG_SCAN_ENABLED` | `bool` | `False` |
+| `CATALOG_SCAN_ACCOUNT_IDS` | `str` | `''` |
 | `CATALOG_SCAN_HOUR_UTC` | `int` | `5` |
 | `CATALOG_SCAN_MINUTE_UTC` | `int` | `0` |
 | `CATALOG_SCAN_REQUEST_INTERVAL_S` | `float` | `0.55` |
@@ -90,3 +92,8 @@ Every setting on `Settings` in `app/config.py`. Secrets show `—` instead of a 
 | `SENTRY_TRACES_SAMPLE_RATE` | `float` | `0.1` |
 | `LOG_LEVEL` | `str` | `'INFO'` |
 | `LOG_FORMAT` | `str` | `'json'` |
+
+## Notes
+
+- `CATALOG_SCAN_ENABLED`: The daily catalogue scan (job `catalog-monitor-scan`, and its Celery twin) does nothing unless this is `true`. Off by default so a first night over every client account neither burns Catalog quota nor runs the single 512 MB instance out of memory. "Avvia scansione" (`POST /catalog-monitor/scan`) works either way.
+- `CATALOG_SCAN_ACCOUNT_IDS`: Comma-separated account UUIDs the daily scan covers when enabled; empty means every active account. Entries that are not UUIDs are ignored, and a list with no valid entry scans nothing. The scan skips the day while another scheduled sync holds the shared lock.

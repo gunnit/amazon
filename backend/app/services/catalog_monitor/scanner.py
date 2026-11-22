@@ -17,9 +17,10 @@ evaluation as a ``ListingQualitySnapshot``, and opens, touches or resolves:
   read, is unknown: it neither opens nor resolves a variation anomaly.
 
 A product that fails is counted and the scan moves on (each product runs in a
-savepoint). ``run_catalog_scan_all`` (scheduler) and ``start_account_scan``
-("Scan now", background thread) never raise; their state lives in process
-memory, keyed by account id.
+savepoint). ``run_catalog_scan_all`` (scheduler; only with CATALOG_SCAN_ENABLED,
+for CATALOG_SCAN_ACCOUNT_IDS) and ``start_account_scan`` ("Scan now", background
+thread, always available) never raise; their state lives in process memory,
+keyed by account id.
 """
 from __future__ import annotations
 
@@ -58,7 +59,12 @@ from app.services.catalog_monitor.ptd import ProductTypeDefinitionService
 from app.services.catalog_monitor.repository import CatalogMonitorRepository
 from app.services.catalog_monitor.rule_config import resolve_rule_configs
 from app.services.catalog_monitor.rules import RuleContext, evaluate_listing
-from app.services.extraction_runner import _make_local_session_factory, run_for_all_accounts
+from app.services.extraction_runner import (
+    _SCHEDULED_SYNC_LOCK,
+    _make_local_session_factory,
+    _run_per_account_job,
+    list_active_account_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -500,10 +506,49 @@ async def _scheduled_scan_one(account_id: UUID, session_factory) -> int:
     return summary.scanned if summary is not None else 0
 
 
+def scan_account_allowlist(raw: str) -> Optional[set[UUID]]:
+    """Accounts the daily scan may cover: None (every active account) when ``raw`` is empty.
+
+    Entries that are not UUIDs are logged and ignored; a list with no valid entry
+    scans nothing rather than everything.
+    """
+    entries = [e.strip() for e in (raw or "").split(",") if e.strip()]
+    if not entries:
+        return None
+    allowed: set[UUID] = set()
+    for entry in entries:
+        try:
+            allowed.add(UUID(entry))
+        except ValueError:
+            logger.warning("CATALOG_SCAN_ACCOUNT_IDS: %r is not an account id, ignored", entry)
+    return allowed
+
+
+async def _scheduled_account_ids(db) -> list[UUID]:
+    """Active accounts, narrowed to CATALOG_SCAN_ACCOUNT_IDS when it is set."""
+    ids = await list_active_account_ids(db)
+    allowed = scan_account_allowlist(settings.CATALOG_SCAN_ACCOUNT_IDS)
+    return ids if allowed is None else [i for i in ids if i in allowed]
+
+
 def run_catalog_scan_all() -> dict:
-    """Scheduler entry: scan every active account, Seller and Vendor. Never raises."""
+    """Scheduler entry (and its Celery twin): the daily scan; never raises.
+
+    Does nothing unless CATALOG_SCAN_ENABLED; then scans the active accounts of
+    CATALOG_SCAN_ACCOUNT_IDS (all when empty), and skips the day when another
+    scheduled sync holds the shared lock. "Scan now" (``start_account_scan``)
+    does not depend on either setting.
+    """
+    if not settings.CATALOG_SCAN_ENABLED:
+        logger.info("Catalog monitor scan skipped: CATALOG_SCAN_ENABLED is off")
+        return {"status": "disabled", "accounts": 0, "records": 0}
     try:
-        return run_for_all_accounts("Catalog monitor scan", _scheduled_scan_one)
+        return _run_per_account_job(
+            "Catalog monitor scan",
+            _scheduled_scan_one,
+            _scheduled_account_ids,
+            lock=_SCHEDULED_SYNC_LOCK,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("Catalog monitor scan failed")
         return {"status": "error", "accounts": 0, "records": 0}

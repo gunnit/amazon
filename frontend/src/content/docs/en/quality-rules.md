@@ -46,7 +46,7 @@ The most specific rule always wins. «Restore the default value» goes back to t
 
 ## When traffic lights update
 
-The tool scans on its own every night at 05:00 UTC, for all active accounts (Seller and Vendor). To do it right away on one account use **Start scan**; products never scanned do not appear until a scan has run. We do not use Amazon notifications: the nightly scan replaces them.
+The tool can scan on its own every night at 05:00 UTC, for the active accounts (Seller and Vendor). The nightly scan runs only when the platform administrator has enabled it, possibly for some accounts only; otherwise, and to update one account right away, use **Start scan**; products never scanned do not appear until a scan has run. We do not use Amazon notifications: the nightly scan replaces them.
 
 ## Check Amazon access
 

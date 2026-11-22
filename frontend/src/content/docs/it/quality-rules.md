@@ -46,7 +46,7 @@ Vince sempre la regola più specifica. Con «Ripristina il valore predefinito» 
 
 ## Quando si aggiornano i semafori
 
-Il tool scansiona da solo ogni notte, alle 05:00 UTC, tutti gli account attivi (Seller e Vendor). Per farlo subito su un account usa **Avvia scansione**; i prodotti mai scansionati non compaiono finché non è stata fatta una scansione. Non usiamo le notifiche di Amazon: la scansione notturna le sostituisce.
+Il tool può scansionare da solo ogni notte, alle 05:00 UTC, gli account attivi (Seller e Vendor). La scansione notturna parte solo se l'ha attivata l'amministratore della piattaforma, eventualmente per alcuni account soltanto; altrimenti, e per aggiornare subito un account, usa **Avvia scansione**; i prodotti mai scansionati non compaiono finché non è stata fatta una scansione. Non usiamo le notifiche di Amazon: la scansione notturna le sostituisce.
 
 ## Verifica accesso Amazon
 

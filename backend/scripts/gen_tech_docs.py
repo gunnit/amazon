@@ -108,6 +108,23 @@ def settings_fields() -> list[tuple[str, str, str]]:
     return out
 
 
+# Settings whose meaning the table cannot show. Hand-written: keep them short.
+SETTING_NOTES = {
+    "CATALOG_SCAN_ENABLED": (
+        "The daily catalogue scan (job `catalog-monitor-scan`, and its Celery twin) "
+        "does nothing unless this is `true`. Off by default so a first night over every "
+        "client account neither burns Catalog quota nor runs the single 512 MB instance "
+        "out of memory. \"Avvia scansione\" (`POST /catalog-monitor/scan`) works either way."
+    ),
+    "CATALOG_SCAN_ACCOUNT_IDS": (
+        "Comma-separated account UUIDs the daily scan covers when enabled; empty means "
+        "every active account. Entries that are not UUIDs are ignored, and a list with no "
+        "valid entry scans nothing. The scan skips the day while another scheduled sync "
+        "holds the shared lock."
+    ),
+}
+
+
 def migrations() -> list[str]:
     d = ROOT / "app/db/migrations/versions"
     return sorted(p.stem for p in d.glob("*.py")) if d.exists() else []
@@ -161,6 +178,9 @@ def build() -> dict[str, str]:
             "| Setting | Type | Default |\n| --- | --- | --- |\n"]
     for name, typ, default in cfg:
         conf.append(f"| `{name}` | `{typ}` | `{default}` |\n")
+    conf.append("\n## Notes\n\n")
+    for name, note in SETTING_NOTES.items():
+        conf.append(f"- `{name}`: {note}\n")
 
     return {
         "tech-scheduler.md": "".join(scheduler),

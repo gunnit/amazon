@@ -1,5 +1,6 @@
 """Application configuration settings."""
 from typing import Optional, List
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -143,6 +144,13 @@ class Settings(BaseSettings):
     EXECUTE_TASKS_INLINE: bool = False
 
     # Catalogue monitoring (R1-R4)
+    # The daily scan (in-process scheduler and its Celery twin) runs only when an
+    # administrator enables it, and then only for CATALOG_SCAN_ACCOUNT_IDS
+    # (comma-separated account UUIDs; empty = every active account). Off by
+    # default: a first night over every client account burns Catalog quota and
+    # memory on the single 512 MB instance. "Avvia scansione" works either way.
+    CATALOG_SCAN_ENABLED: bool = False
+    CATALOG_SCAN_ACCOUNT_IDS: str = ""
     CATALOG_SCAN_HOUR_UTC: int = 5
     CATALOG_SCAN_MINUTE_UTC: int = 0
     CATALOG_SCAN_REQUEST_INTERVAL_S: float = 0.55
@@ -174,6 +182,14 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+
+    @field_validator("CATALOG_SCAN_ENABLED", mode="before")
+    @classmethod
+    def _empty_switch_is_off(cls, value):
+        # A dashboard variable left empty arrives as "": off, not a boot failure.
+        if isinstance(value, str) and not value.strip():
+            return False
+        return value
 
     @property
     def is_production(self) -> bool:
