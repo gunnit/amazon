@@ -115,6 +115,27 @@ async def test_latest_versions_returns_one_row_per_asin(db, account):
 
 
 @pytest.mark.asyncio
+async def test_light_reads_for_catalogue_scale(db, account):
+    repo = CatalogMonitorRepository(db)
+    t1, t2 = (datetime(2026, 11, d, 5, 0, tzinfo=timezone.utc) for d in (21, 22))
+    mp = "APJ6JRA9NG5V4"
+    await repo.save_version(account.id, "B0TEST0001", ListingContent("B0TEST0001", mp, sku="OLD-SKU"), t1)
+    await repo.save_version(account.id, "B0TEST0001", ListingContent("B0TEST0001", mp, sku="TEST-SKU-001"), t2)
+    await repo.save_version(account.id, "B0TEST0002", ListingContent("B0TEST0002", mp), t1)
+    await repo.save_version(account.id, "B0TEST0003", ListingContent("B0TEST0003", mp, sku="TEST-SKU-003"), t1)
+
+    assert await repo.version_asins(account.id) == ["B0TEST0001", "B0TEST0002", "B0TEST0003"]
+    # the latest version's SKU only, read in SQL: no content payload is loaded
+    assert await repo.latest_skus(account.id) == {"TEST-SKU-001", "TEST-SKU-003"}
+
+    await repo.upsert_baseline(account.id, "B0TEST0001", _content(), "live_snapshot", None)
+    await repo.upsert_baseline(account.id, "B0TEST0002", _content(), "live_snapshot", None)
+    assert list(await repo.baselines(account.id, ["B0TEST0002", "B0TEST0404"])) == ["B0TEST0002"]
+    assert await repo.baselines(account.id, []) == {}
+    assert sorted(await repo.baselines(account.id)) == ["B0TEST0001", "B0TEST0002"]
+
+
+@pytest.mark.asyncio
 async def test_open_or_touch_anomaly_no_duplicate(db, account):
     repo = CatalogMonitorRepository(db)
     a1, opened = await repo.open_or_touch_anomaly(

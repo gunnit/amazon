@@ -121,8 +121,8 @@ class FakeRepo(CatalogMonitorRepository):
     async def capability(self, account_id):
         return self.cap
 
-    async def baselines(self, account_id):
-        return dict(self.baseline_rows)
+    async def baselines(self, account_id, asins=None):
+        return {a: r for a, r in self.baseline_rows.items() if asins is None or a in asins}
 
     async def upsert_baseline(self, account_id, asin, content, source, user_id):
         self.upserts.append((asin, content, source, user_id))

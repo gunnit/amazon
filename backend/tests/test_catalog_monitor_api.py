@@ -456,7 +456,8 @@ def test_restore_endpoint_creates_validates_and_links(monkeypatch, known_account
         assert lock is True
         return [a1, a_other_kind]
 
-    async def _baselines(db, account_id):
+    async def _baselines(db, account_id, asins):
+        assert asins == ["B0TEST0001"]  # only the ASINs being restored
         return {"B0TEST0001": _baseline_row("B0TEST0001")}
 
     async def _versions(db, account_id, asins):
@@ -882,7 +883,8 @@ def test_restore_invalid_at_create_reopens_its_anomaly(monkeypatch, known_accoun
     async def _by_ids(db, organization_id, ids, lock=False):
         return [anomaly]
 
-    async def _baselines(db, account_id):
+    async def _baselines(db, account_id, asins):
+        assert asins == ["B0TEST0001"]  # only the ASINs being restored
         return {"B0TEST0001": _baseline_row("B0TEST0001")}
 
     async def _contents(db, account_id, asins):
@@ -1448,7 +1450,7 @@ def test_restore_again_after_the_linked_restore_was_accepted(monkeypatch, known_
         both = {**stuck_statuses, **queued_statuses}
         return {i: both[i] for i in ids if i in both}
 
-    async def _baselines(db, account_id, *args):
+    async def _baselines(db, account_id, asins):
         return {a: _baseline_row(a) for a in ("B0TEST0001", "B0TEST0002")}
 
     async def _versions(db, account_id, asins):

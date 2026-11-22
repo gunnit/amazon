@@ -27,23 +27,34 @@ SOURCE_UPLOAD = "excel_upload"
 # Restores write the baseline back and variation restores touch no content: only
 # these kinds change what the brand approved.
 BASELINE_CHANGING_KINDS = frozenset({"bulk_update", "new_item"})
+# Versions and baselines carry full content (10-30 KB each): read at most this many at a time.
+BASELINE_CHUNK = 200
 _OTHER_IMAGE = re.compile(r"other_product_image_locator_(\d+)")
+
+
+def _chunks(items: list[str]) -> list[list[str]]:
+    return [items[i : i + BASELINE_CHUNK] for i in range(0, len(items), BASELINE_CHUNK)]
 
 
 async def approve_live_as_baseline(
     repo, account_id: UUID, asins: Optional[list[str]], user_id: Optional[UUID]
 ) -> int:
-    """Make the latest live content the baseline; returns the baselines written."""
-    versions = await repo.latest_versions(account_id, asins)
+    """Make the latest live content the baseline; returns the baselines written.
+
+    ``asins`` None means every ASIN with live content, read ``BASELINE_CHUNK`` at a time.
+    """
+    wanted = await repo.version_asins(account_id) if asins is None else sorted(set(asins))
     written = 0
-    for asin in sorted(versions):
-        content = content_from_dict(versions[asin].content)
-        await repo.upsert_baseline(account_id, asin, content, SOURCE_LIVE, user_id)
-        written += 1
-        if content.child_asins:
-            await repo.upsert_family_baseline(
-                account_id, asin, content.variation_theme, list(content.child_asins)
-            )
+    for chunk in _chunks(wanted):
+        versions = await repo.latest_versions(account_id, chunk)
+        for asin in sorted(versions):
+            content = content_from_dict(versions[asin].content)
+            await repo.upsert_baseline(account_id, asin, content, SOURCE_LIVE, user_id)
+            written += 1
+            if content.child_asins:
+                await repo.upsert_family_baseline(
+                    account_id, asin, content.variation_theme, list(content.child_asins)
+                )
     return written
 
 
@@ -72,7 +83,7 @@ async def accept_anomaly(
 
 async def _accept_content_change(repo, anomaly: CatalogAnomaly, user_id) -> None:
     account_id, asin, name, live = anomaly.account_id, anomaly.asin, anomaly.field, anomaly.live_value
-    baseline_row = (await repo.baselines(account_id)).get(asin)
+    baseline_row = (await repo.baselines(account_id, [asin])).get(asin)
     if baseline_row is None:
         raise ValueError(f"{asin}: no baseline to update")
     content = content_from_dict(baseline_row.content)
@@ -156,17 +167,22 @@ def _apply_cells(content: ListingContent, cells: dict[str, Any]) -> ListingConte
 async def import_baseline_rows(
     repo, account_id: UUID, rows: list[tuple[str, dict]], user_id: Optional[UUID]
 ) -> tuple[int, list[str]]:
-    """Approved content from an upload: live content plus the given cells."""
-    versions = await repo.latest_versions(account_id, [asin for asin, _ in rows])
+    """Approved content from an upload: live content plus the given cells.
+
+    Live content is read ``BASELINE_CHUNK`` rows at a time.
+    """
     written, errors = 0, []
-    for asin, cells in rows:
-        version = versions.get(asin)
-        if version is None:
-            errors.append(f"{asin}: no live content yet")
-            continue
-        content = _apply_cells(content_from_dict(version.content), cells)
-        await repo.upsert_baseline(account_id, asin, content, SOURCE_UPLOAD, user_id)
-        written += 1
+    for start in range(0, len(rows), BASELINE_CHUNK):
+        chunk = rows[start : start + BASELINE_CHUNK]
+        versions = await repo.latest_versions(account_id, [asin for asin, _ in chunk])
+        for asin, cells in chunk:
+            version = versions.get(asin)
+            if version is None:
+                errors.append(f"{asin}: no live content yet")
+                continue
+            content = _apply_cells(content_from_dict(version.content), cells)
+            await repo.upsert_baseline(account_id, asin, content, SOURCE_UPLOAD, user_id)
+            written += 1
     return written, errors
 
 
@@ -250,7 +266,7 @@ async def apply_accepted_changes(repo, account_id: UUID, requests: list[Any]) ->
     ]
     if not todo:
         return 0
-    rows = await repo.baselines(account_id)
+    rows = await repo.baselines(account_id, sorted({r.asin for r in todo}))
     updated = 0
     for request in todo:
         row = rows.get(request.asin)

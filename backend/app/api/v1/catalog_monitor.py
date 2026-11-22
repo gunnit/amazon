@@ -994,8 +994,8 @@ async def _list_anomalies(
     return [(row[0], row[1]) for row in (await db.execute(stmt)).all()]
 
 
-async def _baselines(db, account_id: UUID) -> dict[str, ListingContentBaseline]:
-    return await CatalogMonitorRepository(db).baselines(account_id)
+async def _baselines(db, account_id: UUID, asins: list[str]) -> dict[str, ListingContentBaseline]:
+    return await CatalogMonitorRepository(db).baselines(account_id, asins)
 
 
 async def _latest_content_dicts(db, account_id: UUID, asins: list[str]) -> dict[str, dict]:
@@ -1178,7 +1178,7 @@ async def restore_anomalies(
     asins = sorted({a.asin for a in eligible})
     items, not_restorable, more_skipped = build_restore_items(
         eligible,
-        await _baselines(db, account.id),
+        await _baselines(db, account.id, asins),
         await _latest_content_dicts(db, account.id, asins),
         {asin: p.sku for asin, p in (await _products_by_asin(db, account.id, asins)).items() if p.sku},
     )
@@ -1619,9 +1619,11 @@ async def _export_rows(db, account_id: UUID) -> list[tuple[Product, Any]]:
 
 
 async def _live_skus(db, account_id: UUID) -> set[str]:
-    """SKUs of the latest listing content: Product.sku can be empty (vendor, catalogue-only)."""
-    versions = await CatalogMonitorRepository(db).latest_versions(account_id)
-    return {sku for v in versions.values() if (sku := (v.content or {}).get("sku"))}
+    """SKUs of the latest listing content: Product.sku can be empty (vendor, catalogue-only).
+
+    Read in SQL: no content payload is loaded.
+    """
+    return await CatalogMonitorRepository(db).latest_skus(account_id)
 
 
 async def _product_type_required(db, account: Any, product_type: str) -> Optional[list[str]]:

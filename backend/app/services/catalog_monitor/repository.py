@@ -53,6 +53,31 @@ class CatalogMonitorRepository:
         )
         return {row.asin: row for row in (await self.db.execute(stmt)).scalars()}
 
+    async def version_asins(self, account_id: UUID) -> list[str]:
+        """ASINs with at least one stored version, sorted; no content is loaded."""
+        result = await self.db.execute(
+            select(ListingContentVersion.asin)
+            .where(ListingContentVersion.account_id == account_id)
+            .distinct()
+            .order_by(ListingContentVersion.asin)
+        )
+        return [row[0] for row in result.all()]
+
+    async def latest_skus(self, account_id: UUID) -> set[str]:
+        """SKUs of each ASIN's latest version, read in SQL (``content->>'sku'``)."""
+        sku = ListingContentVersion.content["sku"].astext
+        stmt = (
+            select(ListingContentVersion.asin, sku)
+            .where(ListingContentVersion.account_id == account_id)
+            .distinct(ListingContentVersion.asin)
+            .order_by(
+                ListingContentVersion.asin,
+                ListingContentVersion.last_seen_at.desc(),
+                ListingContentVersion.first_seen_at.desc(),
+            )
+        )
+        return {row[1] for row in (await self.db.execute(stmt)).all() if row[1]}
+
     async def save_version(
         self, account_id: UUID, asin: str, content: ListingContent, seen_at: datetime
     ) -> tuple[ListingContentVersion, bool]:

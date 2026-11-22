@@ -37,10 +37,15 @@ class _Repo(CatalogMonitorRepository):
         )
 
     async def latest_versions(self, account_id, asins=None):
+        self.version_calls = getattr(self, "version_calls", []) + [asins]
         return {a: v for a, v in self.versions.items() if asins is None or a in asins}
 
-    async def baselines(self, account_id):
-        return dict(self.base)
+    async def version_asins(self, account_id):
+        return sorted(self.versions)
+
+    async def baselines(self, account_id, asins=None):
+        self.baseline_calls = getattr(self, "baseline_calls", []) + [asins]
+        return {a: r for a, r in self.base.items() if asins is None or a in asins}
 
     async def upsert_baseline(self, account_id, asin, content, source, user_id):
         row = ListingContentBaseline(
@@ -268,3 +273,58 @@ async def test_accepted_changes_update_the_baseline_of_their_asin_only():
     assert content_from_dict(row.content).title == "Nuovo"
     assert (row.source, row.approved_by_user_id) == (baselines.SOURCE_UPLOAD, USER)
     assert set(repo.base) == {"B0TEST0001"}
+
+
+
+# ---- memory at scale (final review) ----
+
+
+@pytest.mark.asyncio
+async def test_approving_every_asin_reads_the_versions_in_chunks(monkeypatch):
+    monkeypatch.setattr(baselines, "BASELINE_CHUNK", 2)
+    repo = _Repo()
+    for n in range(1, 6):
+        repo.add_live(_content(f"B0TEST000{n}"))
+    assert await baselines.approve_live_as_baseline(repo, ACC, None, USER) == 5
+    assert set(repo.base) == {f"B0TEST000{n}" for n in range(1, 6)}
+    assert repo.version_calls == [
+        ["B0TEST0001", "B0TEST0002"], ["B0TEST0003", "B0TEST0004"], ["B0TEST0005"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_accepted_changes_read_only_the_baselines_of_their_asins():
+    from app.services.catalog_monitor.changes import patches_from_content
+
+    repo = _Repo()
+    for asin in ("B0TEST0001", "B0TEST0002", "B0TEST0003"):
+        repo.base[asin] = ListingContentBaseline(
+            account_id=ACC, asin=asin, content=content_to_dict(_content(asin)), source="live_snapshot",
+        )
+    title = patches_from_content({"title": "Nuovo"}, MKT)
+    requests = [_accepted("B0TEST0002", patches=title), _accepted("B0TEST0003", patches=title)]
+    assert await baselines.apply_accepted_changes(repo, ACC, requests) == 2
+    assert repo.baseline_calls == [["B0TEST0002", "B0TEST0003"]]
+
+
+@pytest.mark.asyncio
+async def test_accepting_an_anomaly_reads_only_its_baseline():
+    repo = _Repo()
+    await repo.upsert_baseline(ACC, "B0TEST0001", _content("B0TEST0001"), "live_snapshot", USER)
+    await repo.upsert_baseline(ACC, "B0TEST0002", _content("B0TEST0002"), "live_snapshot", USER)
+    await baselines.accept_anomaly(
+        repo, _anomaly("B0TEST0001", "content_changed", "title", "Nuovo"), USER, NOW
+    )
+    assert repo.baseline_calls == [["B0TEST0001"]]
+
+
+@pytest.mark.asyncio
+async def test_baseline_upload_reads_the_versions_in_chunks(monkeypatch):
+    monkeypatch.setattr(baselines, "BASELINE_CHUNK", 2)
+    repo = _Repo()
+    for n in range(1, 4):
+        repo.add_live(_content(f"B0TEST000{n}"))
+    rows = [(f"B0TEST000{n}", {"title": f"Approvato {n}"}) for n in range(1, 4)]
+    assert await baselines.import_baseline_rows(repo, ACC, rows, USER) == (3, [])
+    assert repo.version_calls == [["B0TEST0001", "B0TEST0002"], ["B0TEST0003"]]
+    assert content_from_dict(repo.base["B0TEST0003"].content).title == "Approvato 3"
