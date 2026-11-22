@@ -9,6 +9,7 @@ helpers so the sorting, filtering and summary logic stays pure.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import uuid as uuidlib
@@ -80,9 +81,10 @@ from app.services.catalog_monitor.baselines import (
     import_baseline_rows,
 )
 from app.services.catalog_monitor.bulk_io import (
+    CatalogExportWriter,
     ParsedRow,
-    build_export_workbook,
     build_new_item_template,
+    export_attribute_names,
     parse_new_items,
     parse_upload,
     row_to_change_item,
@@ -1503,6 +1505,7 @@ async def refresh_feed(
 # ---- bulk export, upload and new items (R4) ----
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+EXPORT_CHUNK = 200  # products whose live content is held at once while exporting
 _UPLOAD_SUFFIXES = (".xlsx", ".xlsm", ".csv")
 _XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 _MAX_KEYWORD_LENGTH = 255
@@ -1600,9 +1603,10 @@ async def _account_products(db, account_id: UUID) -> list[Product]:
     return list(result.scalars().all())
 
 
-async def _export_rows(db, account_id: UUID) -> list[tuple[Product, Any]]:
+async def _export_products(db, account_id: UUID) -> list[Any]:
+    """Light rows (asin, sku, title, main_keyword) of the active products, by ASIN."""
     result = await db.execute(
-        select(Product)
+        select(Product.asin, Product.sku, Product.title, Product.main_keyword)
         .where(
             Product.account_id == account_id,
             Product.is_active.is_(True),
@@ -1610,12 +1614,33 @@ async def _export_rows(db, account_id: UUID) -> list[tuple[Product, Any]]:
         )
         .order_by(Product.asin)
     )
-    products = list(result.scalars().all())
-    versions = await CatalogMonitorRepository(db).latest_versions(account_id)
-    return [
-        (p, content_from_dict(versions[p.asin].content) if p.asin in versions else None)
-        for p in products
-    ]
+    return list(result.all())
+
+
+async def _export_contents(db, account_id: UUID, asins: list[str]) -> dict[str, Any]:
+    """Latest live content of these ASINs (one export chunk)."""
+    versions = await CatalogMonitorRepository(db).latest_versions(account_id, asins)
+    return {asin: content_from_dict(v.content) for asin, v in versions.items()}
+
+
+async def build_catalog_export(db, account_id: UUID) -> bytes:
+    """The catalogue export, ``EXPORT_CHUNK`` products at a time, built off the event loop.
+
+    Live content (10-30 KB per ASIN) is read twice, a chunk at a time: once for
+    the ``attr:`` columns the header needs, once to write the rows into a
+    streamed (write-only) workbook.
+    """
+    products = await _export_products(db, account_id)
+    chunks = [products[i : i + EXPORT_CHUNK] for i in range(0, len(products), EXPORT_CHUNK)]
+    names: set[str] = set()
+    for chunk in chunks:
+        contents = await _export_contents(db, account_id, [p.asin for p in chunk])
+        names |= export_attribute_names(contents.values())
+    writer = await asyncio.to_thread(CatalogExportWriter, sorted(names))
+    for chunk in chunks:
+        contents = await _export_contents(db, account_id, [p.asin for p in chunk])
+        await asyncio.to_thread(writer.add, [(p, contents.get(p.asin)) for p in chunk])
+    return await asyncio.to_thread(writer.finish)
 
 
 async def _live_skus(db, account_id: UUID) -> set[str]:
@@ -1656,7 +1681,7 @@ async def export_catalog(
 ):
     """The account's catalogue as an Excel file: it is also the upload template."""
     await _account_or_404(db, organization.id, account_id)
-    content = build_export_workbook(await _export_rows(db, account_id))
+    content = await build_catalog_export(db, account_id)
     return _xlsx_response(content, f"catalogo-{account_id}.xlsx")
 
 

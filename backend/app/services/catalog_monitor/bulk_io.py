@@ -18,9 +18,10 @@ import csv
 import io
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
@@ -160,9 +161,10 @@ def _export_row(product: Product, content: Optional[ListingContent]) -> dict[str
     return row
 
 
-def _attribute_names(rows: list[tuple[Product, Optional[ListingContent]]]) -> list[str]:
+def export_attribute_names(contents: Iterable[Optional[ListingContent]]) -> set[str]:
+    """Simple attributes of these contents that get an ``attr:`` column."""
     names: set[str] = set()
-    for _, content in rows:
+    for content in contents:
         if content is None:
             continue
         for name in content.attributes:
@@ -170,7 +172,7 @@ def _attribute_names(rows: list[tuple[Product, Optional[ListingContent]]]) -> li
                 continue
             if _simple_attribute(content, name) is not None:
                 names.add(name)
-    return sorted(names)
+    return names
 
 
 _INSTRUCTIONS = [
@@ -196,44 +198,75 @@ _INSTRUCTIONS = [
 ]
 
 
-def build_export_workbook(rows: list[tuple[Product, Optional[ListingContent]]]) -> bytes:
-    """Excel file with sheet "Catalogo" (one row per product) and "Istruzioni" (Italian)."""
-    attrs = _attribute_names(rows)
-    headers = EXPORT_COLUMNS + [f"{ATTR_PREFIX}{name}" for name in attrs]
-    wb = Workbook()
-    ws = wb.active
-    ws.title = SHEET
-    ws.append(headers)
-    for product, content in rows:
-        data = _export_row(product, content)
-        for name in attrs:
-            value = _simple_attribute(content, name) if content is not None else None
-            data[f"{ATTR_PREFIX}{name}"] = value or ""
-        ws.append([data.get(h, "") for h in headers])
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-    ws.freeze_panes = "A2"
-    for index, header in enumerate(headers, start=1):
-        if header in ("asin", "sku"):
-            width = 16
-        elif header.startswith("bullet_") or header in ("title", "description"):
-            width = 40
-        elif header.startswith("image_") or header == "main_image_url":
-            width = 30
-        else:
-            width = max(14, min(len(header) + 4, 30))
-        ws.column_dimensions[get_column_letter(index)].width = width
-    guide = wb.create_sheet(INSTRUCTIONS_SHEET)
-    for line in _INSTRUCTIONS:
-        guide.append([line])
+def _column_width(header: str) -> int:
+    if header in ("asin", "sku"):
+        return 16
+    if header.startswith("bullet_") or header in ("title", "description"):
+        return 40
+    if header.startswith("image_") or header == "main_image_url":
+        return 30
+    return max(14, min(len(header) + 4, 30))
+
+
+class CatalogExportWriter:
+    """The export workbook, streamed: openpyxl write-only, rows added chunk by chunk.
+
+    Sheet "Catalogo" (one row per product) and "Istruzioni" (Italian). The
+    ``attr:`` columns must be known up front (``export_attribute_names``), since
+    a streamed sheet cannot go back to its header row.
+    """
+
+    def __init__(self, attribute_names: list[str]):
+        self.attribute_names = list(attribute_names)
+        self.headers = EXPORT_COLUMNS + [f"{ATTR_PREFIX}{name}" for name in self.attribute_names]
+        self.workbook = Workbook(write_only=True)
+        self.sheet = self.workbook.create_sheet(SHEET)
+        for index, header in enumerate(self.headers, start=1):
+            self.sheet.column_dimensions[get_column_letter(index)].width = _column_width(header)
+        self.sheet.freeze_panes = "A2"
+        self.sheet.append([self._cell(h, font=Font(bold=True)) for h in self.headers])
+
+    def _cell(self, value: Any, font: Optional[Font] = None) -> WriteOnlyCell:
+        cell = WriteOnlyCell(self.sheet, value=value)
+        if font is not None:
+            cell.font = font
+        return cell
+
+    def add(self, rows: Iterable[tuple[Any, Optional[ListingContent]]]) -> None:
+        """Append one row per (product, live content); the product needs asin, sku,
+        title and main_keyword."""
+        for product, content in rows:
+            data = _export_row(product, content)
+            for name in self.attribute_names:
+                value = _simple_attribute(content, name) if content is not None else None
+                data[f"{ATTR_PREFIX}{name}"] = value or ""
+            self.sheet.append([data.get(h, "") for h in self.headers])
+
+    def finish(self) -> bytes:
+        """Write the instructions sheet and return the file."""
+        _guide_sheet(self.workbook, _INSTRUCTIONS, {1: Font(bold=True, size=14), 8: Font(bold=True)})
+        buf = io.BytesIO()
+        self.workbook.save(buf)
+        return buf.getvalue()
+
+
+def _guide_sheet(workbook: Workbook, lines: list[str], fonts: dict[int, Font]) -> None:
+    """The "Istruzioni" sheet of a write-only workbook: one wrapped line per row."""
+    guide = workbook.create_sheet(INSTRUCTIONS_SHEET)
     guide.column_dimensions["A"].width = 120
-    for row in guide.iter_rows():
-        row[0].alignment = Alignment(wrap_text=True, vertical="top")
-    guide["A1"].font = Font(bold=True, size=14)
-    guide["A8"].font = Font(bold=True)
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+    for number, line in enumerate(lines, start=1):
+        cell = WriteOnlyCell(guide, value=line)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        if number in fonts:
+            cell.font = fonts[number]
+        guide.append([cell])
+
+
+def build_export_workbook(rows: list[tuple[Any, Optional[ListingContent]]]) -> bytes:
+    """The whole export in one call, for rows already in memory (small catalogues, tests)."""
+    writer = CatalogExportWriter(sorted(export_attribute_names(c for _, c in rows)))
+    writer.add(rows)
+    return writer.finish()
 
 
 # ---- upload parsing ----

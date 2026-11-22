@@ -1148,15 +1148,44 @@ def test_upload_rejects_unknown_mode(monkeypatch, bulk_account):
 
 
 def test_export_is_an_xlsx_with_one_row_per_product(monkeypatch, bulk_account):
-    async def _rows(db, account_id):
-        return [(_product("B0TEST0001"), content_from_dict(_live("B0TEST0001"))), (_product("B0TEST0002"), None)]
+    async def _products(db, account_id):
+        return [_product("B0TEST0001"), _product("B0TEST0002")]
 
-    monkeypatch.setattr(api, "_export_rows", _rows)
+    async def _contents(db, account_id, asins):
+        return {"B0TEST0001": content_from_dict(_live("B0TEST0001"))}
+
+    monkeypatch.setattr(api, "_export_products", _products)
+    monkeypatch.setattr(api, "_export_contents", _contents)
     client, _ = _client()
     res = client.get("/catalog-monitor/export", params={"account_id": str(ACCOUNT_ID)})
     assert res.status_code == 200 and "attachment" in res.headers["content-disposition"]
     ws = load_workbook(io.BytesIO(res.content))["Catalogo"]
     assert [r[0] for r in ws.iter_rows(min_row=2, values_only=True)] == ["B0TEST0001", "B0TEST0002"]
+
+
+def test_export_reads_live_content_a_chunk_at_a_time(monkeypatch, bulk_account):
+    asins = [f"B0TEST000{n}" for n in range(1, 6)]
+    calls = []
+
+    async def _products(db, account_id):
+        return [_product(a) for a in asins]
+
+    async def _contents(db, account_id, chunk):
+        calls.append(list(chunk))
+        extra = {"attributes": {"material": [{"value": "Legno", "marketplace_id": MP}]}}
+        return {a: content_from_dict(_live(a, **(extra if a == "B0TEST0005" else {}))) for a in chunk}
+
+    monkeypatch.setattr(api, "EXPORT_CHUNK", 2)
+    monkeypatch.setattr(api, "_export_products", _products)
+    monkeypatch.setattr(api, "_export_contents", _contents)
+    client, _ = _client()
+    res = client.get("/catalog-monitor/export", params={"account_id": str(ACCOUNT_ID)})
+    assert res.status_code == 200, res.text
+    assert all(len(c) <= 2 for c in calls) and {a for c in calls for a in c} == set(asins)
+    ws = load_workbook(io.BytesIO(res.content))["Catalogo"]
+    headers = [c.value for c in ws[1]]
+    assert "attr:material" in headers  # found in the last chunk, a column for every row
+    assert [r[0] for r in ws.iter_rows(min_row=2, values_only=True)] == asins
 
 
 def _ptd(monkeypatch, required):

@@ -104,6 +104,25 @@ def test_export_layout_and_attribute_columns():
     assert ws.freeze_panes == "A2" and ws["A1"].font.b
 
 
+def test_export_is_streamed_and_chunks_give_the_same_file():
+    rows = [(_product(asin=f"B0TEST000{n}"), _content(asin=f"B0TEST000{n}")) for n in range(1, 4)]
+    names = sorted(bulk_io.export_attribute_names(c for _, c in rows))
+    writer = bulk_io.CatalogExportWriter(names)
+    assert writer.workbook.write_only  # rows go to disk as they come, not into memory
+    writer.add(rows[:2])
+    writer.add(rows[2:])
+    chunked = load_workbook(io.BytesIO(writer.finish()))
+    whole = load_workbook(io.BytesIO(build_export_workbook(rows)))
+    for name in ("Catalogo", "Istruzioni"):
+        assert [list(r) for r in chunked[name].iter_rows(values_only=True)] == [
+            list(r) for r in whole[name].iter_rows(values_only=True)
+        ]
+    ws = chunked["Catalogo"]
+    assert ws.freeze_panes == "A2" and ws["A1"].font.b
+    assert ws.column_dimensions["E"].width == 40  # bullet_1
+    assert chunked["Istruzioni"]["A1"].font.b
+
+
 def test_export_without_content_uses_product():
     ws = load_workbook(io.BytesIO(build_export_workbook([(_product(), None)])))["Catalogo"]
     headers = [c.value for c in ws[1]]
