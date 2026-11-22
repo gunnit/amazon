@@ -84,6 +84,7 @@ Every setting on `Settings` in `app/config.py`. Secrets show `—` instead of a 
 | `CATALOG_SCAN_MINUTE_UTC` | `int` | `0` |
 | `CATALOG_SCAN_REQUEST_INTERVAL_S` | `float` | `0.55` |
 | `CATALOG_FEED_THRESHOLD` | `int` | `50` |
+| `CATALOG_UPLOAD_MAX_CHANGES` | `int` | `300` |
 | `PTD_CACHE_DAYS` | `int` | `7` |
 | `DEV_FIXTURE_AMAZON_DIR` | `Optional[str]` | `None` |
 | `BRAND_ANALYSIS_RECOVERY_INTERVAL_MINUTES` | `int` | `10` |
