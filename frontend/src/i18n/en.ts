@@ -521,7 +521,7 @@ const en: Record<string, string> = {
   'apiError.fileFormat': 'Unsupported file format: use .xlsx or .csv.',
   'apiError.fileUnreadable': 'The file cannot be read: upload an Excel (.xlsx) or CSV file exported from Catalog.',
   'apiError.productTypeUnavailable': 'Amazon does not provide this product type definition for this account.',
-  'apiError.noFeedRequests': 'No approved or file-only requests in this batch.',
+  'apiError.noFeedRequests': 'No approved file-only requests in this batch.',
   'apiError.anomalyNotFound': 'Change not found: reload the list.',
   'apiError.anomalyHandled': 'This change has already been handled: reload the list.',
   'apiError.familyNotFound': 'Variation family not found: reload the list.',

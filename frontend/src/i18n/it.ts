@@ -521,7 +521,7 @@ const it: Record<string, string> = {
   'apiError.fileFormat': 'Formato del file non supportato: usa .xlsx o .csv.',
   'apiError.fileUnreadable': 'Impossibile leggere il file: carica un file Excel (.xlsx) o CSV esportato da Catalogo.',
   'apiError.productTypeUnavailable': 'Definizione del tipo di prodotto non disponibile su Amazon per questo account.',
-  'apiError.noFeedRequests': 'Nessuna richiesta approvata o solo file in questo lotto.',
+  'apiError.noFeedRequests': 'Nessuna richiesta solo file approvata in questo lotto.',
   'apiError.anomalyNotFound': 'Modifica non trovata: ricarica l\'elenco.',
   'apiError.anomalyHandled': 'Questa modifica è già stata gestita: ricarica l\'elenco.',
   'apiError.familyNotFound': 'Famiglia di varianti non trovata: ricarica l\'elenco.',

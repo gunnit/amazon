@@ -32,7 +32,7 @@ const DETAIL_KEYS: Record<string, string> = {
   'formato del file non supportato': 'apiError.fileFormat',
   'impossibile leggere il file': 'apiError.fileUnreadable',
   'definizione del tipo di prodotto non disponibile': 'apiError.productTypeUnavailable',
-  'no approved or file-only requests in batch': 'apiError.noFeedRequests',
+  'no approved file-only requests in batch': 'apiError.noFeedRequests',
   'anomalies not found': 'apiError.anomalyNotFound',
   'anomaly not found': 'apiError.anomalyNotFound',
   'anomaly is resolved': 'apiError.anomalyHandled',
