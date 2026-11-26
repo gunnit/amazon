@@ -253,8 +253,9 @@ function AdsVsOrganicKpiCard({
   label: string
   metric: MetricValue | undefined
   formatter: (value: number) => string
-  comparisonLabel: string
+  comparisonLabel?: string
 }) {
+  const { t } = useTranslation()
   const trend = metric?.trend || 'stable'
   const Icon = trend === 'up' ? ArrowUpRight : trend === 'down' ? ArrowDownRight : Minus
   const iconClass =
@@ -267,8 +268,8 @@ function AdsVsOrganicKpiCard({
   return (
     <div className="rounded-lg border p-4">
       <p className="text-sm text-muted-foreground">{label}</p>
-      <p className="mt-2 text-2xl font-bold">{formatter(metric?.value || 0)}</p>
-      {metric?.change_percent != null && (
+      <p className="mt-2 text-2xl font-bold">{metric ? formatter(metric.value) : t('comparison.valueNotAvailable')}</p>
+      {comparisonLabel && metric?.change_percent != null && (
         <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
           <Icon className={`h-3.5 w-3.5 ${iconClass}`} />
           <span>
@@ -1788,17 +1789,16 @@ function AdsVsOrganicTab({
     adsScopedAccounts.length > 0 &&
     adsScopedAccounts.every((account) => resolveAdsState(account) !== 'ok')
 
-  // ads_data_from null = never any ads rows; a window entirely outside the
-  // [ads_data_from, ads_data_until] coverage has none either. Field absent
-  // (older backend) = no notice.
   const adsDataFrom = adsVsOrganicData?.ads_data_from
   const adsDataUntil = adsVsOrganicData?.ads_data_until
-  const showNoAdsCoverageNotice =
-    !showNoAdsBanner &&
-    adsVsOrganicData !== undefined &&
-    (adsDataFrom === null ||
-      (typeof adsDataFrom === 'string' && dateRange.end < adsDataFrom) ||
-      (typeof adsDataUntil === 'string' && dateRange.start > adsDataUntil))
+  const hasAdsSplit = adsVsOrganicData?.ads_coverage === 'full'
+  const hasAdsShare = hasAdsSplit && (adsVsOrganicData?.summary.total_sales.value ?? 0) > 0
+  const splitComparisonLabel = adsVsOrganicData?.previous_ads_coverage === 'full'
+    ? t('analytics.vsPreviousPeriod')
+    : undefined
+  const shareComparisonLabel = (adsVsOrganicData?.summary.total_sales.previous_value ?? 0) > 0
+    ? splitComparisonLabel
+    : undefined
 
   const advertisingCurrency = 'EUR'
 
@@ -1875,12 +1875,15 @@ function AdsVsOrganicTab({
           </AlertDescription>
         </Alert>
       )}
-      {showNoAdsCoverageNotice && (
+      {adsVsOrganicData && !hasAdsSplit && (
         <Alert>
           <AlertDescription>
-            {t('analytics.noAdsCoverage')}
-            {adsDataFrom &&
-              ` ${t('advertising.dataAvailableFrom', { date: formatLocalizedDate(adsDataFrom, language) })}`}
+            {t(adsVsOrganicData.ads_coverage === 'partial' ? 'analytics.partialAdsCoverage' : 'analytics.noAdsCoverage')}
+            {selectedAsin === ALL_ASINS_VALUE && adsDataFrom && adsDataUntil &&
+              ` ${t('analytics.adsCoverageDates', {
+                from: formatLocalizedDate(adsDataFrom, language),
+                until: formatLocalizedDate(adsDataUntil, language),
+              })}`}
           </AlertDescription>
         </Alert>
       )}
@@ -1893,31 +1896,31 @@ function AdsVsOrganicTab({
         />
         <AdsVsOrganicKpiCard
           label={t('analytics.advertisingSales')}
-          metric={adsVsOrganicData?.summary.ad_sales}
+          metric={hasAdsSplit ? adsVsOrganicData?.summary.ad_sales : undefined}
           formatter={formatCurrency}
-          comparisonLabel={t('analytics.vsPreviousPeriod')}
+          comparisonLabel={splitComparisonLabel}
         />
         <AdsVsOrganicKpiCard
           label={t('analytics.organicSales')}
-          metric={adsVsOrganicData?.summary.organic_sales}
+          metric={hasAdsSplit ? adsVsOrganicData?.summary.organic_sales : undefined}
           formatter={formatCurrency}
-          comparisonLabel={t('analytics.vsPreviousPeriod')}
+          comparisonLabel={splitComparisonLabel}
         />
         <AdsVsOrganicKpiCard
           label={t('analytics.shareFromAds')}
-          metric={adsVsOrganicData?.summary.ad_share_pct}
+          metric={hasAdsShare ? adsVsOrganicData?.summary.ad_share_pct : undefined}
           formatter={formatPercentValue}
-          comparisonLabel={t('analytics.vsPreviousPeriod')}
+          comparisonLabel={shareComparisonLabel}
         />
         <AdsVsOrganicKpiCard
           label={t('analytics.shareOrganic')}
-          metric={adsVsOrganicData?.summary.organic_share_pct}
+          metric={hasAdsShare ? adsVsOrganicData?.summary.organic_share_pct : undefined}
           formatter={formatPercentValue}
-          comparisonLabel={t('analytics.vsPreviousPeriod')}
+          comparisonLabel={shareComparisonLabel}
         />
       </div>
 
-      {selectedAsin !== ALL_ASINS_VALUE && (
+      {hasAdsSplit && selectedAsin !== ALL_ASINS_VALUE && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <p className="font-medium">{t('analytics.accountLevelAttribution')}</p>
           <p className="mt-1">{t('analytics.asinAttributionNotice')}</p>
@@ -1931,7 +1934,7 @@ function AdsVsOrganicTab({
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      {hasAdsSplit && <div className="grid gap-4 lg:grid-cols-3">
         <Card className={selectedAsin === ALL_ASINS_VALUE ? 'lg:col-span-2' : 'lg:col-span-3'}>
           <CardHeader>
             <CardTitle>{t('analytics.adsVsOrganic')}</CardTitle>
@@ -2028,7 +2031,7 @@ function AdsVsOrganicTab({
               </CardContent>
             </Card>
           ))}
-      </div>
+      </div>}
 
       <Card>
         <CardHeader>
