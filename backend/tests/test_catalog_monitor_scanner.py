@@ -527,14 +527,17 @@ async def test_empty_listing_payload_counts_as_not_fetched():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("parent_marketplace", [MKT, "A1PA6795UKMFR9"])
-async def test_scan_recovers_approved_family_without_parent_product(parent_marketplace):
+@pytest.mark.parametrize("parent_data", ["matching", "other_marketplace", "empty"])
+async def test_scan_recovers_approved_family_without_parent_product(parent_data):
     account = _account(AccountType.VENDOR, seller_id=None)
     attached, detached, inactive, unrelated = "B0TEST0001", "B0TEST0002", "B0TEST0003", "B0TEST0004"
     parent = _fixture("catalog_parent")
     relationship_block = parent["relationships"][0]
-    relationship_block["marketplaceId"] = parent_marketplace
     relationship_block["relationships"][0]["childAsins"] = [attached, inactive, unrelated]
+    if parent_data == "other_marketplace":
+        relationship_block["marketplaceId"] = "A1PA6795UKMFR9"
+    elif parent_data == "empty":
+        relationship_block["relationships"] = []
     repo = FakeRepo([_product(attached), _product(detached)])
     client = FakeClient({
         attached: _child(attached),
