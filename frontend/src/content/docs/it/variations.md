@@ -4,7 +4,9 @@
 
 ## Come si registra una famiglia
 
-La struttura originale di ogni famiglia (parent, tema di variazione, elenco dei figli) si salva quando approvi i contenuti attuali come riferimento (vedi Protezione contenuti). Finché non lo fai, la pagina è vuota. Ogni notte la scansione confronta la famiglia online con quella registrata.
+Quando approvi i contenuti attuali come riferimento (vedi Protezione contenuti), il tool registra la struttura della famiglia disponibile nella scheda parent. Se il parent è fuori dal catalogo dell'account, la successiva scansione completa recupera il riferimento dalle schede figlie già approvate. La scansione controlla che queste varianti siano ancora collegate.
+
+Usa **Avvia scansione** per confrontare le famiglie attuali con i riferimenti. Il confronto si ripete ogni notte se l'amministratore della piattaforma ha abilitato la scansione programmata.
 
 ## Stato di una famiglia
 

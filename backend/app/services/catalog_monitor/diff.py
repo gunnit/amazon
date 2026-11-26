@@ -135,10 +135,13 @@ def diff_family(
     baseline_children: list[str],
     live_parent: Optional[ListingContent],
     live_children: dict[str, Optional[ListingContent]],
+    *,
+    is_partial: bool = False,
 ) -> list[VariationFinding]:
     findings: list[VariationFinding] = []
     broken = (
-        live_parent is not None
+        not is_partial
+        and live_parent is not None
         and not live_parent.child_asins
         and bool(baseline_children)
     )
@@ -155,17 +158,19 @@ def diff_family(
                         "child_detached", parent_asin, asin, parent_asin, list(live.parent_asins)
                     )
                 )
-        if live_parent is not None:
+        if live_parent is not None and not is_partial:
             known = set(baseline_children)
             for asin in live_parent.child_asins:
                 if asin not in known:
                     findings.append(
                         VariationFinding("unexpected_child", parent_asin, asin, None, asin)
                     )
-    if live_parent is not None and baseline_theme != live_parent.variation_theme:
+    live_theme = live_parent.variation_theme if live_parent is not None else None
+    may_compare_theme = not is_partial or (baseline_theme is not None and live_theme is not None)
+    if live_parent is not None and may_compare_theme and baseline_theme != live_theme:
         findings.append(
             VariationFinding(
-                "theme_changed", parent_asin, None, baseline_theme, live_parent.variation_theme
+                "theme_changed", parent_asin, None, baseline_theme, live_theme
             )
         )
     return findings

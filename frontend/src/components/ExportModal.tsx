@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { format } from 'date-fns'
+import { format, subMonths } from 'date-fns'
 import { Download, Loader2, CalendarIcon, Building2, ChevronDown, FileSpreadsheet, Presentation, FileText } from 'lucide-react'
 import {
   Dialog,
@@ -34,6 +34,7 @@ type ReportType = 'sales' | 'inventory' | 'advertising'
 type DatePreset = '7' | '14' | '30' | '60' | '90' | '12m' | 'ytd' | 'lastyear' | 'custom'
 type TemplateType = 'clean' | 'corporate' | 'executive'
 type ExportFormat = 'excel' | 'powerpoint' | 'csv'
+type ExportDateRange = { start: string; end: string }
 
 const FORMAT_OPTIONS: { id: ExportFormat; nameKey: string; descKey: string; icon: typeof FileSpreadsheet }[] = [
   { id: 'excel', nameKey: 'export.formatExcel', descKey: 'export.formatExcelDesc', icon: FileSpreadsheet },
@@ -141,13 +142,11 @@ function TemplatePreview({
   )
 }
 
-function computeDateRange(preset: DatePreset, customStart: string | null, customEnd: string | null) {
+function computeDateRange(preset: DatePreset, customRange: ExportDateRange | null): ExportDateRange | null {
   const fmt = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
-  if (preset === 'custom' && customStart && customEnd) {
-    return { start: customStart, end: customEnd }
-  }
+  if (preset === 'custom') return customRange
 
   const today = new Date()
   if (preset === '12m') {
@@ -190,8 +189,8 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
   const [language, setLanguage] = useState<'en' | 'it'>(uiLanguage)
   const [exportFormat, setExportFormat] = useState<ExportFormat>('excel')
   const [datePreset, setDatePreset] = useState<DatePreset>('12m')
-  const [customStartDate, setCustomStartDate] = useState<string | null>(null)
-  const [customEndDate, setCustomEndDate] = useState<string | null>(null)
+  const [customRange, setCustomRange] = useState<ExportDateRange | null>(null)
+  const [pendingStart, setPendingStart] = useState<Date>()
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateType>('corporate')
   const [isExporting, setIsExporting] = useState(false)
@@ -227,28 +226,38 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
     )
   }
 
+  const handleCalendarOpenChange = (nextOpen: boolean) => {
+    setPendingStart(undefined)
+    setCalendarOpen(nextOpen)
+  }
+
   const handlePresetChange = (value: string) => {
+    setDatePreset(value as DatePreset)
+    handleCalendarOpenChange(false)
     if (value === 'custom') {
-      setCalendarOpen(true)
-      setDatePreset('custom')
-    } else {
-      setDatePreset(value as DatePreset)
+      // Let the Select dismiss before opening the calendar Popover.
+      setTimeout(() => setCalendarOpen(true), 60)
     }
   }
 
-  const handleDateSelect = (range: DateRange | undefined) => {
-    if (range?.from && range?.to) {
-      setCustomStartDate(format(range.from, 'yyyy-MM-dd'))
-      setCustomEndDate(format(range.to, 'yyyy-MM-dd'))
-      setCalendarOpen(false)
+  const handleDateSelect = (_range: DateRange | undefined, day: Date) => {
+    if (!pendingStart) {
+      setPendingStart(day)
+      return
     }
+
+    const [start, end] = day < pendingStart ? [day, pendingStart] : [pendingStart, day]
+    setCustomRange({ start: format(start, 'yyyy-MM-dd'), end: format(end, 'yyyy-MM-dd') })
+    handleCalendarOpenChange(false)
   }
+
+  const dateRange = pendingStart ? null : computeDateRange(datePreset, customRange)
+  const canExport = dateRange !== null && reportTypes.size > 0 && !isExporting
 
   const handleExport = async () => {
-    if (reportTypes.size === 0) return
+    if (!canExport) return
     setIsExporting(true)
     try {
-      const dateRange = computeDateRange(datePreset, customStartDate, customEndDate)
       const accountIds = selectedAccountIds.length > 0 ? selectedAccountIds : undefined
       const types = Array.from(reportTypes)
 
@@ -309,10 +318,9 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
         : t('filter.nAccounts', { n: selectedAccountCount })
 
   const dateDisplayLabel =
-    datePreset === 'custom' && customStartDate && customEndDate
-      ? `${formatLocalizedDate(customStartDate, uiLanguage)} - ${formatLocalizedDate(customEndDate, uiLanguage)}`
+    datePreset === 'custom' && customRange
+      ? `${formatLocalizedDate(customRange.start, uiLanguage)} - ${formatLocalizedDate(customRange.end, uiLanguage)}`
       : undefined
-  const dateRange = computeDateRange(datePreset, customStartDate, customEndDate)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -436,23 +444,22 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
 
           {/* Custom date calendar */}
           {datePreset === 'custom' && (
-            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+            <Popover open={calendarOpen} onOpenChange={handleCalendarOpenChange}>
               <PopoverTrigger asChild>
                 <Button variant="outline" size="sm" className="w-full h-9 text-xs">
-                  {customStartDate && customEndDate
-                    ? `${formatLocalizedDate(customStartDate, uiLanguage)} - ${formatLocalizedDate(customEndDate, uiLanguage)}`
-                    : t('filter.pickDates')}
+                  {dateDisplayLabel ?? t('filter.pickDates')}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
+                <div className="border-b px-3 py-2 text-xs text-muted-foreground">
+                  {t(pendingStart ? 'filter.pickEndDate' : 'filter.pickStartDate')}
+                </div>
                 <Calendar
                   mode="range"
-                  selected={{
-                    from: customStartDate ? new Date(customStartDate + 'T00:00:00') : undefined,
-                    to: customEndDate ? new Date(customEndDate + 'T00:00:00') : undefined,
-                  }}
+                  selected={pendingStart ? { from: pendingStart, to: undefined } : undefined}
                   onSelect={handleDateSelect}
                   numberOfMonths={2}
+                  defaultMonth={customRange ? new Date(customRange.start + 'T00:00:00') : subMonths(new Date(), 1)}
                   disabled={{ after: new Date() }}
                 />
               </PopoverContent>
@@ -514,18 +521,18 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
         <DialogFooter>
           <GoogleSheetsExportButton
             dataTypes={Array.from(reportTypes)}
-            startDate={dateRange.start}
-            endDate={dateRange.end}
+            startDate={dateRange?.start ?? ''}
+            endDate={dateRange?.end ?? ''}
             accountIds={selectedAccountIds.length > 0 ? selectedAccountIds : undefined}
             language={language}
             groupBy={reportTypes.has('sales') ? 'day' : 'day'}
-            disabled={reportTypes.size === 0 || isExporting}
+            disabled={!canExport}
             onSuccess={() => onOpenChange(false)}
           />
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={handleExport} disabled={reportTypes.size === 0 || isExporting}>
+          <Button onClick={handleExport} disabled={!canExport}>
             {isExporting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
