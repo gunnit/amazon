@@ -6,6 +6,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.catalog_monitor import (
@@ -158,24 +159,57 @@ class CatalogMonitorRepository:
         )
         return list(result.scalars().all())
 
+    async def approved_variation_parent_links(
+        self, account_id: UUID, source: str
+    ) -> dict[str, tuple[list[str], Optional[str]]]:
+        """Read the relationship fields without loading entire approved listings."""
+        content = ListingContentBaseline.content
+        stmt = select(
+            ListingContentBaseline.asin, content["parent_asins"], content["variation_theme"].astext
+        ).where(
+            ListingContentBaseline.account_id == account_id,
+            ListingContentBaseline.source == source,
+        )
+        return {
+            asin: (parents, theme)
+            for asin, parents, theme in (await self.db.execute(stmt)).all()
+            if isinstance(parents, list) and parents
+        }
+
+    async def create_family_baseline_if_absent(
+        self, account_id: UUID, parent_asin: str, theme: Optional[str], children: list[str]
+    ) -> bool:
+        """Recover a reference for these approved children without replacing a saved family."""
+        stmt = (
+            insert(VariationFamilyBaseline)
+            .values(
+                account_id=account_id, parent_asin=parent_asin,
+                variation_theme=theme, child_asins=children, is_partial=True,
+            )
+            .on_conflict_do_nothing(constraint="uq_variation_baseline_account_parent")
+            .returning(VariationFamilyBaseline.id)
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none() is not None
+
     async def upsert_family_baseline(
         self, account_id: UUID, parent_asin: str, theme: Optional[str], children: list[str]
     ) -> VariationFamilyBaseline:
-        result = await self.db.execute(
-            select(VariationFamilyBaseline).where(
-                VariationFamilyBaseline.account_id == account_id,
-                VariationFamilyBaseline.parent_asin == parent_asin,
+        stmt = (
+            insert(VariationFamilyBaseline)
+            .values(
+                account_id=account_id, parent_asin=parent_asin,
+                variation_theme=theme, child_asins=children, is_partial=False,
             )
+            .on_conflict_do_update(
+                constraint="uq_variation_baseline_account_parent",
+                set_=dict(
+                    variation_theme=theme, child_asins=children,
+                    is_partial=False, captured_at=datetime.utcnow(),
+                ),
+            )
+            .returning(VariationFamilyBaseline)
         )
-        row = result.scalar_one_or_none()
-        if row is None:
-            row = VariationFamilyBaseline(account_id=account_id, parent_asin=parent_asin)
-            self.db.add(row)
-        row.variation_theme = theme
-        row.child_asins = list(children)
-        row.captured_at = datetime.utcnow()
-        await self.db.flush()
-        return row
+        return (await self.db.scalars(stmt, execution_options={"populate_existing": True})).one()
 
     # ---- anomalies ----
 

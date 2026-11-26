@@ -249,6 +249,7 @@ class VariationChildOut(BaseModel):
 class VariationOut(BaseModel):
     parent_asin: str
     variation_theme: Optional[str] = None
+    is_partial: bool = False
     status: str  # ok|partial|broken
     children: list[VariationChildOut]
     anomaly_ids: list[UUID]

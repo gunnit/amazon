@@ -853,6 +853,7 @@ def build_variations(families: list[Any], anomalies: list[Any], known_asins: set
         out.append({
             "parent_asin": family.parent_asin,
             "variation_theme": family.variation_theme,
+            "is_partial": family.is_partial,
             "status": family_status,
             "children": children,
             "anomaly_ids": [a.id for a in mine],

@@ -41,6 +41,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.models.amazon_account import AmazonAccount
+from app.services.catalog_monitor.baselines import SOURCE_LIVE
 from app.services.catalog_monitor.capabilities import listing_seller_id
 from app.services.catalog_monitor.clients import (
     ClientFactory,
@@ -127,6 +128,19 @@ class FamilyView:
 def family_view(content: ListingContent) -> FamilyView:
     return FamilyView(
         tuple(content.parent_asins), tuple(content.child_asins), content.variation_theme
+    )
+
+
+def _relationships_known(payload: dict, marketplace_id: str) -> bool:
+    relationships = payload.get("relationships")
+    return isinstance(relationships, list) and (
+        not relationships
+        or any(
+            isinstance(block, dict)
+            and block.get("marketplaceId") == marketplace_id
+            and isinstance(block.get("relationships"), list)
+            for block in relationships
+        )
     )
 
 
@@ -322,7 +336,7 @@ class CatalogScanService:
         """Today's Amazon content: Catalog, then Listings and A+ when available. No database."""
         asin = product.asin
         payload = self._catalog_item(run.client, asin)
-        relationships_known = "relationships" in payload
+        relationships_known = _relationships_known(payload, run.marketplace_id)
         content = content_from_catalog(payload, run.marketplace_id)
         del payload
         if not content.asin:
@@ -449,6 +463,31 @@ class CatalogScanService:
 
     # ---- variation families ----
 
+    async def _capture_missing_families(
+        self, account_id: UUID, scanned: set[str], saved_parents: set[str]
+    ) -> int:
+        """Recover references from approved children when the parent was never scanned."""
+        links = await self.repo.approved_variation_parent_links(account_id, SOURCE_LIVE)
+        members: dict[str, list[str]] = defaultdict(list)
+        themes: dict[str, set[str]] = defaultdict(set)
+        for child, (parents, theme) in sorted(links.items()):
+            for parent in dict.fromkeys(p for p in parents if isinstance(p, str) and p):
+                if parent == child or parent in scanned or parent in saved_parents:
+                    continue
+                members[parent].append(child)
+                if theme:
+                    themes[parent].add(theme)
+
+        captured = 0
+        for parent, children in members.items():
+            if not scanned.intersection(children):
+                continue
+            parent_themes = themes[parent]
+            theme = next(iter(parent_themes)) if len(parent_themes) == 1 else None
+            created = await self.repo.create_family_baseline_if_absent(account_id, parent, theme, children)
+            captured += int(created)
+        return captured
+
     async def _check_families(self, run: _Run, scanned: set[str], subset: bool) -> None:
         by_family: dict[str, list[tuple[str, str, Any]]] = defaultdict(list)
         for asin, rows in run.open.items():
@@ -456,7 +495,16 @@ class CatalogScanService:
                 if kind in VARIATION_KINDS:
                     by_family[name].append((asin, kind, anomaly))
 
-        for family in await self.repo.family_baselines(run.account.id):
+        families = await self.repo.family_baselines(run.account.id)
+        if not subset:
+            captured = await self._capture_missing_families(
+                run.account.id, scanned, {family.parent_asin for family in families}
+            )
+            if captured:
+                logger.info("Recovered %d variation references for account %s", captured, run.account.id)
+                families = await self.repo.family_baselines(run.account.id)
+
+        for family in families:
             parent = family.parent_asin
             children = [c for c in family.child_asins or [] if c]
             theme = family.variation_theme
@@ -469,7 +517,8 @@ class CatalogScanService:
                         run.live[asin] = self._relationships_only(run, asin)
                 async with self.db.begin_nested():
                     opened, resolved = await self._check_family(
-                        run, parent, theme, children, by_family.get(family_field(parent), [])
+                        run, parent, theme, children, by_family.get(family_field(parent), []),
+                        is_partial=family.is_partial,
                     )
                 await self.db.commit()
             except Exception as exc:  # noqa: BLE001 - one family never stops the scan
@@ -486,7 +535,7 @@ class CatalogScanService:
         except Exception as exc:  # noqa: BLE001 - unknown, not detached
             logger.info("Catalog item %s unavailable for the variation check: %s", asin, exc)
             return None
-        if "relationships" not in payload:
+        if not _relationships_known(payload, run.marketplace_id):
             return None
         return family_view(content_from_catalog(payload, run.marketplace_id))
 
@@ -497,11 +546,14 @@ class CatalogScanService:
         theme: Optional[str],
         children: list[str],
         open_rows: list[tuple[str, str, Any]],
+        *,
+        is_partial: bool,
     ) -> tuple[int, int]:
         """Open, touch or resolve the family's anomalies; every member is already in run.live."""
         live_parent = run.live.get(parent)
         findings = diff_family(
-            parent, theme, children, live_parent, {c: run.live.get(c) for c in children}
+            parent, theme, children, live_parent, {c: run.live.get(c) for c in children},
+            is_partial=is_partial,
         )
 
         name = family_field(parent)

@@ -184,6 +184,19 @@ class FakeRepo(CatalogMonitorRepository):
     async def family_baselines(self, account_id):
         return list(self.families)
 
+    async def approved_variation_parent_links(self, account_id, source):
+        return {
+            asin: (row.content["parent_asins"], row.content["variation_theme"])
+            for asin, row in self.baseline_rows.items()
+            if getattr(row, "source", None) == source and row.content.get("parent_asins")
+        }
+
+    async def create_family_baseline_if_absent(self, account_id, parent_asin, theme, children):
+        if any(family.parent_asin == parent_asin for family in self.families):
+            return False
+        self.families.append(_family(children, parent_asin, theme, is_partial=True))
+        return True
+
     async def open_anomalies(self, account_id):
         return {(a.asin, a.kind, a.field): a for a in self.anomalies if a.status != "resolved"}
 
@@ -301,8 +314,10 @@ def _baseline(payload):
     return SimpleNamespace(content=content_to_dict(content_from_catalog(payload, MKT)))
 
 
-def _family(children, parent=PARENT, theme="COLOR"):
-    return SimpleNamespace(parent_asin=parent, variation_theme=theme, child_asins=list(children))
+def _family(children, parent=PARENT, theme="COLOR", is_partial=False):
+    return SimpleNamespace(
+        parent_asin=parent, variation_theme=theme, child_asins=list(children), is_partial=is_partial
+    )
 
 
 def _service(repo, client, fetch=None, db=None, sleeps=None):
@@ -509,6 +524,47 @@ async def test_empty_listing_payload_counts_as_not_fetched():
 
 
 # ---- R2: variation families ----
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_marketplace", [MKT, "A1PA6795UKMFR9"])
+async def test_scan_recovers_approved_family_without_parent_product(parent_marketplace):
+    account = _account(AccountType.VENDOR, seller_id=None)
+    attached, detached, inactive, unrelated = "B0TEST0001", "B0TEST0002", "B0TEST0003", "B0TEST0004"
+    parent = _fixture("catalog_parent")
+    relationship_block = parent["relationships"][0]
+    relationship_block["marketplaceId"] = parent_marketplace
+    relationship_block["relationships"][0]["childAsins"] = [attached, inactive, unrelated]
+    repo = FakeRepo([_product(attached), _product(detached)])
+    client = FakeClient({
+        attached: _child(attached),
+        detached: _child(detached, parents=()),
+        inactive: _child(inactive),
+        PARENT: parent,
+    })
+    service = _service(repo, client)
+
+    await service.scan_account(account)
+    assert repo.families == []
+    for child in (attached, detached, inactive):
+        row = _baseline(_child(child))
+        row.source = "live_snapshot"
+        repo.baseline_rows[child] = row
+    approved = copy.deepcopy(repo.baseline_rows)
+
+    summary = await service.scan_account(account)
+    assert (summary.scanned, summary.failed) == (2, 0)
+    [family] = repo.families
+    assert family.parent_asin == PARENT and family.is_partial
+    assert family.child_asins == [attached, detached, inactive]
+    assert repo.baseline_rows == approved
+    assert PARENT not in repo.versions_by_asin
+    assert client.calls.count(("catalog", PARENT)) == 1
+    assert [(a.asin, a.kind) for a in repo.open_rows()] == [(detached, "child_detached")]
+
+    await service.scan_account(account)
+    assert repo.families == [family]
+    assert [(a.asin, a.kind) for a in repo.open_rows()] == [(detached, "child_detached")]
 
 
 @pytest.mark.asyncio

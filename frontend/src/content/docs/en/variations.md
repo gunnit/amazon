@@ -4,7 +4,9 @@
 
 ## How a family is recorded
 
-Each family's original structure (parent, variation theme, list of children) is saved when you approve the current content as reference (see Content protection). Until you do, the page is empty. Every night the scan compares the live family with the recorded one.
+When you approve the current content as reference (see Content protection), the tool records the family structure available from the parent listing. If the parent is outside the account's catalogue, the next full scan recovers the family's reference from the already-approved child listings. This reference covers those children, and the scan checks whether they are still attached.
+
+Use **Start scan** to compare the current families with their references. The same comparison runs nightly if the platform administrator has enabled the scheduled scan.
 
 ## Family status
 

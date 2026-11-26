@@ -513,6 +513,7 @@ def test_reopen_anomalies_clears_link_only_for_restore_requested():
 def test_variations_status_from_anomalies():
     family = SimpleNamespace(
         parent_asin="B0TEST0010", variation_theme="SIZE_NAME",
+        is_partial=True,
         child_asins=["B0TEST0011", "B0TEST0012", "B0TEST0013"],
     )
     detached = _anomaly("B0TEST0011", "child_detached", "parent:B0TEST0010")
@@ -523,6 +524,7 @@ def test_variations_status_from_anomalies():
         [family], [detached, unexpected, resolved, other_family], {"B0TEST0011", "B0TEST0012"}
     )[0]
     assert out["status"] == "partial"
+    assert out["is_partial"] is True
     assert {c["asin"]: c["state"] for c in out["children"]} == {
         "B0TEST0011": "detached", "B0TEST0012": "ok", "B0TEST0013": "unknown",
         "B0TEST0099": "unexpected",

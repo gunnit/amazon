@@ -63,6 +63,28 @@ def _content(title="Title"):
 
 
 @pytest.mark.asyncio
+async def test_recovered_family_keeps_approved_child_content_and_can_be_replaced_by_an_approval(db, account):
+    repo = CatalogMonitorRepository(db)
+    child, parent = "B0TEST0001", "B0TEST0100"
+    content = ListingContent(child, "APJ6JRA9NG5V4", parent_asins=[parent], variation_theme="COLOR")
+    approved = await repo.upsert_baseline(account.id, child, content, "live_snapshot", None)
+
+    assert await repo.approved_variation_parent_links(account.id, "live_snapshot") == {
+        child: ([parent], "COLOR"),
+    }
+    assert await repo.create_family_baseline_if_absent(account.id, parent, "COLOR", [child])
+    family, = await repo.family_baselines(account.id)
+    assert family.is_partial and family.child_asins == [child]
+
+    new_members = [child, "B0TEST0002"]
+    replaced = await repo.upsert_family_baseline(account.id, parent, "SIZE", new_members)
+    assert replaced.id == family.id and not replaced.is_partial
+    assert not await repo.create_family_baseline_if_absent(account.id, parent, "COLOR", [child])
+    assert (await repo.family_baselines(account.id))[0].child_asins == new_members
+    assert (await repo.baselines(account.id))[child].id == approved.id
+
+
+@pytest.mark.asyncio
 async def test_save_version_dedupes_by_hash(db, account):
     repo = CatalogMonitorRepository(db)
     first, is_new = await repo.save_version(account.id, "B0TEST0001", _content(), NOW)

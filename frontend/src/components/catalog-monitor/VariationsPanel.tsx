@@ -176,6 +176,11 @@ export function VariationsPanel(props: Props) {
                     <div className="text-xs text-muted-foreground">
                       {t('cm.variations.theme', { theme: family.variation_theme || '—' })}
                     </div>
+                    {family.is_partial && (
+                      <div className="text-xs text-muted-foreground">
+                        {t('cm.variations.approvedChildrenOnly')}
+                      </div>
+                    )}
                   </div>
                   <Badge variant="outline" className={cn('border-transparent', FAMILY_CLASS[family.status])}>
                     {t(`cm.variations.status.${family.status}`)}

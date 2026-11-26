@@ -1478,6 +1478,7 @@ export type VariationFamilyStatus = 'ok' | 'partial' | 'broken'
 export interface VariationFamily {
   parent_asin: string
   variation_theme: string | null
+  is_partial: boolean
   status: VariationFamilyStatus
   children: Array<{ asin: string; state: VariationChildState }>
   anomaly_ids: string[]

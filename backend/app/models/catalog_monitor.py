@@ -110,6 +110,7 @@ class VariationFamilyBaseline(Base):
     parent_asin: Mapped[str] = mapped_column(String(20), nullable=False)
     variation_theme: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     child_asins: Mapped[Any] = mapped_column(JSONB, nullable=False, default=list)
+    is_partial: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     captured_at: Mapped[datetime] = _ts()
 
 
