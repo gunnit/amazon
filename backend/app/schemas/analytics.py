@@ -1,6 +1,6 @@
 """Analytics and dashboard schemas."""
 from datetime import date
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from decimal import Decimal
 from uuid import UUID
 from pydantic import BaseModel, Field
@@ -187,6 +187,8 @@ class AdsVsOrganicResponse(BaseModel):
     attribution_notes: List[str] = Field(default_factory=list)
     ads_data_from: Optional[date] = None
     ads_data_until: Optional[date] = None
+    ads_coverage: Literal["none", "partial", "full"] = "none"
+    previous_ads_coverage: Literal["none", "partial", "full"] = "none"
 
 
 class ProductPerformance(BaseModel):

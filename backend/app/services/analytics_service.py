@@ -313,10 +313,7 @@ class AnalyticsService:
         }
 
     async def _ads_coverage(self, account_ids: List[UUID]) -> tuple[Optional[date], Optional[date]]:
-        """Min/max advertising metric dates for the scoped accounts, across all time.
-
-        Lets the frontend distinguish "no ads data yet" from "zero ad
-        performance in the selected period"."""
+        """Historical campaign metric bounds for the scoped accounts."""
         if not account_ids:
             return None, None
         campaigns_query = select(AdvertisingCampaign.id).where(
@@ -331,6 +328,50 @@ class AnalyticsService:
             )
         ).one()
         return row.ads_from, row.ads_until
+
+    async def _ads_period_coverage(
+        self,
+        account_ids: List[UUID],
+        date_from: date,
+        date_to: date,
+        previous_start: date,
+        *,
+        by_asin: bool,
+    ) -> tuple[str, str]:
+        """Check both periods for an observed report row per account and day."""
+        if not account_ids:
+            return "none", "none"
+
+        if by_asin:
+            # A report can have data while this particular ASIN has no ad activity.
+            account = AdvertisingMetricsByAsin.account_id
+            report_date = AdvertisingMetricsByAsin.date
+            report_days = select(account, report_date.label("report_date"))
+        else:
+            account = AdvertisingCampaign.account_id
+            report_date = AdvertisingMetrics.date
+            report_days = (
+                select(account, report_date.label("report_date"))
+                .select_from(AdvertisingMetrics)
+                .join(AdvertisingCampaign, AdvertisingCampaign.id == AdvertisingMetrics.campaign_id)
+            )
+
+        observed = report_days.where(
+            account.in_(account_ids), report_date.between(previous_start, date_to)
+        ).distinct().subquery()
+        row = (await self.db.execute(select(
+            func.count().filter(observed.c.report_date >= date_from).label("current_days"),
+            func.count().filter(observed.c.report_date < date_from).label("previous_days"),
+        ))).one()
+
+        expected_days = len(set(account_ids)) * ((date_to - date_from).days + 1)
+
+        def status(observed_days: int) -> str:
+            if observed_days == 0:
+                return "none"
+            return "full" if observed_days == expected_days else "partial"
+
+        return status(row.current_days), status(row.previous_days)
 
     async def _resolve_granularity(self, account_ids: List[UUID]) -> Granularity:
         """Resolve granularity from the resolved in-scope account ids."""
@@ -389,6 +430,9 @@ class AnalyticsService:
         )
 
         ads_data_from, ads_data_until = await self._ads_coverage(account_ids)
+        ads_coverage, previous_ads_coverage = await self._ads_period_coverage(
+            account_ids, date_from, date_to, prev_start, by_asin=asin is not None
+        )
 
         current_totals = self._summarize_ads_vs_organic(current_series)
         previous_totals = self._summarize_ads_vs_organic(previous_series)
@@ -436,6 +480,8 @@ class AnalyticsService:
             "attribution_notes": attribution_notes,
             "ads_data_from": ads_data_from,
             "ads_data_until": ads_data_until,
+            "ads_coverage": ads_coverage,
+            "previous_ads_coverage": previous_ads_coverage,
         }
 
         if asin is None:

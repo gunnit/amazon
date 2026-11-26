@@ -400,6 +400,10 @@ export default function ProductAnalytics() {
                   <div className="flex h-full items-center justify-center">
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                   </div>
+                ) : adsData && adsData.ads_coverage !== 'full' ? (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    {t(adsData.ads_coverage === 'partial' ? 'analytics.partialAdsCoverage' : 'analytics.noAdsCoverage')}
+                  </div>
                 ) : revenueChartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={revenueChartData} margin={{ top: 8, right: 12, left: 8, bottom: 12 }}>

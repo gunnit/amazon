@@ -394,6 +394,8 @@ export interface AdsVsOrganicResponse {
   granularity: 'daily' | 'monthly' | 'mixed' | 'unknown'
   asin: string | null
   attribution_notes: string[]
+  ads_coverage?: 'none' | 'partial' | 'full'
+  previous_ads_coverage?: 'none' | 'partial' | 'full'
   ads_data_from?: string | null
   ads_data_until?: string | null
 }
