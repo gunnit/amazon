@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Loader2 } from 'lucide-react'
@@ -130,11 +130,16 @@ const campaignStates: Record<string, string> = {
 export default function CampaignDetails() {
   const { t, language } = useTranslation()
   const { campaignId = '', accountId = '' } = useParams()
-  const [search] = useSearchParams()
+  const [search, setSearch] = useSearchParams()
   const location = useLocation()
   const filters = useFilterStore()
   const fallbackDates = getFilterDateRange(filters)
-  const masked = filters.campaignPrivacy
+  const presentation = search.get('presentation') === '1'
+  const masked = presentation || filters.campaignPrivacy
+  const setCampaignPrivacy = filters.setCampaignPrivacy
+  useEffect(() => {
+    if (presentation) setCampaignPrivacy(true)
+  }, [presentation, setCampaignPrivacy])
   const start = search.get('start_date') || fallbackDates.start
   const end = search.get('end_date') || fallbackDates.end
   const previous = location.state?.previous
@@ -156,7 +161,11 @@ export default function CampaignDetails() {
         <Link to={back} className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground">
           <ArrowLeft aria-hidden="true" className="h-4 w-4" />{t(fromPerformance ? 'analytics.adsVsOrganicTab' : 'advertising.title')}
         </Link>
-        <CampaignPrivacyToggle />
+        <CampaignPrivacyToggle presentation={presentation} onExitPresentation={() => {
+          const params = new URLSearchParams(search)
+          params.delete('presentation')
+          setSearch(params, { replace: true, state: location.state })
+        }} />
       </div>
       {isLoading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('common.loading')}</p>}
       {error && (

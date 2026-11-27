@@ -61,6 +61,7 @@ advertising_module.AdvertisingMetrics = _TableProxy(
     "campaign_id",
     "date",
     "attributed_sales_7d",
+    "cost",
 )
 advertising_module.AdvertisingMetricsByAsin = _TableProxy(
     "advertising_metrics_by_asin",
@@ -183,12 +184,12 @@ def _sales_row(account_id, bucket_date: date, total_sales: float):
     return SimpleNamespace(account_id=account_id, bucket_date=bucket_date, total_sales=total_sales)
 
 
-def _ads_row(account_id, bucket_date: date, ad_sales: float):
-    return SimpleNamespace(account_id=account_id, bucket_date=bucket_date, ad_sales=ad_sales)
+def _ads_row(account_id, bucket_date: date, ad_sales: float, ad_spend: float = 0.0):
+    return SimpleNamespace(account_id=account_id, bucket_date=bucket_date, ad_sales=ad_sales, ad_spend=ad_spend)
 
 
 def _bucket_ads_row(bucket_date: date, ad_sales: float):
-    return SimpleNamespace(bucket_date=bucket_date, ad_sales=ad_sales)
+    return SimpleNamespace(bucket_date=bucket_date, ad_sales=ad_sales, ad_spend=10.0)
 
 
 def _coverage_row(ads_from=None, ads_until=None):
@@ -243,6 +244,7 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
             ],
             [_coverage_row(date(2026, 1, 15), date(2026, 3, 2))],
             [_period_coverage_row(current_days=3, previous_days=3)],
+            [_period_coverage_row(current_days=3, previous_days=3)],
             [
                 _asin_row("B0AAA", "Alpha", 120),
                 _asin_row("B0BBB", "Beta", 110),
@@ -258,7 +260,7 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
         date_to=date(2026, 3, 2),
     )
 
-    assert session.execute_calls == 9
+    assert session.execute_calls == 10
     assert result["ads_data_from"] == date(2026, 1, 15)
     assert result["ads_data_until"] == date(2026, 3, 2)
     assert result["ads_coverage"] == "partial"
@@ -266,20 +268,21 @@ async def test_get_ads_vs_organic_combines_sales_ads_and_breakdown():
     assert [point["date"] for point in result["time_series"]] == [date(2026, 3, 1), date(2026, 3, 2)]
     assert result["time_series"][0]["total_sales"] == 150.0
     assert result["time_series"][0]["ad_sales"] == 35.0
-    assert result["time_series"][0]["organic_sales"] == 115.0
+    assert result["time_series"][0]["organic_sales"] is None
     assert result["summary"]["total_sales"]["value"] == 230.0
     assert result["summary"]["ad_sales"]["value"] == 45.0
-    assert result["summary"]["organic_sales"]["value"] == 185.0
-    assert result["summary"]["ad_share_pct"]["value"] == pytest.approx(19.57, abs=0.01)
-    assert result["summary"]["organic_share_pct"]["value"] == pytest.approx(80.43, abs=0.01)
-    assert result["summary"]["total_sales"]["previous_value"] == 200.0
+    assert result["summary"]["organic_sales"]["value"] is None
+    assert result["summary"]["ad_share_pct"]["value"] is None
+    assert result["summary"]["organic_share_pct"]["value"] is None
+    assert result["summary"]["total_sales"]["previous_value"] is None
+    assert result["required_account_days"] == 4 and result["retail_account_days"] == 3
     assert result["asin_breakdown"][0]["asin"] == "B0AAA"
     assert result["asin_breakdown"][0]["sales_share_pct"] == pytest.approx(52.17, abs=0.01)
     assert any("7-day attribution" in note for note in result["attribution_notes"])
 
 
 @pytest.mark.asyncio
-async def test_get_ads_vs_organic_defaults_missing_ads_to_zero():
+async def test_get_ads_vs_organic_preserves_retail_when_ads_are_missing():
     account_id = uuid4()
     session = FakeAsyncSession(
         [
@@ -290,6 +293,7 @@ async def test_get_ads_vs_organic_defaults_missing_ads_to_zero():
             [],
             [_coverage_row()],
             [_period_coverage_row()],
+            [_period_coverage_row(current_days=1)],
             [],
         ]
     )
@@ -303,9 +307,9 @@ async def test_get_ads_vs_organic_defaults_missing_ads_to_zero():
 
     point = result["time_series"][0]
     assert point["total_sales"] == 100.0
-    assert point["ad_sales"] == 0.0
-    assert point["organic_sales"] == 100.0
-    assert point["organic_share_pct"] == 100.0
+    assert point["ad_sales"] is None
+    assert point["organic_sales"] is None
+    assert point["organic_share_pct"] is None
     assert result["ads_data_from"] is None
     assert result["ads_data_until"] is None
     assert result["ads_coverage"] == "none"
@@ -329,7 +333,8 @@ async def test_get_ads_vs_organic_supports_week_grouping():
             [],
             [],
             [_coverage_row()],
-            [_period_coverage_row(current_days=2)],
+            [_period_coverage_row(current_days=13)],
+            [_period_coverage_row(current_days=13)],
             [],
         ]
     )
@@ -344,6 +349,47 @@ async def test_get_ads_vs_organic_supports_week_grouping():
 
     assert [point["date"] for point in result["time_series"]] == [date(2026, 3, 2), date(2026, 3, 9)]
     assert result["time_series"][1]["organic_sales"] == 70.0
+
+
+@pytest.mark.asyncio
+async def test_vendor_ads_only_period_keeps_observed_sales_and_spend_and_withholds_split():
+    from app.schemas.analytics import AdsVsOrganicResponse
+
+    account = uuid4()
+    start, end = date(2026, 11, 9), date(2026, 11, 15)
+    session = FakeAsyncSession([
+        [_account_row(account, AccountType.VENDOR)],
+        [], [_ads_row(account, date(2026, 11, 1), 4286.95, 800)],
+        [], [], [_coverage_row(start, end)],
+        [_period_coverage_row(7, 0)], [_period_coverage_row(0, 0)], [],
+    ])
+    result = await AnalyticsService(session).get_ads_vs_organic([account], start, end)
+    result = AdsVsOrganicResponse.model_validate(result).model_dump()
+    assert result["retail_coverage"] == "none" and result["ads_coverage"] == "full"
+    assert result["retail_account_days"] == 0 and result["required_account_days"] == 7
+    assert result["summary"]["ad_sales"]["value"] == 4286.95 and result["summary"]["ad_spend"]["value"] == 800
+    for name in ("total_sales", "organic_sales", "ad_share_pct", "organic_share_pct"):
+        assert result["summary"][name]["value"] is None and not result["summary"][name]["is_available"]
+        assert result["time_series"][0][name] is None
+
+
+@pytest.mark.asyncio
+async def test_current_split_and_standalone_ads_comparison_with_missing_previous_retail():
+    account = uuid4()
+    start, previous = date(2026, 11, 9), date(2026, 11, 8)
+    session = FakeAsyncSession([
+        [_account_row(account, AccountType.SELLER)],
+        [_sales_row(account, start, 100)], [_ads_row(account, start, 30, 10)],
+        [], [_ads_row(account, previous, 20, 8)], [_coverage_row(previous, start)],
+        [_period_coverage_row(1, 1)], [_period_coverage_row(1, 0)], [],
+    ])
+    result = await AnalyticsService(session).get_ads_vs_organic([account], start, start)
+    assert result["summary"]["organic_sales"]["value"] == 70
+    assert result["summary"]["organic_share_pct"]["value"] == 70
+    assert result["summary"]["organic_sales"]["previous_value"] is None
+    assert result["summary"]["organic_share_pct"]["change_percent"] is None
+    assert result["summary"]["ad_sales"]["previous_value"] == 20
+    assert result["summary"]["ad_spend"]["change_percent"] == 25
 
 
 @pytest.mark.asyncio
@@ -363,7 +409,8 @@ async def test_get_ads_vs_organic_supports_month_grouping():
             [],
             [],
             [_coverage_row()],
-            [_period_coverage_row(current_days=2)],
+            [_period_coverage_row(current_days=61)],
+            [_period_coverage_row(current_days=61)],
             [],
         ]
     )
@@ -392,6 +439,7 @@ async def test_get_ads_vs_organic_applies_asin_filter_and_returns_note():
             [],
             [_coverage_row(date(2026, 2, 1), date(2026, 3, 5))],
             [_period_coverage_row(current_days=1)],
+            [_period_coverage_row(current_days=1)],
         ]
     )
 
@@ -403,7 +451,7 @@ async def test_get_ads_vs_organic_applies_asin_filter_and_returns_note():
         asin="B0TESTASIN",
     )
 
-    assert session.execute_calls == 7
+    assert session.execute_calls == 8
     assert result["asin"] == "B0TESTASIN"
     assert result["asin_breakdown"] is None
     assert result["summary"]["total_sales"]["value"] == 90.0
@@ -428,6 +476,7 @@ async def test_get_ads_vs_organic_keeps_zero_for_an_unadvertised_asin_with_repor
             [],
             [_coverage_row()],
             [_period_coverage_row(current_days=1)],
+            [_period_coverage_row(current_days=1)],
         ]
     )
 
@@ -439,7 +488,7 @@ async def test_get_ads_vs_organic_keeps_zero_for_an_unadvertised_asin_with_repor
         asin="  b0mixed123  ",
     )
 
-    assert session.execute_calls == 7
+    assert session.execute_calls == 8
     assert result["asin"] == "B0MIXED123"
     assert result["asin_breakdown"] is None
     assert result["summary"]["ad_sales"]["value"] == 0.0
@@ -501,6 +550,7 @@ async def test_asin_filter_sums_seller_rows_in_a_bucket():
             [],
             [_coverage_row()],
             [_period_coverage_row(current_days=1)],
+            [_period_coverage_row(current_days=1)],
         ]
     )
 
@@ -531,6 +581,7 @@ async def test_asin_filter_sums_vendor_rows_and_uses_by_asin_ads():
             [],
             [_coverage_row()],
             [_period_coverage_row(current_days=1)],
+            [_period_coverage_row(current_days=1)],
         ]
     )
 
@@ -559,6 +610,7 @@ async def test_get_ads_vs_organic_clamps_organic_sales_when_ads_exceed_total():
             [],
             [],
             [_coverage_row()],
+            [_period_coverage_row(current_days=1)],
             [_period_coverage_row(current_days=1)],
             [],
         ]

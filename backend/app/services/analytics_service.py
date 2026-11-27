@@ -366,12 +366,30 @@ class AnalyticsService:
 
         expected_days = len(set(account_ids)) * ((date_to - date_from).days + 1)
 
-        def status(observed_days: int) -> str:
-            if observed_days == 0:
-                return "none"
-            return "full" if observed_days == expected_days else "partial"
+        return self._coverage_status(row.current_days, expected_days), self._coverage_status(row.previous_days, expected_days)
 
-        return status(row.current_days), status(row.previous_days)
+    @staticmethod
+    def _coverage_status(observed_days: int, expected_days: int) -> str:
+        if not observed_days:
+            return "none"
+        return "full" if observed_days == expected_days else "partial"
+
+    async def retail_period_day_counts(
+        self, account_ids: List[UUID], date_from: date, date_to: date, previous_start: date, *, by_asin: bool,
+    ) -> tuple[int, int]:
+        """Count distinct reported account-days at the same grain used for Retail revenue."""
+        if not account_ids:
+            return 0, 0
+        # A target ASIN may have no activity in an otherwise observed product report.
+        source = SalesData.asin != DAILY_TOTAL_ASIN if by_asin else SalesData.asin == DAILY_TOTAL_ASIN
+        observed = select(SalesData.account_id, SalesData.date.label("report_date")).where(
+            SalesData.account_id.in_(account_ids), SalesData.date.between(previous_start, date_to), source,
+        ).distinct().subquery()
+        row = (await self.db.execute(select(
+            func.count().filter(observed.c.report_date >= date_from).label("current_days"),
+            func.count().filter(observed.c.report_date < date_from).label("previous_days"),
+        ))).one()
+        return row.current_days, row.previous_days
 
     async def _resolve_granularity(self, account_ids: List[UUID]) -> Granularity:
         """Resolve granularity from the resolved in-scope account ids."""
@@ -433,9 +451,27 @@ class AnalyticsService:
         ads_coverage, previous_ads_coverage = await self._ads_period_coverage(
             account_ids, date_from, date_to, prev_start, by_asin=asin is not None
         )
+        expected_days = len(set(account_ids)) * ((date_to - date_from).days + 1)
+        retail_days, previous_retail_days = await self.retail_period_day_counts(
+            account_ids, date_from, date_to, prev_start, by_asin=asin is not None,
+        )
+        retail_coverage = self._coverage_status(retail_days, expected_days)
+        previous_retail_coverage = self._coverage_status(previous_retail_days, expected_days)
+        current_series, current_totals = self._covered_sales(current_series, retail_coverage, ads_coverage)
+        _, previous_totals = self._covered_sales(previous_series, previous_retail_coverage, previous_ads_coverage)
+        retail_comparable = retail_coverage == previous_retail_coverage == "full"
+        ads_comparable = ads_coverage == previous_ads_coverage == "full"
+        comparisons = {"total_sales": retail_comparable, "ad_sales": ads_comparable, "ad_spend": ads_comparable}
 
-        current_totals = self._summarize_ads_vs_organic(current_series)
-        previous_totals = self._summarize_ads_vs_organic(previous_series)
+        summary = {}
+        for key, value in current_totals.items():
+            comparable = comparisons.get(key, retail_comparable and ads_comparable)
+            previous = previous_totals[key] if comparable else None
+            if value is not None and previous is not None:
+                summary[key] = self._build_metric_value(value, previous)
+            else:
+                summary[key] = {"value": value, "previous_value": None, "change_percent": None,
+                                "trend": "stable", "is_available": value is not None}
         attribution_notes: list[str] = []
         if asin:
             attribution_notes.append(
@@ -444,28 +480,14 @@ class AnalyticsService:
                 else "With an ASIN filter, ad sales come from Sponsored Products advertised-product reports (SP-only attribution); Sponsored Brands and Display are not included."
             )
         attribution_notes.append(
-            "Le vendite pubblicitarie usano l'attribuzione a 7 giorni dei report Amazon Ads: il confronto per singolo giorno con il fatturato dello stesso giorno può sovra- o sottostimare la quota ADV nei giorni a basso volume."
+            "Sponsored Products usa l’attribuzione a 7 giorni. Sponsored Brands e Display usano la finestra del proprio report. Le vendite attribuite possono superare il fatturato retail di un singolo giorno."
             if language == "it"
-            else "Ad sales use 7-day attribution from Amazon Ads reports: comparing them with same-day revenue can over- or under-state the ad share on low-volume days."
+            else "Sponsored Products uses 7-day attribution. Sponsored Brands and Display use their report’s attribution window. Attributed sales can exceed retail revenue for an individual day."
         )
 
         response: Dict[str, Any] = {
             "summary": {
-                "total_sales": self._build_metric_value(
-                    current_totals["total_sales"], previous_totals["total_sales"]
-                ),
-                "ad_sales": self._build_metric_value(
-                    current_totals["ad_sales"], previous_totals["ad_sales"]
-                ),
-                "organic_sales": self._build_metric_value(
-                    current_totals["organic_sales"], previous_totals["organic_sales"]
-                ),
-                "ad_share_pct": self._build_metric_value(
-                    current_totals["ad_share_pct"], previous_totals["ad_share_pct"]
-                ),
-                "organic_share_pct": self._build_metric_value(
-                    current_totals["organic_share_pct"], previous_totals["organic_share_pct"]
-                ),
+                **summary,
                 "period_start": date_from,
                 "period_end": date_to,
                 "previous_period_start": prev_start,
@@ -482,6 +504,11 @@ class AnalyticsService:
             "ads_data_until": ads_data_until,
             "ads_coverage": ads_coverage,
             "previous_ads_coverage": previous_ads_coverage,
+            "retail_coverage": retail_coverage,
+            "previous_retail_coverage": previous_retail_coverage,
+            "required_account_days": expected_days,
+            "retail_account_days": retail_days,
+            "previous_retail_account_days": previous_retail_days,
         }
 
         if asin is None:
@@ -507,7 +534,7 @@ class AnalyticsService:
 
         bucket_dates = list(self._iter_bucket_dates(date_from, date_to, group_by))
         if not account_ids:
-            return [self._empty_time_series_point(bucket_date) for bucket_date in bucket_dates]
+            return [{"date": bucket_date} for bucket_date in bucket_dates]
 
         if asin:
             totals_by_bucket = await self._asin_series_totals(
@@ -525,24 +552,7 @@ class AnalyticsService:
                 group_by=group_by,
             )
 
-        series: list[Dict[str, Any]] = []
-        for bucket_date in bucket_dates:
-            bucket_totals = totals_by_bucket.get(bucket_date, {"total_sales": 0.0, "ad_sales": 0.0})
-            total_sales = self._round_money(bucket_totals["total_sales"])
-            ad_sales = self._round_money(bucket_totals["ad_sales"])
-            organic_sales = self._round_money(max(total_sales - ad_sales, 0.0))
-            series.append(
-                {
-                    "date": bucket_date,
-                    "total_sales": total_sales,
-                    "ad_sales": ad_sales,
-                    "organic_sales": organic_sales,
-                    "ad_share_pct": self._round_percent(self._share(ad_sales, total_sales)),
-                    "organic_share_pct": self._round_percent(self._share(organic_sales, total_sales)),
-                }
-            )
-
-        return series
+        return [{"date": bucket, **totals_by_bucket.get(bucket, {})} for bucket in bucket_dates]
 
     async def _account_series_totals(
         self,
@@ -583,6 +593,7 @@ class AnalyticsService:
                 campaign_accounts.c.account_id.label("account_id"),
                 ads_bucket,
                 func.sum(AdvertisingMetrics.attributed_sales_7d).label("ad_sales"),
+                func.sum(AdvertisingMetrics.cost).label("ad_spend"),
             )
             .select_from(AdvertisingMetrics)
             .join(
@@ -600,27 +611,15 @@ class AnalyticsService:
         sales_rows = (await self.db.execute(sales_query)).all()
         ads_rows = (await self.db.execute(ads_query)).all()
 
-        aligned: Dict[tuple[UUID, date], Dict[str, float]] = {}
+        totals_by_bucket: Dict[date, Dict[str, float]] = {}
         for row in sales_rows:
-            key = (row.account_id, self._normalize_bucket_date(row.bucket_date))
-            aligned[key] = {
-                "total_sales": self._as_float(row.total_sales),
-                "ad_sales": aligned.get(key, {}).get("ad_sales", 0.0),
-            }
+            slot = totals_by_bucket.setdefault(self._normalize_bucket_date(row.bucket_date), {})
+            slot["total_sales"] = slot.get("total_sales", 0.0) + self._as_float(row.total_sales)
 
         for row in ads_rows:
-            key = (row.account_id, self._normalize_bucket_date(row.bucket_date))
-            slot = aligned.setdefault(key, {"total_sales": 0.0, "ad_sales": 0.0})
-            slot["ad_sales"] = self._as_float(row.ad_sales)
-
-        totals_by_bucket: Dict[date, Dict[str, float]] = {}
-        for (_account_id, bucket_date), values in aligned.items():
-            bucket_totals = totals_by_bucket.setdefault(
-                bucket_date,
-                {"total_sales": 0.0, "ad_sales": 0.0},
-            )
-            bucket_totals["total_sales"] += values["total_sales"]
-            bucket_totals["ad_sales"] += values["ad_sales"]
+            slot = totals_by_bucket.setdefault(self._normalize_bucket_date(row.bucket_date), {})
+            slot["ad_sales"] = slot.get("ad_sales", 0.0) + self._as_float(row.ad_sales)
+            slot["ad_spend"] = slot.get("ad_spend", 0.0) + self._as_float(row.ad_spend)
 
         return totals_by_bucket
 
@@ -640,7 +639,7 @@ class AnalyticsService:
         totals: Dict[date, Dict[str, float]] = {}
 
         def _slot(bucket_date: date) -> Dict[str, float]:
-            return totals.setdefault(bucket_date, {"total_sales": 0.0, "ad_sales": 0.0})
+            return totals.setdefault(bucket_date, {})
 
         sales_bucket = self._bucket_expression(SalesData.date, group_by).label("bucket_date")
         sales_rows = (
@@ -660,7 +659,8 @@ class AnalyticsService:
         ).all()
         for row in sales_rows:
             bucket_date = self._normalize_bucket_date(row.bucket_date)
-            _slot(bucket_date)["total_sales"] += self._as_float(row.total_sales)
+            slot = _slot(bucket_date)
+            slot["total_sales"] = slot.get("total_sales", 0.0) + self._as_float(row.total_sales)
 
         ads_bucket = self._bucket_expression(AdvertisingMetricsByAsin.date, group_by).label(
             "bucket_date"
@@ -670,6 +670,7 @@ class AnalyticsService:
                 select(
                     ads_bucket,
                     func.sum(AdvertisingMetricsByAsin.attributed_sales_7d).label("ad_sales"),
+                    func.sum(AdvertisingMetricsByAsin.cost).label("ad_spend"),
                 )
                 .where(
                     AdvertisingMetricsByAsin.account_id.in_(account_ids),
@@ -682,7 +683,9 @@ class AnalyticsService:
         ).all()
         for row in ads_rows:
             bucket_date = self._normalize_bucket_date(row.bucket_date)
-            _slot(bucket_date)["ad_sales"] += self._as_float(row.ad_sales)
+            slot = _slot(bucket_date)
+            slot["ad_sales"] = slot.get("ad_sales", 0.0) + self._as_float(row.ad_sales)
+            slot["ad_spend"] = slot.get("ad_spend", 0.0) + self._as_float(row.ad_spend)
 
         return totals
 
@@ -794,23 +797,36 @@ class AnalyticsService:
         previous_start = previous_end - timedelta(days=period_days - 1)
         return previous_start, previous_end
 
-    def _summarize_ads_vs_organic(self, time_series: List[Dict[str, Any]]) -> Dict[str, float]:
-        """Roll time-series rows into period totals."""
-        total_sales = sum(self._as_float(point["total_sales"]) for point in time_series)
-        ad_sales = sum(self._as_float(point["ad_sales"]) for point in time_series)
-        organic_sales = max(total_sales - ad_sales, 0.0)
+    def _covered_sales(self, rows: list[dict], retail: str, ads: str) -> tuple[list[dict], dict]:
+        """Expose observed amounts; calculate the residual only for a fully covered period."""
+        sources = {"total_sales": retail, "ad_sales": ads, "ad_spend": ads}
+        can_split = retail == ads == "full"
 
-        total_sales = self._round_money(total_sales)
-        ad_sales = self._round_money(ad_sales)
-        organic_sales = self._round_money(organic_sales)
+        def with_split(amounts: dict) -> dict:
+            sales, paid = amounts["total_sales"], amounts["ad_sales"]
+            organic = self._round_money(max(sales - paid, 0.0)) if can_split else None
+            has_denominator = can_split and sales > 0
+            return {
+                **amounts, "organic_sales": organic,
+                "ad_share_pct": self._round_percent(self._share(paid, sales)) if has_denominator else None,
+                "organic_share_pct": self._round_percent(self._share(organic, sales)) if has_denominator else None,
+            }
 
-        return {
-            "total_sales": total_sales,
-            "ad_sales": ad_sales,
-            "organic_sales": organic_sales,
-            "ad_share_pct": self._round_percent(self._share(ad_sales, total_sales)),
-            "organic_share_pct": self._round_percent(self._share(organic_sales, total_sales)),
-        }
+        series = []
+        totals = {key: None for key in sources}
+        for row in rows:
+            amounts = {}
+            for key, source in sources.items():
+                # An absent ASIN is a measured zero only in a complete source report.
+                value = row.get(key, 0.0 if source == "full" else None)
+                if source == "none":
+                    value = None
+                amounts[key] = None if value is None else self._round_money(value)
+                if value is not None:
+                    totals[key] = (totals[key] or 0.0) + value
+            series.append({"date": row["date"], **with_split(amounts)})
+        return series, with_split({key: self._round_money(value) if value is not None else None
+                                   for key, value in totals.items()})
 
     def _build_metric_value(self, current: float, previous: float) -> Dict[str, Any]:
         """Build a dashboard-style metric payload."""
@@ -840,17 +856,6 @@ class AnalyticsService:
         if denominator <= 0:
             return 0.0
         return (numerator / denominator) * 100
-
-    def _empty_time_series_point(self, bucket_date: date) -> Dict[str, Any]:
-        """Return an empty time-series row."""
-        return {
-            "date": bucket_date,
-            "total_sales": 0.0,
-            "ad_sales": 0.0,
-            "organic_sales": 0.0,
-            "ad_share_pct": 0.0,
-            "organic_share_pct": 0.0,
-        }
 
     def _normalize_bucket_date(self, value: Any) -> date:
         """Normalize SQL bucket results to date values."""

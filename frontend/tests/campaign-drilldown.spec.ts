@@ -130,3 +130,32 @@ test('Advertising opens campaigns outside the two rankings', async ({ page }) =>
   await expect(page).toHaveURL(new RegExp(`/campaigns/${otherAccount}/${campaignId}`))
   await expect(page.getByRole('heading', { name: 'Other campaign' })).toBeVisible()
 })
+
+test('a direct presentation link masks campaign identifiers on the first render and after refresh', async ({ page }) => {
+  await page.addInitScript(({ name, asin, keyword }) => {
+    // Watch every inserted node, including those removed before the first assertion.
+    new MutationObserver(records => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (!(node instanceof HTMLElement) || !node.closest('main')) continue
+          if ([name, asin, keyword].some(value => node.textContent?.includes(value))) {
+            document.documentElement.dataset.privateLabelRendered = 'true'
+          }
+        }
+      }
+    }).observe(document, { childList: true, subtree: true })
+  }, { name, asin, keyword })
+  await page.goto(`/advertising/campaigns/${account}/${campaignId}?start_date=${start}&end_date=${end}&presentation=1`)
+  for (const refresh of [false, true]) {
+    if (refresh) await page.reload()
+    await expect(page.getByRole('heading', { name: /^Campagna [A-Z\d]+$/ })).toBeVisible()
+    await expect(page.getByText('Prodotto 1')).toBeVisible()
+    await page.getByRole('tab', { name: 'Parole chiave' }).click()
+    await expect(page.getByText('Parola chiave 1')).toBeVisible()
+    await expect(page.getByRole('switch')).toBeChecked()
+    await expect(page.locator('html')).not.toHaveAttribute('data-private-label-rendered', 'true')
+  }
+  await page.getByRole('switch').click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  await expect(page).not.toHaveURL(/presentation=1/)
+})

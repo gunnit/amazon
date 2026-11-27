@@ -147,20 +147,28 @@ class ComparisonResponse(BaseModel):
 class AdsVsOrganicTimeSeriesPoint(BaseModel):
     """Single ads vs organic time-series row."""
     date: date
-    total_sales: float
-    ad_sales: float
-    organic_sales: float
-    ad_share_pct: float
-    organic_share_pct: float
+    total_sales: float | None
+    ad_sales: float | None
+    ad_spend: float | None
+    organic_sales: float | None
+    ad_share_pct: float | None
+    organic_share_pct: float | None
+
+
+class AdsVsOrganicMetric(MetricValue):
+    value: float | None
+    previous_value: float | None
+    change_percent: float | None
 
 
 class AdsVsOrganicSummary(BaseModel):
     """Summary KPI block for ads vs organic analysis."""
-    total_sales: MetricValue
-    ad_sales: MetricValue
-    organic_sales: MetricValue
-    ad_share_pct: MetricValue
-    organic_share_pct: MetricValue
+    total_sales: AdsVsOrganicMetric
+    ad_sales: AdsVsOrganicMetric
+    ad_spend: AdsVsOrganicMetric
+    organic_sales: AdsVsOrganicMetric
+    ad_share_pct: AdsVsOrganicMetric
+    organic_share_pct: AdsVsOrganicMetric
     period_start: date
     period_end: date
     previous_period_start: Optional[date] = None
@@ -189,6 +197,11 @@ class AdsVsOrganicResponse(BaseModel):
     ads_data_until: Optional[date] = None
     ads_coverage: Literal["none", "partial", "full"] = "none"
     previous_ads_coverage: Literal["none", "partial", "full"] = "none"
+    retail_coverage: Literal["none", "partial", "full"] = "none"
+    previous_retail_coverage: Literal["none", "partial", "full"] = "none"
+    required_account_days: int = 0
+    retail_account_days: int = 0
+    previous_retail_account_days: int = 0
 
 
 class ProductPerformance(BaseModel):
