@@ -1273,6 +1273,24 @@ export interface QualityRuleResult {
   details: Record<string, unknown>
 }
 
+export interface ListingHealth {
+  checked_at: string
+  buyability_applicable: boolean
+  statuses: string[] | null
+  statuses_read: boolean
+  statuses_observed_at: string | null
+  issues: {
+    code: string | null
+    severity: string | null
+    message: string | null
+    attributes: string[]
+    actions: string[]
+    exemption: string | null
+  }[] | null
+  issues_observed_at: string | null
+  issues_read: boolean
+}
+
 export interface QualityItem {
   asin: string
   sku?: string | null
@@ -1281,6 +1299,7 @@ export interface QualityItem {
   state: QualityState
   score: number
   results: QualityRuleResult[]
+  listing_health?: ListingHealth | null
 }
 
 export interface QualityItemDetail extends QualityItem {
@@ -1311,6 +1330,7 @@ export interface QualityQueryParams {
   state?: QualityState
   rule?: QualityRuleKey
   mandatory_only?: boolean
+  health_attention_only?: boolean
   search?: string
   page?: number
   page_size?: number

@@ -42,6 +42,10 @@ COPY: dict[str, dict[str, str]] = {
         "gap_no_sales": "Nessun dato di vendita per {quarter}",
         "gap_no_sales_comparison": "Nessun dato di vendita per {quarter}: variazioni non calcolabili",
         "gap_ads_unavailable": "Dati pubblicitari non disponibili per {quarter}",
+        "gap_report_coverage": "{quarter} · Retail copre {observed} giorni su {required} complessivi per gli account selezionati. Copertura Ads {ads}.",
+        "coverage_full": "completa",
+        "coverage_partial": "parziale",
+        "coverage_none": "assente",
         "gap_ads_filter": "Spesa pubblicitaria non disponibile per filtro brand/categoria",
         "gap_roas_zero_spend": "ROAS non calcolabile: spesa pubblicitaria pari a zero",
         "gap_acos_zero_sales": "ACoS non calcolabile: vendite da pubblicità pari a zero",
@@ -206,6 +210,10 @@ COPY: dict[str, dict[str, str]] = {
         "gap_no_sales": "No sales data for {quarter}",
         "gap_no_sales_comparison": "No sales data for {quarter}: changes cannot be computed",
         "gap_ads_unavailable": "Advertising data not available for {quarter}",
+        "gap_report_coverage": "{quarter} · Retail covers {observed} of {required} account-days. Ads coverage is {ads}.",
+        "coverage_full": "complete",
+        "coverage_partial": "partial",
+        "coverage_none": "absent",
         "gap_ads_filter": "Ad spend not available for the brand/category filter",
         "gap_roas_zero_spend": "ROAS cannot be computed: zero ad spend",
         "gap_acos_zero_sales": "ACoS cannot be computed: zero ad sales",
@@ -496,7 +504,10 @@ def _kpis(deck, ctx: _Context) -> None:
     rows = [_kpi_row(ctx, metric) for metric in ctx.data.kpis]
     deck.table(slide, DeckTheme.MARGIN, _TOP, headers, rows, [3.4, 2.5, 2.3, 2.3, 2.1])
     note_y = _TOP + 0.38 * (min(len(rows), _TABLE_ROWS) + 1) + 0.25
-    deck.text(slide, DeckTheme.MARGIN, note_y, DeckTheme.content_w(), 0.5, ctx.t("kpi_note"),
+    note = ctx.t("kpi_note")
+    if ctx.data.coverage_note:
+        note += "\n" + ctx.data.coverage_note
+    deck.text(slide, DeckTheme.MARGIN, note_y, DeckTheme.content_w(), 0.8, note,
               size=DeckTheme.TYPE["caption"] + 1, color=DeckTheme.MUTED)
 
 

@@ -16,6 +16,7 @@ import { catalogMonitorApi } from '@/services/api'
 import { apiErrorDetail } from '@/lib/apiError'
 import type { TabProps } from '@/components/catalog/types'
 import { TrafficLight } from './TrafficLight'
+import { ListingHealthEvidence } from './ListingHealthEvidence'
 import { describeResult, ruleLabel, stateLabel } from './describe'
 
 interface Props extends Pick<TabProps, 'accountId' | 't' | 'toast'> {
@@ -142,6 +143,7 @@ export function QualityDetailDialog({ accountId, asin, onClose, t, toast }: Prop
               </div>
             </div>
 
+            <ListingHealthEvidence health={detail.listing_health} />
             <ul className="divide-y rounded-md border">
               {detail.results.length === 0 && (
                 <li className="p-3 text-sm text-muted-foreground">{t('cm.detail.noResults')}</li>

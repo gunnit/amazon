@@ -64,6 +64,7 @@ from app.services.catalog_monitor.images import (
     store_image_analysis,
 )
 from app.services.catalog_monitor.keywords import resolve_main_keywords
+from app.services.catalog_monitor.listing_health import listing_health_observation
 from app.services.catalog_monitor.ptd import ProductTypeDefinitionService, fetch_definition
 from app.services.catalog_monitor.repository import CatalogMonitorRepository
 from app.services.catalog_monitor.rule_config import resolve_rule_configs
@@ -174,6 +175,8 @@ class _Fetched:
     relationships_known: bool
     listing_fetched: bool
     aplus_quality: dict | None
+    listing_health: dict
+    listing_checked_at: datetime
 
 
 @dataclass
@@ -305,7 +308,9 @@ class CatalogScanService:
             async with self.db.begin_nested():
                 await self._store_fetched(run, lookups, definition)
                 _, is_new = await self.repo.save_version(run.account.id, asin, content, run.now)
-                await self.repo.save_quality_snapshot(run.account.id, asin, evaluation, run.day)
+                await self.repo.save_quality_snapshot(
+                    run.account.id, asin, evaluation, run.day, fetched.listing_health, fetched.listing_checked_at,
+                )
                 opened, resolved = await self._sync_content_anomalies(
                     run, asin, content, lookups.baseline
                 )
@@ -348,6 +353,7 @@ class CatalogScanService:
             content = replace(content, asin=asin)
 
         listing_fetched = False
+        listing = None
         if run.seller_id and product.sku:
             try:
                 listing = run.client.get_listing(run.seller_id, product.sku)
@@ -357,6 +363,8 @@ class CatalogScanService:
             if listing:  # an empty 200 says nothing: keep the previous listing fields
                 content = merge_listing(content, listing)
                 listing_fetched = True
+        health = listing_health_observation(listing, run.marketplace_id, asin, product.sku, run.account.account_type)
+        checked_at = datetime.now(timezone.utc)
 
         aplus_quality = None
         if run.aplus_ok:
@@ -365,7 +373,7 @@ class CatalogScanService:
                 content = with_aplus(content, aplus_quality["publish_record_count"], True)
             except Exception as exc:  # noqa: BLE001 - keep the previous A+ fields
                 logger.info("A+ publish records unavailable for %s: %s", asin, exc)
-        return _Fetched(content, relationships_known, listing_fetched, aplus_quality)
+        return _Fetched(content, relationships_known, listing_fetched, aplus_quality, health, checked_at)
 
     async def _with_previous(self, run: _Run, asin: str, fetched: _Fetched) -> ListingContent:
         """Today's content with what a failed call could not supply taken from the last version."""

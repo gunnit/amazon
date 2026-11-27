@@ -336,6 +336,7 @@ Rules:
   action: one concrete operational step for the account team.
 - Use only figures present in the data; never invent numbers. Call an estimate an estimate.
 - Draw no conclusion from a section listed in data_gaps.
+- Never infer organic sales share from attributed sales. Use TACOS only when the KPI has a value.
 - Return ONLY the JSON object, no markdown or commentary."""
 
 

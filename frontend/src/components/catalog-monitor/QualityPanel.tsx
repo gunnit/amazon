@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, Download, ImageOff, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -31,6 +31,7 @@ import type { TabProps } from '@/components/catalog/types'
 import { AccessCheck } from './AccessCheck'
 import { ScanButton } from './ScanButton'
 import { QualityDetailDialog } from './QualityDetailDialog'
+import { ListingHealthSummary } from './ListingHealthEvidence'
 import { STATE_STYLE } from './stateStyle'
 import { TrafficLight } from './TrafficLight'
 import { resultTooltip, ruleLabel, stateLabel } from './describe'
@@ -102,6 +103,7 @@ export function QualityPanel(props: TabProps) {
   const [state, setState] = useState<QualityState | ''>('')
   const [rule, setRule] = useState<QualityRuleKey | ''>('')
   const [mandatoryOnly, setMandatoryOnly] = useState(false)
+  const [healthAttention, setHealthAttention] = useState(false)
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -116,21 +118,23 @@ export function QualityPanel(props: TabProps) {
 
   useEffect(() => {
     setPage(1)
-  }, [accountId, state, rule, mandatoryOnly, search])
+  }, [accountId, state, rule, mandatoryOnly, healthAttention, search])
 
   const query = useQuery({
-    queryKey: ['catalog-monitor', 'quality', accountId, state, rule, mandatoryOnly, search, page],
+    queryKey: ['catalog-monitor', 'quality', accountId, state, rule, mandatoryOnly, healthAttention, search, page],
     queryFn: () =>
       catalogMonitorApi.getQuality(accountId, {
         state: state || undefined,
         rule: rule || undefined,
         mandatory_only: mandatoryOnly || undefined,
+        health_attention_only: healthAttention || undefined,
         search: search || undefined,
         page,
         page_size: PAGE_SIZE,
       }),
     enabled: !!accountId,
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[2] === accountId ? previous : undefined,
   })
 
   const data = query.data
@@ -309,6 +313,11 @@ export function QualityPanel(props: TabProps) {
               {t('cm.quality.mandatoryOnly')}
             </Label>
           </div>
+          <div className="flex items-center gap-2 pb-2">
+            <Checkbox id="cm-health-attention" checked={healthAttention}
+              onCheckedChange={(checked) => setHealthAttention(checked === true)} />
+            <Label htmlFor="cm-health-attention" className="cursor-pointer">{t('cm.health.filter')}</Label>
+          </div>
           <Button
             variant="outline"
             onClick={handleExport}
@@ -350,6 +359,7 @@ export function QualityPanel(props: TabProps) {
                 >
                   {t('cm.quality.col.overall')}
                 </TableHead>
+                <TableHead className="min-w-[150px] align-bottom">{t('cm.health.shortTitle')}</TableHead>
                 {columns.map((k) => (
                   <TableHead
                     key={k}
@@ -374,7 +384,7 @@ export function QualityPanel(props: TabProps) {
             <TableBody>
               {query.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={2 + Math.max(columns.length, 1)} className="py-8 text-center">
+                  <TableCell colSpan={3 + columns.length} className="py-8 text-center">
                     <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                   </TableCell>
                 </TableRow>
@@ -382,7 +392,7 @@ export function QualityPanel(props: TabProps) {
               {query.isError && (
                 <TableRow>
                   <TableCell
-                    colSpan={2 + Math.max(columns.length, 1)}
+                    colSpan={3 + columns.length}
                     className="py-8 text-center text-destructive"
                   >
                     {t('cm.quality.loadError')}
@@ -392,10 +402,10 @@ export function QualityPanel(props: TabProps) {
               {data && items.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={2 + Math.max(columns.length, 1)}
+                    colSpan={3 + columns.length}
                     className="py-8 text-center text-muted-foreground"
                   >
-                    {data.unscanned > 0 && data.total === 0 && !state && !rule && !search
+                    {data.unscanned > 0 && data.total === 0 && !state && !rule && !search && !healthAttention
                       ? t('cm.quality.emptyUnscanned')
                       : t('cm.quality.empty')}
                   </TableCell>
@@ -439,6 +449,7 @@ export function QualityPanel(props: TabProps) {
                       <span className="text-xs font-semibold tabular-nums">{item.score}</span>
                     </div>
                   </TableCell>
+                  <TableCell className="text-xs"><ListingHealthSummary health={item.listing_health} /></TableCell>
                   {columns.map((k) => (
                     <TableCell key={k} className="px-2 py-2 text-center">
                       {cellFor(item, k)}
