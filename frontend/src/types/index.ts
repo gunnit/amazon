@@ -359,19 +359,24 @@ export interface ComparisonResponse {
 
 export interface AdsVsOrganicTimeSeriesPoint {
   date: string
-  total_sales: number
-  ad_sales: number
-  organic_sales: number
-  ad_share_pct: number
-  organic_share_pct: number
+  total_sales: number | null
+  ad_spend?: number | null
+  ad_sales: number | null
+  organic_sales: number | null
+  ad_share_pct: number | null
+  organic_share_pct: number | null
 }
 
+export type AdsVsOrganicMetric = Omit<MetricValue, 'value'> & { value: number | null }
+export type ReportCoverage = 'none' | 'partial' | 'full'
+
 export interface AdsVsOrganicSummary {
-  total_sales: MetricValue
-  ad_sales: MetricValue
-  organic_sales: MetricValue
-  ad_share_pct: MetricValue
-  organic_share_pct: MetricValue
+  total_sales: AdsVsOrganicMetric
+  ad_spend?: AdsVsOrganicMetric
+  ad_sales: AdsVsOrganicMetric
+  organic_sales: AdsVsOrganicMetric
+  ad_share_pct: AdsVsOrganicMetric
+  organic_share_pct: AdsVsOrganicMetric
   period_start: string
   period_end: string
   previous_period_start: string | null
@@ -394,8 +399,12 @@ export interface AdsVsOrganicResponse {
   granularity: 'daily' | 'monthly' | 'mixed' | 'unknown'
   asin: string | null
   attribution_notes: string[]
-  ads_coverage?: 'none' | 'partial' | 'full'
-  previous_ads_coverage?: 'none' | 'partial' | 'full'
+  ads_coverage?: ReportCoverage
+  previous_ads_coverage?: ReportCoverage
+  retail_coverage?: ReportCoverage
+  previous_retail_coverage?: ReportCoverage
+  retail_account_days?: number
+  required_account_days?: number
   ads_data_from?: string | null
   ads_data_until?: string | null
 }

@@ -3,7 +3,10 @@ import { Switch } from '@/components/ui/switch'
 import { useTranslation } from '@/i18n'
 import { useFilterStore } from '@/store/filterStore'
 
-export function CampaignPrivacyToggle() {
+export function CampaignPrivacyToggle({ presentation = false, onExitPresentation }: {
+  presentation?: boolean
+  onExitPresentation?: () => void
+} = {}) {
   const { t } = useTranslation()
   const checked = useFilterStore(s => s.campaignPrivacy)
   const setChecked = useFilterStore(s => s.setCampaignPrivacy)
@@ -11,7 +14,10 @@ export function CampaignPrivacyToggle() {
     <label className="inline-flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
       <EyeOff aria-hidden="true" className="h-4 w-4 shrink-0" />
       {t('campaign.privacy')}
-      <Switch checked={checked} onCheckedChange={setChecked} aria-label={t('campaign.privacy')} />
+      <Switch checked={presentation || checked} aria-label={t('campaign.privacy')} onCheckedChange={next => {
+        setChecked(next)
+        if (!next && presentation) onExitPresentation?.()
+      }} />
     </label>
   )
 }

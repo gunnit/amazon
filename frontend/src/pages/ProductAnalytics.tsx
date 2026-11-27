@@ -141,7 +141,7 @@ export default function ProductAnalytics() {
   })
 
   const { data: adsData, isLoading: adsLoading } = useQuery({
-    queryKey: ['product-ads-vs-organic', asin, dateRange, accountIds],
+    queryKey: ['product-ads-vs-organic', asin, dateRange, accountIds, language],
     queryFn: () =>
       analyticsApi.getAdsVsOrganic({
         asin,
@@ -149,6 +149,7 @@ export default function ProductAnalytics() {
         date_to: dateRange.end,
         group_by: 'day',
         account_ids: accountParam,
+        language,
       }),
     enabled: !!asin,
   })
@@ -171,15 +172,17 @@ export default function ProductAnalytics() {
   const avgPrice =
     kpiRow && kpiRow.total_units > 0 ? Number(kpiRow.total_revenue) / kpiRow.total_units : null
 
+  const retailReported = adsData?.retail_coverage === 'full' || adsData?.retail_coverage === 'partial'
+  const fullSplit = adsData?.ads_coverage === 'full' && adsData?.retail_coverage === 'full'
   const revenueChartData = (adsData?.time_series || []).map((point) => ({
     ...point,
     displayDate: formatDayLabel(point.date, language),
-    chartTotal: point.ad_sales + point.organic_sales,
   }))
-  const revenueAxisMax = getChartAxisMax(revenueChartData.map((point) => point.total_sales))
-  const adsAxisMax = getChartAxisMax(
-    revenueChartData.map((point) => Math.max(point.chartTotal, point.total_sales))
-  )
+  const retailAmounts = revenueChartData.flatMap(point => point.total_sales == null ? [] : [point.total_sales])
+  const revenueAxisMax = getChartAxisMax(retailAmounts)
+  const adsAxisMax = getChartAxisMax(revenueChartData.flatMap(point =>
+    point.ad_sales == null || point.organic_sales == null ? [] : [Math.max(point.ad_sales + point.organic_sales, point.total_sales ?? 0)]
+  ))
 
   const reasonChartData = (returnsData?.reason_breakdown || []).slice(0, 6).map((entry) => ({
     ...entry,
@@ -344,7 +347,7 @@ export default function ProductAnalytics() {
                   <div className="flex h-full items-center justify-center">
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                   </div>
-                ) : revenueChartData.length > 0 ? (
+                ) : retailReported && retailAmounts.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={revenueChartData} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -385,8 +388,7 @@ export default function ProductAnalytics() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                <p className="font-medium">{t('analytics.accountLevelAttribution')}</p>
-                <p className="mt-1">{t('analytics.asinAttributionNotice')}</p>
+                <p className="font-medium">{t('analytics.productAttribution')}</p>
                 {(adsData?.attribution_notes || []).length > 0 && (
                   <ul className="mt-2 list-disc pl-5 text-xs">
                     {adsData?.attribution_notes.map((note, idx) => (
@@ -400,9 +402,9 @@ export default function ProductAnalytics() {
                   <div className="flex h-full items-center justify-center">
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                   </div>
-                ) : adsData && adsData.ads_coverage !== 'full' ? (
+                ) : adsData && !fullSplit ? (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    {t(adsData.ads_coverage === 'partial' ? 'analytics.partialAdsCoverage' : 'analytics.noAdsCoverage')}
+                    {t('analytics.splitRequiresReports')}
                   </div>
                 ) : revenueChartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">

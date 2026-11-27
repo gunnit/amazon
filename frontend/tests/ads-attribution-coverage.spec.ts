@@ -5,13 +5,17 @@ const organizationId = '20000000-0000-4000-8000-000000000002'
 const createdAt = '2026-01-01T00:00:00Z'
 
 const cases = [
-  { coverage: 'none', start: '2026-10-01', end: '2026-10-31' },
-  { coverage: 'partial', start: '2026-08-01', end: '2026-08-23' },
-  { coverage: 'full', start: '2026-08-01', end: '2026-08-07' },
+  { ads: 'none', retail: 'full', priorAds: 'none', priorRetail: 'full', start: '2026-10-01', end: '2026-10-31' },
+  { ads: 'partial', retail: 'full', priorAds: 'full', priorRetail: 'full', start: '2026-08-01', end: '2026-08-23' },
+  { ads: 'full', retail: 'full', priorAds: 'none', priorRetail: 'full', start: '2026-08-01', end: '2026-08-07' },
+  { ads: 'full', retail: 'none', priorAds: 'full', priorRetail: 'full', start: '2026-10-01', end: '2026-10-07' },
+  { ads: 'full', retail: 'partial', priorAds: 'full', priorRetail: 'full', start: '2026-10-01', end: '2026-10-07' },
+  { ads: 'full', retail: 'full', priorAds: 'full', priorRetail: 'partial', start: '2026-10-01', end: '2026-10-07' },
+  { ads: 'full', retail: 'full', priorAds: 'full', priorRetail: 'full', start: '2026-10-01', end: '2026-10-07' },
 ] as const
 
-for (const { coverage, start, end } of cases) {
-  test(`Ads vs Organic displays the split only with full coverage (${coverage})`, async ({ page }) => {
+for (const { ads, retail, priorAds, priorRetail, start, end } of cases) {
+  test(`Ads ${ads}/${priorAds} and Retail ${retail}/${priorRetail} preserve independent source metrics`, async ({ page }) => {
     await page.addInitScript(({ id, start, end }) => {
       localStorage.setItem('access_token', 'local-test-token')
       sessionStorage.setItem('inthezon-filters', JSON.stringify({
@@ -20,8 +24,10 @@ for (const { coverage, start, end } of cases) {
       }))
     }, { id: bitronId, start, end })
 
-    const metric = (value: number) => ({ value, previous_value: 0, change_percent: 100, trend: 'up' })
-    const adSales = coverage === 'full' ? 200 : 0
+    // Deliberately supply values even with missing coverage to check that old
+    // cached payloads never reveal a zero-Retail split or an unsupported delta.
+    const metric = (value: number) => ({ value, previous_value: 100, change_percent: 100, trend: 'up' })
+    const adSales = 200
     await page.route('**/api/v1/**', async (route) => {
       const url = new URL(route.request().url())
       switch (url.pathname) {
@@ -46,7 +52,7 @@ for (const { coverage, start, end } of cases) {
           expect(url.searchParams.get('date_to')).toBe(end)
           return route.fulfill({ json: {
             summary: {
-              total_sales: metric(1000), ad_sales: metric(adSales), organic_sales: metric(1000 - adSales),
+              total_sales: metric(1000), ad_spend: metric(75), ad_sales: metric(adSales), organic_sales: metric(1000 - adSales),
               ad_share_pct: metric(adSales / 10), organic_share_pct: metric(100 - adSales / 10),
             },
             time_series: [{ date: start, total_sales: 1000, ad_sales: adSales, organic_sales: 1000 - adSales }],
@@ -54,8 +60,8 @@ for (const { coverage, start, end } of cases) {
             attribution_notes: [],
             ads_data_from: '2026-04-28',
             ads_data_until: '2026-08-30',
-            ads_coverage: coverage,
-            previous_ads_coverage: 'none',
+            ads_coverage: ads, previous_ads_coverage: priorAds,
+            retail_coverage: retail, previous_retail_coverage: priorRetail,
           } })
         default:
           return route.fulfill({ json: [] })
@@ -64,19 +70,35 @@ for (const { coverage, start, end } of cases) {
 
     await page.goto('/performance?tab=ads-vs-organic')
     const total = page.getByText('Vendite totali', { exact: true }).locator('..')
+    const spend = page.getByText('Spesa pubblicitaria', { exact: true }).locator('..')
+    const paid = page.getByText('Vendite advertising', { exact: true }).first().locator('..')
+    const organic = page.getByText('Vendite organiche', { exact: true }).first().locator('..')
     const organicShare = page.getByText('% Organico', { exact: true }).locator('..')
     const chart = page.getByRole('heading', { name: 'Vendite Advertising vs Organiche' })
-    await expect(total).toContainText(/1[.,]000/)
+    await expect(total).toContainText(retail === 'none' ? 'n/d' : /1[.,]000/)
+    await expect(spend).toContainText(ads === 'none' ? 'n/d' : /75,00/)
+    await expect(paid).toContainText(ads === 'none' ? 'n/d' : /200,00/)
+    if (retail === 'partial') await expect(total).toContainText('Totale dei report disponibili')
+    if (ads === 'partial') await expect(paid).toContainText('Totale dei report disponibili')
+    if (retail !== 'full' || priorRetail !== 'full') await expect(total).not.toContainText('+100')
+    if (ads === 'full' && priorAds === 'full') await expect(spend).toContainText('+100')
 
-    if (coverage === 'full') {
+    if (ads === 'full' && retail === 'full') {
       await expect(organicShare).toContainText('80.0%')
-      await expect(organicShare).not.toContainText('+100')
+      if (priorAds === 'full' && priorRetail === 'full') {
+        await expect(organicShare).toContainText('+100')
+      } else {
+        await expect(organicShare).not.toContainText('+100')
+      }
       await expect(chart).toBeVisible()
     } else {
       await expect(organicShare).toContainText('n/d')
+      await expect(organic).toContainText('n/d')
       await expect(organicShare).not.toContainText('100%')
       await expect(page.getByText(/^La ripartizione non è disponibile/)).toBeVisible()
       await expect(chart).toHaveCount(0)
+      if (retail === 'none') await expect(page.getByText(/non sono stati importati report sulle vendite Retail/)).toBeVisible()
+      if (retail === 'partial') await expect(page.getByText(/report sulle vendite Retail coprono solo parte/)).toBeVisible()
     }
   })
 }

@@ -319,14 +319,9 @@ async def fetch_report_coverage(db, account_ids: list[UUID], start: date, end: d
     required = len(set(account_ids)) * max(0, (end - start).days + 1)
     if not required:
         return ReportCoverage(0, 0, "none")
-    # A target ASIN may have no activity in a valid product-level report.
-    # Establish source coverage across all product rows, before the selection.
-    source = SalesData.asin != DAILY_TOTAL_ASIN if by_asin else SalesData.asin == DAILY_TOTAL_ASIN
-    retail_days = select(SalesData.account_id, SalesData.date).where(
-        SalesData.account_id.in_(account_ids), SalesData.date.between(start, end), source,
-    ).distinct().subquery()
-    retail_count = (await db.execute(select(func.count()).select_from(retail_days))).scalar_one()
-    ads, _ = await AnalyticsService(db)._ads_period_coverage(
+    service = AnalyticsService(db)
+    retail_count, _ = await service.retail_period_day_counts(account_ids, start, end, start, by_asin=by_asin)
+    ads, _ = await service._ads_period_coverage(
         account_ids, start, end, previous_start=start, by_asin=by_asin,
     )
     return ReportCoverage(required, retail_count, ads)
