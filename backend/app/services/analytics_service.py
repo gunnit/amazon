@@ -480,9 +480,9 @@ class AnalyticsService:
                 else "With an ASIN filter, ad sales come from Sponsored Products advertised-product reports (SP-only attribution); Sponsored Brands and Display are not included."
             )
         attribution_notes.append(
-            "Le vendite pubblicitarie usano l'attribuzione a 7 giorni dei report Amazon Ads: il confronto per singolo giorno con il fatturato dello stesso giorno può sovra- o sottostimare la quota ADV nei giorni a basso volume."
+            "Sponsored Products usa l’attribuzione a 7 giorni. Sponsored Brands e Display usano la finestra del proprio report. Le vendite attribuite possono superare il fatturato retail di un singolo giorno."
             if language == "it"
-            else "Ad sales use 7-day attribution from Amazon Ads reports: comparing them with same-day revenue can over- or under-state the ad share on low-volume days."
+            else "Sponsored Products uses 7-day attribution. Sponsored Brands and Display use their report’s attribution window. Attributed sales can exceed retail revenue for an individual day."
         )
 
         response: Dict[str, Any] = {
