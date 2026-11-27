@@ -109,6 +109,7 @@ from app.services.catalog_monitor.changes import (
 )
 from app.services.catalog_monitor.content import content_from_dict
 from app.services.catalog_monitor.diff import diff_content
+from app.services.catalog_monitor.listing_health import health_needs_attention
 from app.services.catalog_monitor.ptd import ProductTypeDefinitionService
 from app.services.catalog_monitor.repository import CatalogMonitorRepository
 from app.services.catalog_monitor.rules import DEFAULT_RULES, RULE_KEYS
@@ -152,6 +153,7 @@ def split_scanned(rows: list[dict]) -> tuple[list[dict], int]:
             "state": comp.get("state") or "grey",
             "score": int(row["score"]),
             "results": results,
+            "listing_health": comp.get("listing_health"),
         })
     return items, unscanned
 
@@ -415,6 +417,7 @@ async def get_quality(
     state: Optional[str] = Query(default=None, pattern="^(green|yellow|red|grey)$"),
     rule: Optional[str] = None,
     mandatory_only: bool = False,
+    health_attention_only: bool = False,
     search: Optional[str] = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
@@ -425,6 +428,8 @@ async def get_quality(
     items, unscanned = split_scanned(rows)
     summary = summarize(items)
     selected = sort_items(filter_items(items, state, rule, mandatory_only))
+    if health_attention_only:
+        selected = [item for item in selected if health_needs_attention(item.get("listing_health"))]
     start = (page - 1) * page_size
     page_items = selected[start : start + page_size]
     images = await _main_images(db, account_id, [i["asin"] for i in page_items])

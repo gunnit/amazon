@@ -42,7 +42,7 @@ def _asin(asin, revenue, units=1, title=None):
 
 def _install(monkeypatch, *, accounts=None, scope_asins=None, daily=None, asin_sales=None,
              campaign_ads=None, asin_ads=None, returns=None, states=None, anomalies=None,
-             terms=None, owned=None, competitors=None, history=None):
+             terms=None, owned=None, competitors=None, history=None, coverage=None):
     """Replace every query of data.py with canned rows keyed by period start."""
     calls: dict[str, list] = {}
 
@@ -68,6 +68,10 @@ def _install(monkeypatch, *, accounts=None, scope_asins=None, daily=None, asin_s
     async def fake_campaign_ads(db, account_ids, start, end):
         record("campaign_ads", start)
         return (campaign_ads or {}).get(start)
+
+    async def fake_coverage(db, account_ids, start, end, *, by_asin):
+        required = len(set(account_ids)) * max(0, (end - start).days + 1)
+        return (coverage or {}).get(start, qdata.ReportCoverage(required, required, "full"))
 
     async def fake_asin_ads(db, account_ids, start, end, asins):
         record("asin_ads", asins)
@@ -102,6 +106,7 @@ def _install(monkeypatch, *, accounts=None, scope_asins=None, daily=None, asin_s
         "fetch_daily_sales": fake_daily,
         "fetch_asin_sales": fake_asin_sales,
         "fetch_campaign_ads": fake_campaign_ads,
+        "fetch_report_coverage": fake_coverage,
         "fetch_asin_ads": fake_asin_ads,
         "fetch_returned_units": fake_returns,
         "fetch_quality_states": fake_states,
@@ -195,6 +200,76 @@ async def test_tacos_from_spend_and_revenue(monkeypatch):
     assert (july["month"], july["revenue"], july["revenue_last_year"]) == (7, 600, 500)
     assert (august["revenue"], august["revenue_last_year"]) == (400, None)
     assert (september["revenue"], september["revenue_last_year"]) == (None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["it", "en"])
+async def test_incomplete_quarter_does_not_publish_cross_source_ratios(monkeypatch, language):
+    second = uuid.UUID(int=3)
+    _install(
+        monkeypatch,
+        accounts=[{"id": id_, "country": country, "type": "vendor", "name": country}
+                  for id_, country in [(ACC, "IT"), (second, "DE")]],
+        daily={d: [_day(d, 1000, 100)] for d in (Q3_2026, Q2_2026, Q3_2025)},
+        campaign_ads={d: (100, 250) for d in (Q3_2026, Q2_2026, Q3_2025)},
+        coverage={
+            Q3_2026: qdata.ReportCoverage(184, 184, "partial"),
+            Q2_2026: qdata.ReportCoverage(182, 181, "full"),
+            Q3_2025: qdata.ReportCoverage(184, 184, "full"),
+        },
+    )
+    data = await collect_quarter_data(None, QuarterScope(ORG, [ACC, second], 2026, 3, language=language))
+    kpis = _kpis(data)
+    assert kpis["revenue"].value == 1000
+    assert kpis["units"].value == 100
+    assert kpis["revenue"].previous == 1000
+    assert kpis["tacos"].value is None
+    assert kpis["tacos"].previous is None
+    assert kpis["tacos"].last_year == pytest.approx(0.1)
+    for key in ("ad_spend", "ad_sales", "acos", "roas"):
+        assert kpis[key].value is None
+        assert kpis[key].previous is not None
+    assert "184" in data.coverage_note
+    assert ("parziale" if language == "it" else "partial") in data.coverage_note
+    slides = Presentation(io.BytesIO(build_quarterly_deck(data, rule_insights(data)))).slides
+    assert data.coverage_note in _slide_text(slides[1])
+    assert any("181" in note and "182" in note for note in data.data_gaps)
+
+
+@pytest.mark.asyncio
+async def test_source_coverage_requires_each_marketplace_and_selects_the_matching_report_grain():
+    from unittest.mock import AsyncMock
+    from sqlalchemy import create_engine
+
+    first, second, outside = (uuid.UUID(int=i) for i in (2, 3, 4))
+    start, end = date(2026, 11, 1), date(2026, 11, 2)
+    # Execute the same SQL expressions with two marketplaces, two days and
+    # duplicate campaign/product observations, without an external database.
+    with create_engine("sqlite://").begin() as connection:
+        for ddl in [
+            "CREATE TABLE sales_data (account_id TEXT, date TEXT, asin TEXT)",
+            "CREATE TABLE advertising_metrics (campaign_id TEXT, date TEXT)",
+            "CREATE TABLE advertising_campaigns (id TEXT, account_id TEXT)",
+            "CREATE TABLE advertising_metrics_by_asin (account_id TEXT, date TEXT)",
+        ]:
+            connection.exec_driver_sql(ddl)
+        db = SimpleNamespace(execute=AsyncMock(side_effect=connection.execute))
+        for account in (first, second, outside):
+            connection.exec_driver_sql("INSERT INTO advertising_campaigns VALUES (?, ?)", (account.hex, account.hex))
+            for day in (start, end):
+                connection.exec_driver_sql("INSERT INTO sales_data VALUES (?, ?, ?)",
+                                           (account.hex, day.isoformat(), qdata.DAILY_TOTAL_ASIN))
+                if account != second or day != end:
+                    connection.exec_driver_sql("INSERT INTO advertising_metrics VALUES (?, ?)", (account.hex, day.isoformat()))
+        # Duplicate delivery rows from the first account do not fill the missing day for the second.
+        connection.exec_driver_sql("INSERT INTO advertising_metrics VALUES (?, ?)", (first.hex, end.isoformat()))
+        assert await qdata.fetch_report_coverage(db, [first, second, first], start, end, by_asin=False) == qdata.ReportCoverage(4, 4, "partial")
+        connection.exec_driver_sql("INSERT INTO advertising_metrics VALUES (?, ?)", (second.hex, end.isoformat()))
+        assert await qdata.fetch_report_coverage(db, [first, second], start, end, by_asin=False) == qdata.ReportCoverage(4, 4, "full")
+        # Account totals and campaign rows do not establish per-product coverage.
+        connection.exec_driver_sql("INSERT INTO sales_data VALUES (?, ?, ?)", (first.hex, start.isoformat(), "ASIN-1"))
+        connection.exec_driver_sql("INSERT INTO sales_data VALUES (?, ?, ?)", (first.hex, start.isoformat(), "ASIN-2"))
+        assert await qdata.fetch_report_coverage(db, [first, second], start, end, by_asin=True) == qdata.ReportCoverage(4, 1, "none")
 
 
 @pytest.mark.asyncio
@@ -882,8 +957,8 @@ async def test_collect_quarter_data_against_postgres(pg):
     assert kpis["revenue"].previous == pytest.approx(2000)
     assert kpis["revenue"].last_year == pytest.approx(800)
     assert kpis["units"].value == pytest.approx(15)
-    assert kpis["ad_spend"].value == pytest.approx(140)
-    assert kpis["tacos"].value == pytest.approx(140 / 1400)
+    assert kpis["ad_spend"].value is None
+    assert kpis["tacos"].value is None
     assert kpis["return_rate"].value == pytest.approx(4 / 15)
     assert [row["asin"] for row in whole.top_asins] == ["B0TEST0001", "B0TEST0002"]
     assert whole.top_asins[0]["revenue"] == pytest.approx(950)
@@ -903,7 +978,7 @@ async def test_collect_quarter_data_against_postgres(pg):
     kpis = _kpis(branded)
     assert kpis["revenue"].value == pytest.approx(950)
     assert kpis["revenue"].previous is None
-    assert kpis["ad_spend"].value == pytest.approx(50)
+    assert kpis["ad_spend"].value is None
     assert kpis["return_rate"].value == pytest.approx(3 / 9)
     assert branded.catalogue["states"]["yellow"] == 0
     assert ADS_FILTER_GAP not in branded.data_gaps

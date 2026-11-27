@@ -22,6 +22,7 @@ from app.models.listing_quality import ListingQualitySnapshot
 from app.models.product import Product
 from app.services.catalog_monitor.content import ListingContent, content_hash, content_to_dict
 from app.services.catalog_monitor.rules import ListingEvaluation, evaluation_to_dict
+from app.services.catalog_monitor.listing_health import listing_health_snapshot
 
 
 class CatalogMonitorRepository:
@@ -285,21 +286,26 @@ class CatalogMonitorRepository:
     # ---- quality, rules, capabilities ----
 
     async def save_quality_snapshot(
-        self, account_id: UUID, asin: str, evaluation: ListingEvaluation, day: date
+        self, account_id: UUID, asin: str, evaluation: ListingEvaluation, day: date,
+        listing_health: Optional[dict] = None, checked_at: Optional[datetime] = None,
     ) -> None:
         result = await self.db.execute(
             select(ListingQualitySnapshot).where(
                 ListingQualitySnapshot.account_id == account_id,
                 ListingQualitySnapshot.asin == asin,
-                ListingQualitySnapshot.snapshot_date == day,
-            )
+                ListingQualitySnapshot.snapshot_date <= day,
+            ).order_by(ListingQualitySnapshot.snapshot_date.desc()).limit(1)
         )
         row = result.scalar_one_or_none()
-        if row is None:
+        previous_health = (row.components or {}).get("listing_health") if row is not None else None
+        if row is None or row.snapshot_date != day:
             row = ListingQualitySnapshot(account_id=account_id, asin=asin, snapshot_date=day)
             self.db.add(row)
         row.score = evaluation.score
-        row.components = evaluation_to_dict(evaluation)
+        components = evaluation_to_dict(evaluation)
+        if listing_health is not None and checked_at is not None:
+            components["listing_health"] = listing_health_snapshot(listing_health, checked_at, previous_health)
+        row.components = components
         await self.db.flush()
 
     async def rule_overrides(self, organization_id: UUID) -> list[ListingQualityRule]:

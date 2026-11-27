@@ -33,6 +33,7 @@ from app.models.listing_quality import ListingQualitySnapshot
 from app.models.product import Product
 from app.models.returns_data import ReturnData
 from app.models.sales_data import SalesData
+from app.services.analytics_service import AnalyticsService
 from app.services.data_extraction import DAILY_TOTAL_ASIN
 from app.services.quarterly_report.deck import t
 from app.services.product_scope import product_scope_conditions
@@ -98,6 +99,7 @@ class QuarterData:
     data_gaps: list[str]
     # {"id", "name", "type": "seller"|"vendor", "country"} per account in scope.
     accounts: list[dict] = field(default_factory=list)
+    coverage_note: Optional[str] = None
 
 
 @dataclass
@@ -109,6 +111,19 @@ class PeriodTotals:
     ad_spend: Optional[float] = None
     ad_sales: Optional[float] = None
     returned_units: float = 0.0
+    retail_complete: bool = False
+    ads_complete: bool = False
+
+
+@dataclass(frozen=True)
+class ReportCoverage:
+    required_days: int
+    retail_days: int
+    ads: str
+
+    @property
+    def retail_complete(self) -> bool:
+        return self.required_days > 0 and self.retail_days == self.required_days
 
 
 # --- periods and arithmetic ----------------------------------------------------------
@@ -154,14 +169,16 @@ def point_change(value: Optional[float], base: Optional[float]) -> Optional[floa
 
 
 def derive_metrics(totals: PeriodTotals) -> dict[str, Optional[float]]:
+    spend = totals.ad_spend if totals.ads_complete else None
+    ad_sales = totals.ad_sales if totals.ads_complete else None
     return {
         "revenue": totals.revenue,
         "units": totals.units,
-        "ad_spend": totals.ad_spend,
-        "ad_sales": totals.ad_sales,
-        "roas": ratio(totals.ad_sales, totals.ad_spend),
-        "acos": ratio(totals.ad_spend, totals.ad_sales),
-        "tacos": ratio(totals.ad_spend, totals.revenue),
+        "ad_spend": spend,
+        "ad_sales": ad_sales,
+        "roas": ratio(ad_sales, spend),
+        "acos": ratio(spend, ad_sales),
+        "tacos": ratio(spend, totals.revenue) if totals.retail_complete else None,
         "return_rate": ratio(totals.returned_units, totals.units),
     }
 
@@ -294,6 +311,25 @@ async def fetch_campaign_ads(db, account_ids: list[UUID], start: date,
     if not row.rows:
         return None
     return float(row.spend or 0), float(row.sales or 0)
+
+
+async def fetch_report_coverage(db, account_ids: list[UUID], start: date, end: date,
+                                *, by_asin: bool) -> ReportCoverage:
+    """Require a source report for each selected account on each elapsed calendar day."""
+    required = len(set(account_ids)) * max(0, (end - start).days + 1)
+    if not required:
+        return ReportCoverage(0, 0, "none")
+    # A target ASIN may have no activity in a valid product-level report.
+    # Establish source coverage across all product rows, before the selection.
+    source = SalesData.asin != DAILY_TOTAL_ASIN if by_asin else SalesData.asin == DAILY_TOTAL_ASIN
+    retail_days = select(SalesData.account_id, SalesData.date).where(
+        SalesData.account_id.in_(account_ids), SalesData.date.between(start, end), source,
+    ).distinct().subquery()
+    retail_count = (await db.execute(select(func.count()).select_from(retail_days))).scalar_one()
+    ads, _ = await AnalyticsService(db)._ads_period_coverage(
+        account_ids, start, end, previous_start=start, by_asin=by_asin,
+    )
+    return ReportCoverage(required, retail_count, ads)
 
 
 async def fetch_asin_ads(db, account_ids: list[UUID], start: date, end: date,
@@ -598,12 +634,12 @@ def _kpi_gaps(lang: str, label: str, totals: PeriodTotals, filtered: bool) -> li
         gaps.append(t(lang, "gap_no_sales", quarter=label))
     if totals.ad_spend is None:
         gaps.append(t(lang, "gap_ads_filter") if filtered else t(lang, "gap_ads_unavailable", quarter=label))
-    else:
+    elif totals.ads_complete:
         if not totals.ad_spend:
             gaps.append(t(lang, "gap_roas_zero_spend"))
         if not totals.ad_sales:
             gaps.append(t(lang, "gap_acos_zero_sales"))
-        if totals.revenue is not None and not totals.revenue:
+        if totals.retail_complete and totals.revenue is not None and not totals.revenue:
             gaps.append(t(lang, "gap_tacos_zero_revenue"))
     if totals.units is not None and not totals.units:
         gaps.append(t(lang, "gap_return_rate_zero_units"))
@@ -638,7 +674,18 @@ async def collect_quarter_data(db, scope: QuarterScope) -> QuarterData:
 
     totals: dict[str, PeriodTotals] = {}
     daily: dict[str, list] = {}
-    for name, (_, (p_start, p_end)) in periods.items():
+    current_coverage_note = None
+    for name, (label, (p_start, p_end)) in periods.items():
+        # The KPI slide describes the current quarter as quarter-to-date.
+        p_end = min(p_end, date.today())
+        coverage = await fetch_report_coverage(db, account_ids, p_start, p_end, by_asin=scope.filtered)
+        if coverage.required_days and (not coverage.retail_complete or coverage.ads != "full"):
+            note = t(lang, "gap_report_coverage", quarter=label,
+                     observed=coverage.retail_days, required=coverage.required_days,
+                     ads=t(lang, f"coverage_{coverage.ads}"))
+            gaps.append(note)
+            if name == "current":
+                current_coverage_note = note
         daily[name] = await fetch_daily_sales(db, account_ids, p_start, p_end, scope_asins)
         revenue, units = _sales_totals(daily[name])
         if scope_asins is None:
@@ -652,6 +699,8 @@ async def collect_quarter_data(db, scope: QuarterScope) -> QuarterData:
             ad_spend=ads[0] if ads else None,
             ad_sales=ads[1] if ads else None,
             returned_units=float(returned or 0),
+            retail_complete=coverage.retail_complete,
+            ads_complete=coverage.ads == "full",
         )
 
     current_label = periods["current"][0]
@@ -722,4 +771,5 @@ async def collect_quarter_data(db, scope: QuarterScope) -> QuarterData:
         competitors=competitors,
         data_gaps=gaps,
         accounts=accounts,
+        coverage_note=current_coverage_note,
     )

@@ -16,6 +16,26 @@ class RuleResultOut(BaseModel):
     details: dict = Field(default_factory=dict)
 
 
+class ListingIssueOut(BaseModel):
+    code: str | None
+    severity: str | None
+    message: str | None
+    attributes: list[str]
+    actions: list[str]
+    exemption: str | None
+
+
+class ListingHealthOut(BaseModel):
+    checked_at: datetime
+    buyability_applicable: bool
+    statuses: list[str] | None
+    statuses_read: bool
+    statuses_observed_at: datetime | None
+    issues: list[ListingIssueOut] | None
+    issues_read: bool
+    issues_observed_at: datetime | None
+
+
 class QualityItem(BaseModel):
     asin: str
     sku: Optional[str] = None
@@ -24,6 +44,7 @@ class QualityItem(BaseModel):
     state: str
     score: int
     results: list[RuleResultOut]
+    listing_health: ListingHealthOut | None = None
 
 
 class QualityItemDetail(QualityItem):

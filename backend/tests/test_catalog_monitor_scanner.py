@@ -226,8 +226,12 @@ class FakeRepo(CatalogMonitorRepository):
         anomaly.status = "resolved"
         anomaly.resolved_at = now
 
-    async def save_quality_snapshot(self, account_id, asin, evaluation, day):
+    async def save_quality_snapshot(self, account_id, asin, evaluation, day, health, checked_at):
+        from app.services.catalog_monitor.listing_health import listing_health_snapshot
+
+        previous = self.snapshots.get((asin, day), {}).get("listing_health")
         self.snapshots[(asin, day)] = evaluation_to_dict(evaluation)
+        self.snapshots[(asin, day)]["listing_health"] = listing_health_snapshot(health, checked_at, previous)
 
     async def rule_overrides(self, organization_id):
         return []
@@ -525,6 +529,9 @@ async def test_empty_listing_payload_counts_as_not_fetched():
     [version] = repo.versions_by_asin["B0TEST0001"]
     assert version.content["backend_keywords"] == "parola uno parola due"
     assert repo.rules("B0TEST0001")["backend_keywords"]["state"] != "grey"
+    health = repo.snapshots[("B0TEST0001", DAY)]["listing_health"]
+    assert health["statuses"] == ["BUYABLE", "DISCOVERABLE"]
+    assert health["statuses_observed_at"] and not health["statuses_read"] and not health["issues_read"]
 
 
 # ---- R2: variation families ----
