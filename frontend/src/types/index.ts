@@ -636,6 +636,7 @@ export interface InventoryReportItem {
 
 export interface AdvertisingMetricsItem {
   id: number
+  account_id: string
   campaign_id: string
   campaign_name: string
   campaign_type: string
@@ -652,6 +653,7 @@ export interface AdvertisingMetricsItem {
 }
 
 export interface CampaignInsight {
+  account_id: string
   campaign_id: string
   campaign_name: string
   campaign_type: string
@@ -663,6 +665,36 @@ export interface CampaignInsight {
   roas: number
   acos: number
   ctr: number
+}
+
+export interface CampaignMetrics {
+  impressions: number
+  clicks: number
+  spend: number | string
+  sales: number | string
+  units: number
+  orders: number | null
+  ctr: number | string | null
+  cpc: number | string | null
+  roas: number | string | null
+  acos: number | string | null
+  conversion_rate: number | string | null
+}
+
+export interface CampaignDetail {
+  account_id: string
+  campaign_id: string
+  campaign_name: string | null
+  campaign_type: string | null
+  state: string | null
+  marketplace_country: string
+  currency: string | null
+  start_date: string
+  end_date: string
+  totals: CampaignMetrics | null
+  daily: (CampaignMetrics & { date: string })[]
+  products: (CampaignMetrics & { asin: string })[]
+  keywords: (CampaignMetrics & { keyword: string; match_type: string | null })[]
 }
 
 export interface AdvertisingRecommendation {
@@ -680,6 +712,7 @@ export interface AdvertisingInsights {
   overall_ctr: number
   top_campaigns: CampaignInsight[]
   underperforming_campaigns: CampaignInsight[]
+  campaigns: CampaignInsight[]
   recommendations: AdvertisingRecommendation[]
   ads_data_from?: string | null
   ads_data_until?: string | null

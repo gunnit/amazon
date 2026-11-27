@@ -173,7 +173,7 @@ class _Fetched:
     content: ListingContent
     relationships_known: bool
     listing_fetched: bool
-    aplus_fetched: bool
+    aplus_quality: dict | None
 
 
 @dataclass
@@ -294,8 +294,13 @@ class CatalogScanService:
                 main_keyword=run.keywords.get(asin),
                 required_attributes=required,
                 main_image=image,
+                aplus_breakdown=fetched.aplus_quality or {},
             )
-            evaluation = evaluate_listing(content, ctx, configs)
+            # Baselines from previous releases store publish records, not module counts.
+            # Keep their comparison stable and score today's actual document separately.
+            aplus = fetched.aplus_quality or {}
+            quality_content = with_aplus(content, aplus.get("aplus_module_count"), fetched.aplus_quality is not None)
+            evaluation = evaluate_listing(quality_content, ctx, configs)
             writing = True
             async with self.db.begin_nested():
                 await self._store_fetched(run, lookups, definition)
@@ -353,22 +358,21 @@ class CatalogScanService:
                 content = merge_listing(content, listing)
                 listing_fetched = True
 
-        aplus_fetched = False
+        aplus_quality = None
         if run.aplus_ok:
             try:
-                count = run.client.get_aplus_publish_record_count(asin)
-                content = with_aplus(content, count, True)
-                aplus_fetched = True
+                aplus_quality = run.client.get_aplus_content_for_asin(asin)
+                content = with_aplus(content, aplus_quality["publish_record_count"], True)
             except Exception as exc:  # noqa: BLE001 - keep the previous A+ fields
                 logger.info("A+ publish records unavailable for %s: %s", asin, exc)
-        return _Fetched(content, relationships_known, listing_fetched, aplus_fetched)
+        return _Fetched(content, relationships_known, listing_fetched, aplus_quality)
 
     async def _with_previous(self, run: _Run, asin: str, fetched: _Fetched) -> ListingContent:
         """Today's content with what a failed call could not supply taken from the last version."""
         latest = (await self.repo.latest_versions(run.account.id, [asin])).get(asin)
         previous = content_from_dict(latest.content) if latest is not None else None
         content = carry_forward(
-            fetched.content, previous, fetched.listing_fetched, fetched.aplus_fetched
+            fetched.content, previous, fetched.listing_fetched, fetched.aplus_quality is not None
         )
         if not fetched.relationships_known and previous is not None:
             # A partial payload says nothing about the family: keep the stored one.

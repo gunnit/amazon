@@ -3,7 +3,7 @@ import type {
   User, AuthTokens, Organization,
   AmazonAccount, AccountSummary, AccountType, AdvertisingProfile, AdvertisingProfilesRequest,
   DashboardKPIs, TrendData, SalesAggregated, ComparisonResponse, TodayMetrics,
-  AdsVsOrganicResponse, AdvertisingInsights,
+  AdsVsOrganicResponse, AdvertisingInsights, CampaignDetail,
   HourlyOrdersData, ProductTrendsResponse, ProductTrendInsightsResponse, ReturnsAnalyticsResponse, TopPerformersResponse,
   PaginatedProductPerformance, PerProductSortKey,
   Forecast, Product,
@@ -704,6 +704,15 @@ export const analyticsApi = {
     account_ids?: string[]
   }): Promise<AdvertisingInsights> => {
     const response = await api.get('/analytics/advertising', { params })
+    return response.data
+  },
+
+  getCampaignDetail: async (campaignId: string, params: {
+    account_id: string
+    start_date: string
+    end_date: string
+  }): Promise<CampaignDetail> => {
+    const response = await api.get(`/analytics/advertising/campaigns/${encodeURIComponent(campaignId)}`, { params })
     return response.data
   },
 

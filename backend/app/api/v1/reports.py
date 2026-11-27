@@ -417,6 +417,7 @@ async def get_advertising_data(
     query = (
         select(
             AdvertisingMetrics,
+            AdvertisingCampaign.account_id,
             AdvertisingCampaign.campaign_id.label("external_campaign_id"),
             AdvertisingCampaign.campaign_name,
             AdvertisingCampaign.campaign_type,
@@ -442,6 +443,7 @@ async def get_advertising_data(
     return [
         AdvertisingMetricsResponse(
             id=row.AdvertisingMetrics.id,
+            account_id=row.account_id,
             campaign_id=row.external_campaign_id,
             campaign_name=row.campaign_name or "",
             campaign_type=row.campaign_type or "",

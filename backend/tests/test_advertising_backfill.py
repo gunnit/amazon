@@ -78,7 +78,7 @@ async def test_backfill_windows_respect_cap_and_lookback(monkeypatch):
         by_types.setdefault(report_types, []).append((start, end))
 
     expected = {
-        ("sp_campaigns", "sp_advertised_product"): "sp",
+        ("sp_campaigns", "sp_advertised_product", "sp_keyword_targeting"): "sp",
         ("sb_campaigns",): "sb",
         ("sd_campaigns",): "sd",
     }

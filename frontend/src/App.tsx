@@ -19,6 +19,7 @@ import Catalog from '@/pages/Catalog'
 import Recommendations from '@/pages/Recommendations'
 import Settings from '@/pages/Settings'
 import Advertising from '@/pages/Advertising'
+import CampaignDetails from '@/pages/CampaignDetails'
 import Alerts from '@/pages/Alerts'
 import Accounts from '@/pages/Accounts'
 import Docs from '@/pages/Docs'
@@ -88,6 +89,7 @@ function App() {
           <Route path="analytics" element={<Navigate to="/performance" replace />} />
           <Route path="analytics/product/:asin" element={<ProductAnalytics />} />
           <Route path="advertising" element={<Advertising />} />
+          <Route path="advertising/campaigns/:accountId/:campaignId" element={<CampaignDetails />} />
           <Route path="forecasts" element={<Forecasts />} />
           <Route path="market-research" element={<MarketResearch />} />
           <Route

@@ -18,6 +18,8 @@ interface ComparisonPeriods {
 }
 
 interface FilterState {
+  campaignPrivacy: boolean
+  setCampaignPrivacy: (masked: boolean) => void
   // Shared filters
   datePreset: DatePreset
   customStartDate: string | null
@@ -90,6 +92,8 @@ export const useFilterStore = create<FilterState>()(
   persist(
     (set) => ({
       ...defaultState,
+      campaignPrivacy: false,
+      setCampaignPrivacy: (campaignPrivacy) => set({ campaignPrivacy }),
 
       setDatePreset: (preset) => set({
         datePreset: preset,

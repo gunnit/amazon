@@ -333,6 +333,7 @@ async def test_advertising_endpoint_returns_external_campaign_id():
             roas=Decimal("4.6013"),
         ),
         external_campaign_id="1234567890",
+        account_id=uuid4(),
         campaign_name="Sponsored Products",
         campaign_type="sponsoredProducts",
     )
@@ -352,6 +353,7 @@ async def test_advertising_endpoint_returns_external_campaign_id():
 
     assert len(rows) == 1
     assert rows[0].campaign_id == "1234567890"
+    assert rows[0].account_id == row.account_id
     assert rows[0].campaign_name == "Sponsored Products"
     assert len(db.queries) == 1
 

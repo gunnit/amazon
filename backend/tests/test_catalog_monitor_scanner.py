@@ -271,6 +271,10 @@ class FakeClient:
         self._check("aplus", asin)
         return self.aplus.get(asin, 0)
 
+    def get_aplus_content_for_asin(self, asin):
+        count = self.get_aplus_publish_record_count(asin)
+        return {"aplus_module_count": count, "publish_record_count": count}
+
     def get_product_type_definition(self, product_type, seller_id=None, locale="it_IT"):
         self._check("ptd", product_type)
         return {"schema": {"link": {"resource": "https://example.test/schema.json"}}}
@@ -501,7 +505,7 @@ async def test_failed_listing_or_aplus_call_creates_no_new_version():
     assert second.anomalies_opened == 0 and repo.open_rows() == []
     rules = repo.rules("B0TEST0001")
     assert rules["backend_keywords"]["state"] != "grey"
-    assert rules["aplus"]["state"] != "grey"
+    assert rules["aplus"]["state"] == "grey"
 
 
 @pytest.mark.asyncio

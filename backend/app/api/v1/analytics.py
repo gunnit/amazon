@@ -29,7 +29,7 @@ from app.schemas.analytics import (
     DashboardKPIs, MetricValue, TrendData, TrendDataPoint,
     ComparisonDailyPoint, ComparisonMetric, ComparisonPeriod, ComparisonResponse,
     PaginatedProductPerformance, ProductPerformance, TopPerformers,
-    AdvertisingInsights, AdvertisingRecommendation, HourlyOrdersData, ProductTrendsResponse,
+    AdvertisingInsights, AdvertisingRecommendation, CampaignDetail, HourlyOrdersData, ProductTrendsResponse,
     ProductTrendInsightsResponse,
     ReturnAsinMetric, ReturnReasonBreakdown, ReturnsAnalyticsResponse, ReturnsSummary,
     ReturnsTrendPoint,
@@ -1900,6 +1900,7 @@ async def get_advertising_insights(
     account_ids: Optional[List[UUID]] = Query(default=None),
 ):
     """Get advertising performance insights."""
+    _validate_period(start_date, end_date, "campaign period")
     await _validate_account_ids(db, organization.id, account_ids)
     accounts_query = select(AmazonAccount.id).where(
         AmazonAccount.organization_id == organization.id
@@ -1934,6 +1935,7 @@ async def get_advertising_insights(
 
     campaign_query = (
         select(
+            AdvertisingCampaign.account_id,
             AdvertisingCampaign.campaign_id.label("campaign_id"),
             AdvertisingCampaign.campaign_name.label("campaign_name"),
             AdvertisingCampaign.campaign_type.label("campaign_type"),
@@ -1951,6 +1953,7 @@ async def get_advertising_insights(
             AdvertisingMetrics.date <= end_date,
         )
         .group_by(
+            AdvertisingCampaign.account_id,
             AdvertisingCampaign.campaign_id,
             AdvertisingCampaign.campaign_name,
             AdvertisingCampaign.campaign_type,
@@ -1968,6 +1971,7 @@ async def get_advertising_insights(
 
         campaign_metrics.append(
             {
+                "account_id": row.account_id,
                 "campaign_id": row.campaign_id,
                 "campaign_name": row.campaign_name,
                 "campaign_type": row.campaign_type,
@@ -2038,12 +2042,35 @@ async def get_advertising_insights(
         overall_roas=overall_roas,
         overall_acos=overall_acos,
         overall_ctr=overall_ctr,
+        campaigns=sorted(
+            campaign_metrics,
+            key=lambda item: (-item["spend"], str(item["account_id"]), item["campaign_id"]),
+        ),
         top_campaigns=top_campaigns,
         underperforming_campaigns=underperforming_campaigns,
         recommendations=recommendations,
         ads_data_from=ads_data_from,
         ads_data_until=ads_data_until,
     )
+
+
+@router.get("/advertising/campaigns/{campaign_id}", response_model=CampaignDetail)
+async def get_campaign_detail(
+    campaign_id: str,
+    organization: CurrentOrganization,
+    db: DbSession,
+    account_id: UUID,
+    start_date: date,
+    end_date: date,
+) -> CampaignDetail:
+    """Read one selected account's campaign and its reported performance in the period."""
+    from app.services.campaign_detail import load_campaign_detail
+
+    _validate_period(start_date, end_date, "campaign period")
+    detail = await load_campaign_detail(db, organization.id, account_id, campaign_id, start_date, end_date)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return detail
 
 
 @router.get("/admin/data-health")

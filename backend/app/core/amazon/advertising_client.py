@@ -136,6 +136,7 @@ class AdvertisingReportConfig:
     columns: list[str]
     time_unit: str = "DAILY"
     format: str = "GZIP_JSON"
+    filters: list[dict[str, Any]] | None = None
 
 
 # Sponsored Products campaign report. The three keys below are aliases kept for
@@ -157,6 +158,7 @@ _SP_CAMPAIGN_CONFIG = AdvertisingReportConfig(
         "sales7d",
         "sales14d",
         "sales30d",
+        "purchases7d",
         "unitsSoldClicks1d",
         "unitsSoldClicks7d",
         "unitsSoldClicks14d",
@@ -222,8 +224,19 @@ DEFAULT_REPORT_CONFIGS: dict[str, AdvertisingReportConfig] = {
             "clicks",
             "cost",
             "sales7d",
+            "purchases7d",
             "unitsSoldClicks7d",
         ],
+    ),
+    "sp_keyword_targeting": AdvertisingReportConfig(
+        report_type_id="spTargeting",
+        ad_product="SPONSORED_PRODUCTS",
+        group_by=["targeting"],
+        columns=[
+            "date", "campaignId", "adGroupId", "keywordId", "keyword", "matchType",
+            "impressions", "clicks", "cost", "sales7d", "purchases7d", "unitsSoldClicks7d",
+        ],
+        filters=[{"field": "keywordType", "values": ["BROAD", "PHRASE", "EXACT"]}],
     ),
     # Real shopper queries that triggered Sponsored Products ads, plus the
     # keyword/match-type they fired on. Feeds competitor-keyword intelligence
@@ -545,6 +558,7 @@ class AdvertisingAPIClient:
                     columns=list(report_type["columns"]),
                     time_unit=report_type.get("timeUnit", "DAILY"),
                     format=report_type.get("format", "GZIP_JSON"),
+                    filters=report_type.get("filters"),
                 )
             except KeyError as exc:
                 raise AmazonAPIError(
@@ -580,6 +594,8 @@ class AdvertisingAPIClient:
                 "format": config.format,
             },
         }
+        if config.filters:
+            body["configuration"]["filters"] = config.filters
         response = self._request(
             "POST",
             "/reporting/reports",
