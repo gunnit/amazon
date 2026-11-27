@@ -29,7 +29,7 @@ import {
   Loader2,
   Minus,
 } from 'lucide-react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -71,6 +71,8 @@ import {
   fillMonthlyGaps,
 } from '@/lib/granularity'
 import { GranularityBadge } from '@/components/GranularityBadge'
+import { CampaignLink } from '@/components/CampaignLink'
+import { CampaignPrivacyToggle } from '@/components/CampaignPrivacyToggle'
 import ProductTrendBadge from '@/components/analytics/ProductTrendBadge'
 import ProductTrendSparkline from '@/components/analytics/ProductTrendSparkline'
 import TrendInsightsCard from '@/components/analytics/TrendInsightsCard'
@@ -79,7 +81,7 @@ import type {
   AdsConnectionState,
   AdsVsOrganicAsinBreakdownItem,
   AdsVsOrganicResponse,
-  AdvertisingMetricsItem,
+  AdvertisingInsights,
   AmazonAccount,
   HourlyOrdersData,
   InventoryReportItem,
@@ -317,7 +319,7 @@ type TrendSortDirection = 'asc' | 'desc'
 type SalesSortKey = 'date' | 'total_units' | 'total_sales' | 'total_orders'
 type SalesSortDirection = 'asc' | 'desc'
 const SALES_PAGE_SIZE = 20
-const PPC_MAX_ROWS = 25
+const CAMPAIGN_PAGE_SIZE = 25
 
 function compareSalesRows(
   left: SalesRow,
@@ -1752,6 +1754,8 @@ function AdsVsOrganicTab({
 }: AdsVsOrganicTabProps) {
   const { t, language } = useTranslation()
   const { analyticsGroupBy } = useFilterStore()
+  const [campaignPage, setCampaignPage] = useState(0)
+  const { hash } = useLocation()
 
   const { data: adsVsOrganicData, isLoading: adsVsOrganicLoading, isError: adsVsOrganicError } = useQuery<AdsVsOrganicResponse>({
     queryKey: ['ads-vs-organic', dateRange, trendAccountIds, analyticsGroupBy, selectedAsin, language],
@@ -1772,15 +1776,20 @@ function AdsVsOrganicTab({
     enabled: active,
   })
 
-  const { data: advertisingData = [], isLoading: advertisingLoading, isError: advertisingError } = useQuery<AdvertisingMetricsItem[]>({
-    queryKey: ['advertising', dateRange, trendAccountIds],
-    queryFn: () => reportsApi.getAdvertising({
+  const { data: advertisingData, isLoading: advertisingLoading, isError: advertisingError } = useQuery<AdvertisingInsights>({
+    queryKey: ['advertising-insights', dateRange, trendAccountIds],
+    queryFn: () => analyticsApi.getAdvertisingInsights({
       start_date: dateRange.start,
       end_date: dateRange.end,
       account_ids: trendAccountIds.length > 0 ? trendAccountIds : undefined,
     }),
     enabled: active,
   })
+  useEffect(() => {
+    if (active && hash === '#campaigns' && !adsVsOrganicLoading && !advertisingLoading) {
+      document.getElementById('campaigns')?.scrollIntoView({ block: 'start' })
+    }
+  }, [active, hash, adsVsOrganicLoading, advertisingLoading])
 
   const adsScopedAccounts = trendAccountIds.length > 0
     ? accountsList.filter((account) => trendAccountIds.includes(account.id))
@@ -1802,32 +1811,12 @@ function AdsVsOrganicTab({
 
   const advertisingCurrency = 'EUR'
 
-  // The advertising endpoint returns per-campaign-per-day rows: aggregate per
-  // campaign over the window and derive CTR/ACoS/ROAS from the sums.
-  const campaignTotals = useMemo(() => {
-    const byCampaign = new Map<
-      string,
-      { campaign_id: string; campaign_name: string; impressions: number; clicks: number; cost: number; sales: number }
-    >()
-    for (const item of advertisingData) {
-      const entry = byCampaign.get(item.campaign_id) || {
-        campaign_id: item.campaign_id,
-        campaign_name: item.campaign_name,
-        impressions: 0,
-        clicks: 0,
-        cost: 0,
-        sales: 0,
-      }
-      entry.impressions += Number(item.impressions) || 0
-      entry.clicks += Number(item.clicks) || 0
-      entry.cost += Number(item.cost) || 0
-      entry.sales += Number(item.attributed_sales_7d) || 0
-      byCampaign.set(item.campaign_id, entry)
-    }
-    return Array.from(byCampaign.values()).sort((a, b) => b.cost - a.cost)
-  }, [advertisingData])
-  const visibleCampaigns = campaignTotals.slice(0, PPC_MAX_ROWS)
-  const hasCampaignSales = campaignTotals.some((campaign) => campaign.sales > 0)
+  const campaignTotals = advertisingData?.campaigns || []
+  const lastCampaignPage = Math.max(0, Math.ceil(campaignTotals.length / CAMPAIGN_PAGE_SIZE) - 1)
+  const currentCampaignPage = Math.min(campaignPage, lastCampaignPage)
+  const campaignOffset = currentCampaignPage * CAMPAIGN_PAGE_SIZE
+  const visibleCampaigns = campaignTotals.slice(campaignOffset, campaignOffset + CAMPAIGN_PAGE_SIZE)
+  const hasCampaignSales = campaignTotals.some((campaign) => Number(campaign.sales) > 0)
 
   const adsEffectiveGroupBy = adsVsOrganicData?.group_by ?? analyticsGroupBy
   const adsChartData = (adsVsOrganicData?.time_series || []).map((point) => ({
@@ -2033,7 +2022,7 @@ function AdsVsOrganicTab({
           ))}
       </div>}
 
-      <Card>
+      <Card id="campaigns" className="scroll-mt-20">
         <CardHeader>
           <CardTitle>{t('reports.advertisingPerformance')}</CardTitle>
           <CardDescription>{t('reports.ppcMetrics')}</CardDescription>
@@ -2049,6 +2038,7 @@ function AdsVsOrganicTab({
             </div>
           ) : campaignTotals.length > 0 ? (
             <div className="space-y-3">
+              <div className="flex justify-end"><CampaignPrivacyToggle /></div>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -2066,20 +2056,22 @@ function AdsVsOrganicTab({
                   </thead>
                   <tbody>
                     {visibleCampaigns.map((campaign) => (
-                      <tr key={campaign.campaign_id} className="border-b last:border-0">
-                        <td className="py-3 px-4">{campaign.campaign_name || '-'}</td>
-                        <td className="py-3 px-4 text-right">{formatCurrency(campaign.cost, advertisingCurrency)}</td>
+                      <tr key={`${campaign.account_id}/${campaign.campaign_id}`} className="border-b last:border-0">
+                        <td className="py-3 px-4">
+                          <CampaignLink accountId={campaign.account_id} campaignId={campaign.campaign_id} name={campaign.campaign_name} dateRange={dateRange} />
+                        </td>
+                        <td className="py-3 px-4 text-right">{formatCurrency(Number(campaign.spend), advertisingCurrency)}</td>
                         <td className="py-3 px-4 text-right">{formatNumber(campaign.impressions)}</td>
                         <td className="py-3 px-4 text-right">{formatNumber(campaign.clicks)}</td>
                         <td className="py-3 px-4 text-right">
                           {campaign.impressions > 0
-                            ? `${((campaign.clicks / campaign.impressions) * 100).toFixed(2)}%`
+                            ? `${Number(campaign.ctr).toFixed(2)}%`
                             : '-'}
                         </td>
                         <td className="py-3 px-4 text-right">
-                          {campaign.sales > 0 ? (
-                            `${((campaign.cost / campaign.sales) * 100).toFixed(1)}%`
-                          ) : campaign.cost > 0 ? (
+                          {Number(campaign.sales) > 0 ? (
+                            `${Number(campaign.acos).toFixed(1)}%`
+                          ) : Number(campaign.spend) > 0 ? (
                             <span className="text-destructive">{t('reports.acosNoSales')}</span>
                           ) : (
                             '-'
@@ -2087,7 +2079,7 @@ function AdsVsOrganicTab({
                         </td>
                         {hasCampaignSales && (
                           <td className="py-3 px-4 text-right">
-                            {campaign.cost > 0 ? (campaign.sales / campaign.cost).toFixed(2) : '-'}
+                            {Number(campaign.spend) > 0 ? Number(campaign.roas).toFixed(2) : '-'}
                           </td>
                         )}
                       </tr>
@@ -2095,13 +2087,18 @@ function AdsVsOrganicTab({
                   </tbody>
                 </table>
               </div>
-              {campaignTotals.length > PPC_MAX_ROWS && (
-                <p className="text-xs text-muted-foreground">
-                  {t('reports.campaignsShowing', {
-                    shown: visibleCampaigns.length,
-                    total: campaignTotals.length,
-                  })}
-                </p>
+              {lastCampaignPage > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    {t('reports.salesRowsShowing', {
+                      from: campaignOffset + 1, to: campaignOffset + visibleCampaigns.length, total: campaignTotals.length,
+                    })}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" disabled={currentCampaignPage === 0} onClick={() => setCampaignPage(currentCampaignPage - 1)}>{t('alerts.previousPage')}</Button>
+                    <Button variant="outline" size="sm" disabled={currentCampaignPage === lastCampaignPage} onClick={() => setCampaignPage(currentCampaignPage + 1)}>{t('alerts.nextPage')}</Button>
+                  </div>
+                </div>
               )}
             </div>
           ) : !showNoAdsBanner && adsDataFrom ? (

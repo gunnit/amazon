@@ -396,6 +396,7 @@ class DataExtractionService:
                 "attributed_sales_7d": stmt.excluded.attributed_sales_7d,
                 "attributed_sales_14d": stmt.excluded.attributed_sales_14d,
                 "attributed_sales_30d": stmt.excluded.attributed_sales_30d,
+                "attributed_orders": stmt.excluded.attributed_orders,
                 "attributed_units_ordered_1d": stmt.excluded.attributed_units_ordered_1d,
                 "attributed_units_ordered_7d": stmt.excluded.attributed_units_ordered_7d,
                 "attributed_units_ordered_14d": stmt.excluded.attributed_units_ordered_14d,
@@ -2298,6 +2299,7 @@ class DataExtractionService:
                 "cost": stmt.excluded.cost,
                 "attributed_sales_7d": stmt.excluded.attributed_sales_7d,
                 "attributed_units_ordered_7d": stmt.excluded.attributed_units_ordered_7d,
+                "attributed_orders": stmt.excluded.attributed_orders,
                 "ctr": stmt.excluded.ctr,
                 "cpc": stmt.excluded.cpc,
                 "acos": stmt.excluded.acos,
@@ -2329,9 +2331,9 @@ class DataExtractionService:
                     report_type=report_type,
                     date_range=(start_date, end_date),
                 )
-                if report_type == "sp_advertised_product":
-                    total += await self._process_asin_report(
-                        client, profile_id, report_id, account, campaign_id_map,
+                if report_type in {"sp_advertised_product", "sp_keyword_targeting"}:
+                    total += await self._process_sp_breakdown_report(
+                        client, profile_id, report_type, report_id, account, campaign_id_map,
                     )
                 else:
                     total += await self._process_campaign_report(
@@ -2400,6 +2402,7 @@ class DataExtractionService:
             units_7d = self._extract_units(row, "7d")
             units_14d = self._extract_units(row, "14d")
             units_30d = self._extract_units(row, "30d")
+            purchases = row.get("purchases7d") if report_type == "sp_campaigns" else row.get("purchases")
 
             ctr = self._metric_ratio(Decimal(clicks) * Decimal("100"), Decimal(impressions)) if impressions > 0 else Decimal("0")
             cpc = self._metric_ratio(cost, Decimal(clicks)) if clicks > 0 else Decimal("0")
@@ -2421,6 +2424,7 @@ class DataExtractionService:
                     "attributed_units_ordered_7d": units_7d,
                     "attributed_units_ordered_14d": units_14d,
                     "attributed_units_ordered_30d": units_30d,
+                    "attributed_orders": self._int_value(purchases) if purchases not in ("", None) else None,
                     "ctr": ctr,
                     "cpc": cpc,
                     "acos": acos,
@@ -2431,22 +2435,32 @@ class DataExtractionService:
 
         return metric_count
 
-    async def _process_asin_report(
+    async def _process_sp_breakdown_report(
         self,
         client,
         profile_id: str,
+        report_type: str,
         report_id: str,
         account: AmazonAccount,
         campaign_id_map: dict[str, UUID],
     ) -> int:
-        """Download and process the advertised-product (ASIN-level) report."""
+        """Combine advertised products or targeted keywords across a campaign's ad groups."""
         report_payload = client.download_report(profile_id=profile_id, report_id=report_id)
-
-        asin_count = 0
+        by_keyword = report_type == "sp_keyword_targeting"
+        grouped: dict[tuple, dict[str, Any]] = {}
         for row in self._extract_report_rows(report_payload):
-            asin = row.get("advertisedAsin") or row.get("asin")
-            if not asin:
-                continue
+            if by_keyword:
+                keyword = (row.get("keyword") or "").strip()
+                match_type = (row.get("matchType") or "").upper()
+                if not keyword or match_type not in {"BROAD", "PHRASE", "EXACT"}:
+                    continue
+                dimension = {"keyword": keyword, "match_type": match_type}
+            else:
+                asin = row.get("advertisedAsin") or row.get("asin")
+                if not asin:
+                    continue
+                dimension = {"asin": asin}
+
             metric_date = self._extract_report_date(row)
             if not metric_date:
                 continue
@@ -2470,37 +2484,48 @@ class DataExtractionService:
                     continue
                 campaign_id_map[external_campaign_id] = internal_campaign_id
 
-            impressions = self._int_value(row.get("impressions"))
-            clicks = self._int_value(row.get("clicks"))
-            cost = self._decimal(row.get("cost"))
-            sales_7d = self._decimal(row.get("sales7d"))
-            units_7d = self._int_value(row.get("unitsSoldClicks7d"))
+            key = (internal_campaign_id, metric_date, *dimension.values())
+            metrics = grouped.setdefault(key, {
+                "campaign_id": internal_campaign_id, "date": metric_date, **dimension,
+                "impressions": 0, "clicks": 0, "cost": Decimal(0),
+                "attributed_sales_7d": Decimal(0), "attributed_units_ordered_7d": 0,
+                "attributed_orders": 0,
+            })
+            metrics["impressions"] += self._int_value(row.get("impressions"))
+            metrics["clicks"] += self._int_value(row.get("clicks"))
+            metrics["cost"] += self._decimal(row.get("cost"))
+            metrics["attributed_sales_7d"] += self._decimal(row.get("sales7d"))
+            metrics["attributed_units_ordered_7d"] += self._int_value(row.get("unitsSoldClicks7d"))
+            if row.get("purchases7d") in (None, ""):
+                metrics["attributed_orders"] = None
+            elif metrics["attributed_orders"] is not None:
+                metrics["attributed_orders"] += self._int_value(row["purchases7d"])
 
-            ctr = self._metric_ratio(Decimal(clicks) * Decimal("100"), Decimal(impressions)) if impressions > 0 else Decimal("0")
-            cpc = self._metric_ratio(cost, Decimal(clicks)) if clicks > 0 else Decimal("0")
-            acos = self._metric_ratio(cost * Decimal("100"), sales_7d) if sales_7d > 0 else Decimal("0")
-            roas = self._metric_ratio(sales_7d, cost) if cost > 0 else Decimal("0")
+        if by_keyword:
+            from app.models.advertising import AdvertisingKeywordMetrics
 
-            await self._upsert_advertising_asin_metrics(
-                {
-                    "account_id": account.id,
-                    "campaign_id": internal_campaign_id,
-                    "asin": asin,
-                    "date": metric_date,
-                    "impressions": impressions,
-                    "clicks": clicks,
-                    "cost": cost,
-                    "attributed_sales_7d": sales_7d,
-                    "attributed_units_ordered_7d": units_7d,
-                    "ctr": ctr,
-                    "cpc": cpc,
-                    "acos": acos,
-                    "roas": roas,
-                }
-            )
-            asin_count += 1
-
-        return asin_count
+            rows = list(grouped.values())
+            for start in range(0, len(rows), 500):
+                stmt = pg_insert(AdvertisingKeywordMetrics).values(rows[start:start + 500])
+                await self.db.execute(stmt.on_conflict_do_update(
+                    index_elements=["campaign_id", "date", "keyword", "match_type"],
+                    set_={name: stmt.excluded[name] for name in (
+                        "impressions", "clicks", "cost", "attributed_sales_7d",
+                        "attributed_units_ordered_7d", "attributed_orders",
+                    )},
+                ))
+        else:
+            for metrics in grouped.values():
+                cost, sales = metrics["cost"], metrics["attributed_sales_7d"]
+                clicks, impressions = metrics["clicks"], metrics["impressions"]
+                await self._upsert_advertising_asin_metrics({
+                    **metrics, "account_id": account.id,
+                    "ctr": self._metric_ratio(Decimal(clicks) * 100, Decimal(impressions)),
+                    "cpc": self._metric_ratio(cost, Decimal(clicks)),
+                    "acos": self._metric_ratio(cost * 100, sales),
+                    "roas": self._metric_ratio(sales, cost),
+                })
+        return len(grouped)
 
     async def sync_advertising(
         self,
@@ -2535,7 +2560,7 @@ class DataExtractionService:
         if start_date is None:
             start_date = end_date - timedelta(days=6)
 
-        report_types = ["sp_campaigns", "sb_campaigns", "sd_campaigns", "sp_advertised_product"]
+        report_types = ["sp_campaigns", "sb_campaigns", "sd_campaigns", "sp_advertised_product", "sp_keyword_targeting"]
         try:
             campaigns = client.list_campaigns(profile_id)
             await self._sync_advertising_campaigns(account, campaigns)
@@ -2599,7 +2624,7 @@ class DataExtractionService:
             raise
 
         report_types_by_product = {
-            "sp": ["sp_campaigns", "sp_advertised_product"],
+            "sp": ["sp_campaigns", "sp_advertised_product", "sp_keyword_targeting"],
             "sb": ["sb_campaigns"],
             "sd": ["sd_campaigns"],
         }

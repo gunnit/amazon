@@ -328,6 +328,38 @@ def test_get_aplus_publish_record_count(monkeypatch):
     assert fake.calls[0][2]["asin"] == "B0TEST0001"
 
 
+def test_aplus_quality_reads_modules_from_the_asins_published_document(monkeypatch):
+    client = _make_client()
+    marketplace = client.marketplace.marketplace_id
+    record = {"asin": "B0TEST0001", "marketplaceId": marketplace, "contentReferenceKey": "DOC1"}
+    pages = iter([{"publishRecordList": [record], "nextPageToken": "PAGE2"}, {"publishRecordList": [record]}])
+    modules = [
+        {"contentModuleType": "STANDARD_TEXT", "standardText": {"headline": {"value": "Details"}}},
+        {"contentModuleType": "STANDARD_COMPANY_LOGO", "standardCompanyLogo": {"companyLogo": {"uploadDestinationId": "IMG"}}},
+        {"contentModuleType": "STANDARD_COMPARISON_TABLE", "standardComparisonTable": {}},
+    ]
+    fake = _install(client, "_aplus_content_api", _Recorder({
+        "search_content_publish_records": lambda **kwargs: next(pages),
+        "get_content_document": {"contentRecord": {"contentDocument": {"contentModuleList": modules}}},
+    }), monkeypatch)
+    result = client.get_aplus_content_for_asin("B0TEST0001")
+    assert (result["publish_record_count"], result["aplus_module_count"]) == (1, 3)
+    assert (result["text_module_count"], result["image_module_count"], result["comparison_module_count"]) == (1, 1, 1)
+    assert fake.calls[1][2] == {"pageToken": "PAGE2"}
+    assert fake.calls[2:] == [("get_content_document", ("DOC1",), {"marketplaceId": marketplace, "includedDataSet": "CONTENTS"})]
+
+
+def test_aplus_empty_asin_does_not_include_other_account_documents(monkeypatch):
+    client = _make_client()
+    fake = _install(client, "_aplus_content_api", _Recorder({
+        "search_content_publish_records": {"publishRecordList": []},
+    }), monkeypatch)
+    result = client.get_aplus_content_for_asin("B0TEST0001")
+    assert not result["has_aplus_content"]
+    assert result["aplus_module_count"] == 0
+    assert len(fake.calls) == 1
+
+
 def test_submit_json_listings_feed_uploads_json_and_returns_feed_id(monkeypatch):
     client = _make_client()
     fake = _install(

@@ -1562,50 +1562,6 @@ class SPAPIClient:
         walk(payload)
         return min(candidates)[1] if candidates else None
 
-    @staticmethod
-    def _summarize_aplus_payload(payload: Any) -> Dict[str, Any]:
-        """Count A+ content modules from a best-effort payload shape."""
-        module_count = 0
-        text_module_count = 0
-        image_module_count = 0
-
-        def walk(node: Any) -> None:
-            nonlocal module_count, text_module_count, image_module_count
-            if isinstance(node, list):
-                for item in node:
-                    walk(item)
-                return
-            if not isinstance(node, dict):
-                return
-
-            module_type = (
-                node.get("contentModuleType")
-                or node.get("moduleType")
-                or node.get("type")
-            )
-            if module_type and "module" in str(module_type).lower():
-                module_count += 1
-
-            keys = {str(key).lower() for key in node.keys()}
-            if any("text" in key for key in keys):
-                text_module_count += 1
-            if any("image" in key or "media" in key for key in keys):
-                image_module_count += 1
-
-            for value in node.values():
-                if isinstance(value, (dict, list)):
-                    walk(value)
-
-        walk(payload)
-        return {
-            "has_aplus_content": bool(payload),
-            "aplus_module_count": module_count or None,
-            "text_module_count": text_module_count or None,
-            "image_module_count": image_module_count or None,
-            "aplus_source": "aplus_content_api",
-            "raw_payload": payload if isinstance(payload, dict) else {"payload": payload},
-        }
-
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_aplus_publish_record_count(self, asin: str) -> int:
         """Number of A+ publish records on the first page for an ASIN (0 when none).
@@ -1619,39 +1575,67 @@ class SPAPIClient:
 
     @with_throttle_retry(max_retries=3, base_delay=2.0)
     def get_aplus_content_for_asin(self, asin: str) -> Dict[str, Any]:
-        """Best-effort A+ Content API lookup for one ASIN."""
+        """Inspect documents Amazon lists as published for this ASIN and marketplace.
+
+        Report the richest individual document. Adding modules across translations
+        would inflate the quality score for a single product page.
+        """
         api = self._aplus_content_api()
         marketplace_id = self.marketplace.marketplace_id
-        payloads: List[Any] = []
+        params = {"marketplaceId": marketplace_id, "asin": asin}
+        keys = set()
+        first_page_count = None
+        seen_tokens = set()
+        while True:
+            payload = api.search_content_publish_records(**params).payload or {}
+            records = payload.get("publishRecordList")
+            if not isinstance(records, list):
+                raise ValueError("Amazon did not return A+ publish records.")
+            if first_page_count is None:
+                first_page_count = len(records)
+            for record in records:
+                if record.get("asin") != asin or record.get("marketplaceId") != marketplace_id:
+                    raise ValueError("Unexpected ASIN or marketplace in A+ publish records.")
+                keys.add(record["contentReferenceKey"])
+            token = payload.get("nextPageToken")
+            if not token:
+                break
+            if token in seen_tokens:
+                raise ValueError("Amazon repeated an A+ pagination token.")
+            seen_tokens.add(token)
+            params = {"pageToken": token}
 
-        # Amazon account/API versions expose slightly different search
-        # parameters. Try the ASIN publish-record path first, then content
-        # documents; callers catch failures and surface the exact limitation.
-        for operation, kwargs in (
-            (api.search_content_publish_records, {"marketplaceId": marketplace_id, "asin": asin, "pageSize": 10}),
-            (api.search_content_documents, {"marketplaceId": marketplace_id, "asin": asin, "pageSize": 10}),
-        ):
-            try:
-                response = operation(**kwargs)
-                payload = response.payload
-                if payload:
-                    payloads.append(payload)
-            except TypeError:
-                continue
+        best_modules = []
+        for key in sorted(keys):
+            payload = api.get_content_document(
+                key, marketplaceId=marketplace_id, includedDataSet="CONTENTS",
+            ).payload or {}
+            modules = (payload.get("contentRecord", {}).get("contentDocument") or {}).get("contentModuleList")
+            if not isinstance(modules, list):
+                raise ValueError("Amazon did not return the requested A+ modules.")
+            if len(modules) > len(best_modules):
+                best_modules = modules
 
-        if not payloads:
-            return {
-                "has_aplus_content": False,
-                "aplus_module_count": None,
-                "text_module_count": None,
-                "image_module_count": None,
-                "aplus_source": "aplus_content_api",
-                "aplus_limitation": "No A+ content document or publish record was found for this ASIN.",
-            }
+        def has_field(node, name):
+            if isinstance(node, list):
+                return any(has_field(value, name) for value in node)
+            if isinstance(node, dict):
+                return any((key == name and bool(value)) or has_field(value, name)
+                           for key, value in node.items())
+            return False
 
-        summary = self._summarize_aplus_payload({"payloads": payloads})
-        summary["aplus_limitation"] = None
-        return summary
+        return {
+            "has_aplus_content": bool(keys),
+            "aplus_module_count": len(best_modules),
+            "text_module_count": sum(has_field(module, "textList") or has_field(module, "value")
+                                     for module in best_modules),
+            "image_module_count": sum(has_field(module, "uploadDestinationId") for module in best_modules),
+            "comparison_module_count": sum("COMPARISON" in (module.get("contentModuleType") or "")
+                                           for module in best_modules),
+            "publish_record_count": first_page_count,
+            "aplus_source": "aplus_content_api",
+            "aplus_limitation": None if keys else "No A+ publish record visible to this account for this ASIN.",
+        }
 
     def _extract_catalog_price_amount(self, payload: Any) -> Optional[Decimal]:
         """Extract a representative price from Catalog Items attributes."""

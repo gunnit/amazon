@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Megaphone,
@@ -15,6 +15,8 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { EmptyState } from '@/components/EmptyState'
+import { CampaignLink, campaignAlias, campaignDetailPath } from '@/components/CampaignLink'
+import { CampaignPrivacyToggle } from '@/components/CampaignPrivacyToggle'
 import { Badge } from '@/components/ui/badge'
 import { FilterBar, DateRangeFilter, AccountFilter } from '@/components/filters'
 import { useFilterStore, getFilterDateRange } from '@/store/filterStore'
@@ -100,6 +102,7 @@ const CAMPAIGN_STATE_KEYS: Record<string, string> = {
 
 function CampaignStateBadge({ state }: { state: string }) {
   const { t } = useTranslation()
+  if (!state) return <span className="text-muted-foreground">{t('advertising.acosNotAvailable')}</span>
   const normalized = state.toLowerCase()
   const variant = normalized === 'enabled' ? 'success' : normalized === 'paused' ? 'secondary' : 'destructive'
   const key = CAMPAIGN_STATE_KEYS[normalized]
@@ -112,12 +115,14 @@ function CampaignStateBadge({ state }: { state: string }) {
 
 function CampaignTable({
   campaigns,
+  dateRange,
   title,
   description,
   icon: Icon,
   emptyMessage,
 }: {
   campaigns: CampaignInsight[]
+  dateRange: { start: string; end: string }
   title: string
   description: string
   icon: React.ElementType
@@ -160,8 +165,10 @@ function CampaignTable({
                   // green/red asserts a performance judgement that isn't there.
                   const delivered = Number(c.spend) > 0 || Number(c.sales) > 0
                   return (
-                  <tr key={c.campaign_id} className="border-b border-border/40 last:border-0">
-                    <td className="py-2.5 pr-4 font-medium max-w-[200px] truncate">{c.campaign_name}</td>
+                  <tr key={`${c.account_id}/${c.campaign_id}`} className="border-b border-border/40 last:border-0">
+                    <td className="py-2.5 pr-4 font-medium max-w-[200px]">
+                      <CampaignLink accountId={c.account_id} campaignId={c.campaign_id} name={c.campaign_name} dateRange={dateRange} />
+                    </td>
                     <td className="py-2.5 pr-4"><CampaignTypeLabel type={c.campaign_type} /></td>
                     <td className="py-2.5 pr-4"><CampaignStateBadge state={c.state} /></td>
                     <td className="py-2.5 pr-4 text-right tabular-nums">{formatCurrency(Number(c.spend))}</td>
@@ -207,7 +214,8 @@ function CampaignTable({
 
 export default function Advertising() {
   const { t, language } = useTranslation()
-  const { datePreset, customStartDate, customEndDate, accountIds, resetDashboard } = useFilterStore()
+  const navigate = useNavigate()
+  const { datePreset, customStartDate, customEndDate, accountIds, resetDashboard, campaignPrivacy } = useFilterStore()
   const dateRange = getFilterDateRange({ datePreset, customStartDate, customEndDate })
 
   const { data, isLoading, isError } = useQuery<AdvertisingInsights>({
@@ -360,8 +368,29 @@ export default function Advertising() {
 
       {/* Campaign Tables */}
       <div className="grid gap-6 lg:grid-cols-1">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {!!data?.campaigns?.length && (
+            <select
+              value="" aria-label={t('campaign.viewAll')}
+              className="h-9 max-w-full rounded-md border bg-background px-2 text-sm font-medium sm:max-w-sm"
+              onChange={event => {
+                const campaign = data.campaigns[Number(event.target.value)]
+                if (campaign) navigate(campaignDetailPath(campaign.account_id, campaign.campaign_id, dateRange))
+              }}
+            >
+              <option value="" disabled>{t('campaign.viewAll')} ({data.campaigns.length})</option>
+              {data.campaigns.map((c, index) => (
+                <option key={`${c.account_id}/${c.campaign_id}`} value={index}>
+                  {campaignPrivacy ? t('campaign.alias', { code: campaignAlias(c.account_id, c.campaign_id) }) : c.campaign_name || c.campaign_id}
+                </option>
+              ))}
+            </select>
+          )}
+          <CampaignPrivacyToggle />
+        </div>
         <CampaignTable
           campaigns={deliveredTopCampaigns}
+          dateRange={dateRange}
           title={t('advertising.topCampaigns')}
           description={t('advertising.topCampaignsDesc')}
           icon={TrendingUp}
@@ -369,6 +398,7 @@ export default function Advertising() {
         />
         <CampaignTable
           campaigns={data?.underperforming_campaigns || []}
+          dateRange={dateRange}
           title={t('advertising.underperforming')}
           description={t('advertising.underperformingDesc')}
           icon={AlertTriangle}

@@ -317,11 +317,55 @@ class AdvertisingInsights(BaseModel):
     overall_roas: Decimal
     overall_acos: Decimal
     overall_ctr: Decimal
+    campaigns: List[Dict[str, Any]] = Field(default_factory=list)
     top_campaigns: List[Dict[str, Any]]
     underperforming_campaigns: List[Dict[str, Any]]
     recommendations: List[AdvertisingRecommendation]
     ads_data_from: Optional[date] = None
     ads_data_until: Optional[date] = None
+
+
+class CampaignMetrics(BaseModel):
+    impressions: int
+    clicks: int
+    spend: Decimal
+    sales: Decimal
+    units: int
+    orders: int | None
+    ctr: Decimal | None
+    cpc: Decimal | None
+    acos: Decimal | None
+    roas: Decimal | None
+    conversion_rate: Decimal | None
+
+
+class CampaignDay(CampaignMetrics):
+    date: date
+
+
+class CampaignProduct(CampaignMetrics):
+    asin: str
+
+
+class CampaignKeyword(CampaignMetrics):
+    keyword: str
+    match_type: str
+
+
+class CampaignDetail(BaseModel):
+    account_id: UUID
+    campaign_id: str
+    campaign_name: str | None
+    campaign_type: str | None
+    state: str | None
+    marketplace_country: str
+    currency: str
+    start_date: date
+    end_date: date
+    totals: CampaignMetrics | None
+    daily: list[CampaignDay]
+    products: list[CampaignProduct]
+    keywords: list[CampaignKeyword]
 
 
 class ProductTrendRecommendation(BaseModel):

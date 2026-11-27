@@ -202,6 +202,10 @@ class FixtureClient:
     def get_aplus_publish_record_count(self, asin: str) -> int:
         return int((self._settings().get("aplus_modules") or {}).get(asin, 0))
 
+    def get_aplus_content_for_asin(self, asin):
+        count = self.get_aplus_publish_record_count(asin)
+        return {"aplus_module_count": count, "publish_record_count": count}
+
     def resolve_vendor_code(self) -> Optional[str]:
         if not self.is_vendor:
             return None

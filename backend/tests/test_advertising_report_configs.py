@@ -48,6 +48,10 @@ VALID_COLUMNS = {
         "sales", "salesClicks", "purchases", "purchasesClicks", "unitsSold", "unitsSoldClicks",
         "newToBrandPurchases", "newToBrandSales", "newToBrandUnitsSold",
     },
+    "spTargeting": {
+        "date", "campaignId", "adGroupId", "keywordId", "keyword", "matchType",
+        "impressions", "clicks", "cost", "sales7d", "purchases7d", "unitsSoldClicks7d",
+    },
     "spSearchTerm": {
         "date", "campaignName", "campaignId", "adGroupName", "adGroupId",
         "keywordId", "keyword", "keywordType", "matchType", "searchTerm",
@@ -71,6 +75,7 @@ VALID_GROUP_BY = {
     "sbCampaigns": {"campaign"},
     "sdCampaigns": {"campaign"},
     "spSearchTerm": {"searchTerm"},
+    "spTargeting": {"targeting"},
     "spPurchasedProduct": {"asin"},
 }
 
@@ -140,7 +145,11 @@ def _mock_client(handler) -> AdvertisingAPIClient:
     return client
 
 
-def test_request_report_sends_v3_media_type_and_valid_body():
+@pytest.mark.parametrize("report, report_id, group", [
+    ("sp_campaigns", "spCampaigns", "campaign"),
+    ("sp_keyword_targeting", "spTargeting", "targeting"),
+])
+def test_request_report_sends_v3_media_type_and_valid_body(report, report_id, group):
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -156,25 +165,29 @@ def test_request_report_sends_v3_media_type_and_valid_body():
 
     client = _mock_client(handler)
     try:
-        report_id = client.request_report(
+        created_id = client.request_report(
             profile_id="123456",
-            report_type="sp_campaigns",
+            report_type=report,
             date_range=(date(2026, 5, 1), date(2026, 5, 7)),
         )
     finally:
         client.close()
 
-    assert report_id == "rep-1"
+    assert created_id == "rep-1"
     assert captured["content_type"] == "application/vnd.createasyncreportrequest.v3+json"
     assert captured["client_id"] == "amzn1.application-oa2-client.test"
     assert captured["scope"] == "123456"
 
     config = captured["body"]["configuration"]
     assert config["adProduct"] == "SPONSORED_PRODUCTS"
-    assert config["reportTypeId"] == "spCampaigns"
+    assert config["reportTypeId"] == report_id
     assert config["format"] == "GZIP_JSON"
     assert config["timeUnit"] == "DAILY"
-    assert config["groupBy"] == ["campaign"]
+    assert config["groupBy"] == [group]
+    if report == "sp_keyword_targeting":
+        assert config["filters"] == [{"field": "keywordType", "values": ["BROAD", "PHRASE", "EXACT"]}]
+    else:
+        assert "filters" not in config
     assert captured["body"]["startDate"] == "2026-05-01"
     assert captured["body"]["endDate"] == "2026-05-07"
     # No invalid columns leak into the wire request.

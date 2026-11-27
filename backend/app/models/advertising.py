@@ -59,6 +59,7 @@ class AdvertisingMetrics(Base):
     attributed_sales_7d: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     attributed_sales_14d: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     attributed_sales_30d: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    attributed_orders: Mapped[int | None] = mapped_column(Integer, nullable=True)
     attributed_units_ordered_1d: Mapped[int] = mapped_column(Integer, default=0)
     attributed_units_ordered_7d: Mapped[int] = mapped_column(Integer, default=0)
     attributed_units_ordered_14d: Mapped[int] = mapped_column(Integer, default=0)
@@ -100,6 +101,7 @@ class AdvertisingMetricsByAsin(Base):
     cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     attributed_sales_7d: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     attributed_units_ordered_7d: Mapped[int] = mapped_column(Integer, default=0)
+    attributed_orders: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     ctr: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=True)
     cpc: Mapped[Decimal] = mapped_column(Numeric(8, 4), nullable=True)
@@ -110,6 +112,24 @@ class AdvertisingMetricsByAsin(Base):
 
     account: Mapped["AmazonAccount"] = relationship("AmazonAccount")
     campaign: Mapped["AdvertisingCampaign"] = relationship("AdvertisingCampaign")
+
+
+class AdvertisingKeywordMetrics(Base):
+    """Daily Sponsored Products metrics for keyword/match pairs in targeting reports."""
+    __tablename__ = "advertising_keyword_metrics"
+
+    campaign_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("advertising_campaigns.id", ondelete="CASCADE"), primary_key=True
+    )
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    keyword: Mapped[str] = mapped_column(String, primary_key=True)
+    match_type: Mapped[str] = mapped_column(String(50), primary_key=True)
+    impressions: Mapped[int] = mapped_column(Integer)
+    clicks: Mapped[int] = mapped_column(Integer)
+    cost: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    attributed_sales_7d: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    attributed_units_ordered_7d: Mapped[int] = mapped_column(Integer)
+    attributed_orders: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 from app.models.amazon_account import AmazonAccount

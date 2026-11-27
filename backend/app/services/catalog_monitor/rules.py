@@ -80,6 +80,7 @@ class RuleContext:
     main_keyword: Optional[str] = None
     required_attributes: Optional[list[str]] = None  # None = schema unavailable
     main_image: Optional[ImageAnalysis] = None
+    aplus_breakdown: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -218,11 +219,14 @@ def _aplus(c: ListingContent, ctx: RuleContext, cfg: RuleConfig):
         return _res("grey", "unavailable")
     count = c.aplus_module_count
     minimum = _param(cfg, "min_modules")
+    details = {key: ctx.aplus_breakdown[key] for key in
+               ("text_module_count", "image_module_count", "comparison_module_count")
+               if key in ctx.aplus_breakdown}
     if count == 0:
-        return _res("red", "missing", modules=0, target=minimum)
+        return _res("red", "missing", modules=0, target=minimum, **details)
     if count < minimum:
-        return _res("yellow", "too_few", modules=count, target=minimum)
-    return _res("green", "ok", modules=count, target=minimum)
+        return _res("yellow", "too_few", modules=count, target=minimum, **details)
+    return _res("green", "ok", modules=count, target=minimum, **details)
 
 
 def _backend_keywords(c: ListingContent, ctx: RuleContext, cfg: RuleConfig):

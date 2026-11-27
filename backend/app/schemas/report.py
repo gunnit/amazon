@@ -109,6 +109,7 @@ class OrderListResponse(BaseModel):
 class AdvertisingMetricsResponse(BaseModel):
     """Schema for advertising metrics response."""
     id: int
+    account_id: UUID
     campaign_id: str
     campaign_name: str
     campaign_type: str
